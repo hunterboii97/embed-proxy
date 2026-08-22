@@ -853,35 +853,6 @@ type SubtitleTrack struct {
 	Default bool   `json:"default"`
 }
 
-func encryptToken(targetURL string, ref string) (string, error) {
-	payload := TokenPayload{
-		URL: targetURL,
-		Ref: ref,
-		Exp: time.Now().Add(6 * time.Hour).Unix(),
-	}
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return "", err
-	}
-
-	block, err := aes.NewCipher(proxySecretKey)
-	if err != nil {
-		return "", err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", err
-	}
-
-	ciphertext := gcm.Seal(nonce, nonce, raw, nil)
-	return base64.RawURLEncoding.EncodeToString(ciphertext), nil
-}
-
 func extractMegaplayHLS(ctx context.Context, targetPath string) (string, []SubtitleTrack, error) {
 	upstreamURL := "https://megaplay.buzz/stream/" + targetPath
 	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodGet, upstreamURL, nil)
@@ -1062,7 +1033,11 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 	hlsFile, tracks, err := extractMegaplayHLS(r.Context(), targetPath)
 	if err == nil && hlsFile != "" {
 		// Generate encrypted proxy token for HLS streaming with Referer: https://megaplay.buzz/
-		streamToken, err := encryptToken(hlsFile, "https://megaplay.buzz/")
+		streamToken, err := encryptToken(&TokenPayload{
+			URL: hlsFile,
+			Ref: "https://megaplay.buzz/",
+			Exp: time.Now().Add(6 * time.Hour).Unix(),
+		})
 		if err == nil {
 			proxiedStreamURL := "/p/" + streamToken
 			html := renderCleanArtplayer(proxiedStreamURL, tracks)
