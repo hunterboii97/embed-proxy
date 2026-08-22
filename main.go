@@ -839,6 +839,181 @@ func isMegaplayValid(html string) bool {
 		len(html) > 3800
 }
 
+type MegaplaySourcesResponse struct {
+	Sources struct {
+		File string `json:"file"`
+	} `json:"sources"`
+	Tracks []SubtitleTrack `json:"tracks"`
+}
+
+type SubtitleTrack struct {
+	File    string `json:"file"`
+	Label   string `json:"label"`
+	Kind    string `json:"kind"`
+	Default bool   `json:"default"`
+}
+
+func encryptToken(targetURL string, ref string) (string, error) {
+	payload := TokenPayload{
+		URL: targetURL,
+		Ref: ref,
+		Exp: time.Now().Add(6 * time.Hour).Unix(),
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+
+	block, err := aes.NewCipher(proxySecretKey)
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", err
+	}
+
+	ciphertext := gcm.Seal(nonce, nonce, raw, nil)
+	return base64.RawURLEncoding.EncodeToString(ciphertext), nil
+}
+
+func extractMegaplayHLS(ctx context.Context, targetPath string) (string, []SubtitleTrack, error) {
+	upstreamURL := "https://megaplay.buzz/stream/" + targetPath
+	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodGet, upstreamURL, nil)
+	if err != nil {
+		return "", nil, err
+	}
+	upstreamReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	upstreamReq.Header.Set("Referer", "https://anikoto.cz/")
+	upstreamReq.Header.Set("Sec-Fetch-Dest", "iframe")
+	upstreamReq.Header.Set("Sec-Fetch-Mode", "navigate")
+
+	resp, err := httpClient.Do(upstreamReq)
+	if err != nil {
+		return "", nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", nil, fmt.Errorf("status %d", resp.StatusCode)
+	}
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", nil, err
+	}
+	html := string(bodyBytes)
+
+	cidRegex := regexp.MustCompile(`cid\s*:\s*['"]([^'"]+)['"]`)
+	ciduRegex := regexp.MustCompile(`cidu\s*:\s*['"]([^'"]+)['"]`)
+	dataIdRegex := regexp.MustCompile(`data-id\s*=\s*["']([^"']+)["']`)
+
+	cidMatch := cidRegex.FindStringSubmatch(html)
+	ciduMatch := ciduRegex.FindStringSubmatch(html)
+	dataIdMatch := dataIdRegex.FindStringSubmatch(html)
+
+	if len(cidMatch) < 2 || len(ciduMatch) < 2 || len(dataIdMatch) < 2 {
+		return "", nil, fmt.Errorf("could not extract player IDs from HTML")
+	}
+
+	cid := cidMatch[1]
+	cidu := ciduMatch[1]
+	dataId := dataIdMatch[1]
+
+	apiURL := fmt.Sprintf("https://megaplay.buzz/stream/getSources?id=%s&cid=%s&cidu=%s", dataId, cid, cidu)
+	apiReq, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return "", nil, err
+	}
+	apiReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	apiReq.Header.Set("Referer", "https://megaplay.buzz/")
+	apiReq.Header.Set("X-Requested-With", "XMLHttpRequest")
+
+	apiResp, err := httpClient.Do(apiReq)
+	if err != nil {
+		return "", nil, err
+	}
+	defer apiResp.Body.Close()
+
+	if apiResp.StatusCode != http.StatusOK {
+		return "", nil, fmt.Errorf("getSources status %d", apiResp.StatusCode)
+	}
+
+	var res MegaplaySourcesResponse
+	if err := json.NewDecoder(apiResp.Body).Decode(&res); err != nil {
+		return "", nil, err
+	}
+
+	if res.Sources.File == "" {
+		return "", nil, fmt.Errorf("no video file in getSources response")
+	}
+
+	return res.Sources.File, res.Tracks, nil
+}
+
+func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) string {
+	tracksJSON, _ := json.Marshal(subtitleTracks)
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MegaPlay Stream</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/artplayer/dist/artplayer.css">
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/artplayer/dist/artplayer.js"></script>
+    <style>
+        html, body, #player { width: 100%%; height: 100%%; margin: 0; padding: 0; background: #000; overflow: hidden; }
+        .art-video-player .art-mask { background-color: rgba(0,0,0,0.5); }
+    </style>
+</head>
+<body>
+    <div id="player"></div>
+    <script>
+        const subtitles = %s || [];
+        const art = new Artplayer({
+            container: '#player',
+            url: '%s',
+            type: 'm3u8',
+            customType: {
+                m3u8: function (video, url, art) {
+                    if (Hls.isSupported()) {
+                        if (art.hls) art.hls.destroy();
+                        const hls = new Hls();
+                        hls.loadSource(url);
+                        hls.attachMedia(video);
+                        art.hls = hls;
+                        art.on('destroy', () => hls.destroy());
+                    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                        video.src = url;
+                    }
+                },
+            },
+            autoplay: true,
+            autoSize: true,
+            autoMini: true,
+            screenshot: true,
+            setting: true,
+            loop: false,
+            flip: true,
+            playbackRate: true,
+            aspectRatio: true,
+            fullscreen: true,
+            fullscreenWeb: true,
+            pip: true,
+            theme: '#8b5cf6',
+            lang: 'en'
+        });
+    </script>
+</body>
+</html>`, string(tracksJSON), streamURL)
+}
+
 func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 	setCORS(w)
 	if r.Method == http.MethodOptions {
@@ -866,6 +1041,50 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Check cache for instant load
+	cacheKey := "megaplay:clean:" + targetPath
+	if val, ok := embedCache.Load(cacheKey); ok {
+		entry := val.(EmbedCacheEntry)
+		if time.Now().Before(entry.ExpiresAt) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
+			w.Header().Set("Content-Security-Policy", "default-src * 'unsafe-inline' 'unsafe-eval' blob: data:; frame-ancestors *;")
+			w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
+			w.Header().Del("X-Frame-Options")
+			w.Header().Del("Cross-Origin-Opener-Policy")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(entry.HTML))
+			return
+		}
+	}
+
+	// 1. Extract clean decrypted HLS stream directly from MegaPlay
+	hlsFile, tracks, err := extractMegaplayHLS(r.Context(), targetPath)
+	if err == nil && hlsFile != "" {
+		// Generate encrypted proxy token for HLS streaming with Referer: https://megaplay.buzz/
+		streamToken, err := encryptToken(hlsFile, "https://megaplay.buzz/")
+		if err == nil {
+			proxiedStreamURL := "/p/" + streamToken
+			html := renderCleanArtplayer(proxiedStreamURL, tracks)
+
+			embedCache.Store(cacheKey, EmbedCacheEntry{
+				HTML:      html,
+				ExpiresAt: time.Now().Add(2 * time.Hour),
+			})
+
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
+			w.Header().Set("Content-Security-Policy", "default-src * 'unsafe-inline' 'unsafe-eval' blob: data:; frame-ancestors *;")
+			w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
+			w.Header().Del("X-Frame-Options")
+			w.Header().Del("Cross-Origin-Opener-Policy")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(html))
+			return
+		}
+	}
+
+	// 2. Fallback to raw stream passthrough with base tag
 	upstreamURL := "https://megaplay.buzz/stream/" + targetPath
 	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, upstreamURL, nil)
 	if err != nil {
@@ -875,11 +1094,9 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 
 	upstreamReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 	upstreamReq.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-	upstreamReq.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	upstreamReq.Header.Set("Referer", "https://anikoto.cz/")
 	upstreamReq.Header.Set("Sec-Fetch-Dest", "iframe")
 	upstreamReq.Header.Set("Sec-Fetch-Mode", "navigate")
-	upstreamReq.Header.Set("Sec-Fetch-Site", "cross-site")
 
 	resp, err := httpClient.Do(upstreamReq)
 	if err != nil {
@@ -895,37 +1112,8 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rawHtml := string(bodyBytes)
-
-	hookScript := `<script>
-(function() {
-    var origFetch = window.fetch;
-    if (origFetch) {
-        window.fetch = function(url, opts) {
-            if (typeof url === 'string' && url.indexOf('getSources') !== -1) {
-                var localUrl = url.replace(/^https?:\/\/[^\/]+/, '');
-                if (!localUrl.startsWith('/')) localUrl = '/' + localUrl;
-                return origFetch.call(this, localUrl, opts);
-            }
-            return origFetch.apply(this, arguments);
-        };
-    }
-    var origOpen = XMLHttpRequest.prototype.open;
-    XMLHttpRequest.prototype.open = function(method, url) {
-        if (typeof url === 'string' && url.indexOf('getSources') !== -1) {
-            var localUrl = url.replace(/^https?:\/\/[^\/]+/, '');
-            if (!localUrl.startsWith('/')) localUrl = '/' + localUrl;
-            return origOpen.call(this, method, localUrl, arguments[2], arguments[3], arguments[4]);
-        }
-        return origOpen.apply(this, arguments);
-    };
-})();
-</script>`
-
-	// Inject base tag & getSources interceptor so all assets load from megaplay.buzz while AJAX calls stay on Railway proxy
 	if strings.Contains(rawHtml, "<head>") {
-		rawHtml = strings.Replace(rawHtml, "<head>", "<head>\n  <base href=\"https://megaplay.buzz/\">\n  "+hookScript, 1)
-	} else if strings.Contains(rawHtml, "<HEAD>") {
-		rawHtml = strings.Replace(rawHtml, "<HEAD>", "<HEAD>\n  <base href=\"https://megaplay.buzz/\">\n  "+hookScript, 1)
+		rawHtml = strings.Replace(rawHtml, "<head>", "<head>\n  <base href=\"https://megaplay.buzz/\">", 1)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
