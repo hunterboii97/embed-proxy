@@ -896,11 +896,36 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 
 	rawHtml := string(bodyBytes)
 
-	// Inject base tag so all assets, CSS, images, and scripts load from megaplay.buzz directly
+	hookScript := `<script>
+(function() {
+    var origFetch = window.fetch;
+    if (origFetch) {
+        window.fetch = function(url, opts) {
+            if (typeof url === 'string' && url.indexOf('getSources') !== -1) {
+                var localUrl = url.replace(/^https?:\/\/[^\/]+/, '');
+                if (!localUrl.startsWith('/')) localUrl = '/' + localUrl;
+                return origFetch.call(this, localUrl, opts);
+            }
+            return origFetch.apply(this, arguments);
+        };
+    }
+    var origOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function(method, url) {
+        if (typeof url === 'string' && url.indexOf('getSources') !== -1) {
+            var localUrl = url.replace(/^https?:\/\/[^\/]+/, '');
+            if (!localUrl.startsWith('/')) localUrl = '/' + localUrl;
+            return origOpen.call(this, method, localUrl, arguments[2], arguments[3], arguments[4]);
+        }
+        return origOpen.apply(this, arguments);
+    };
+})();
+</script>`
+
+	// Inject base tag & getSources interceptor so all assets load from megaplay.buzz while AJAX calls stay on Railway proxy
 	if strings.Contains(rawHtml, "<head>") {
-		rawHtml = strings.Replace(rawHtml, "<head>", "<head>\n  <base href=\"https://megaplay.buzz/\">", 1)
+		rawHtml = strings.Replace(rawHtml, "<head>", "<head>\n  <base href=\"https://megaplay.buzz/\">\n  "+hookScript, 1)
 	} else if strings.Contains(rawHtml, "<HEAD>") {
-		rawHtml = strings.Replace(rawHtml, "<HEAD>", "<HEAD>\n  <base href=\"https://megaplay.buzz/\">", 1)
+		rawHtml = strings.Replace(rawHtml, "<HEAD>", "<HEAD>\n  <base href=\"https://megaplay.buzz/\">\n  "+hookScript, 1)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
