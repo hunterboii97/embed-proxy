@@ -854,96 +854,63 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check in-memory cache
-	cacheKey := "megaplay:" + targetPath
-	if val, ok := embedCache.Load(cacheKey); ok {
-		entry := val.(EmbedCacheEntry)
-		if time.Now().Before(entry.ExpiresAt) && isMegaplayValid(entry.HTML) {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Header().Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
-			w.Header().Set("Content-Security-Policy", "frame-ancestors *")
-			w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
-			w.Header().Del("X-Frame-Options")
-			w.Header().Del("Cross-Origin-Opener-Policy")
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(entry.HTML))
-			return
-		}
-		embedCache.Delete(cacheKey)
-	}
-
-	// Parse path segments: [idType, id, ep, lang]
+	// Auto-resolve AniList ID to MAL ID if needed
 	parts := strings.Split(targetPath, "/")
-	var candidates []string
-
 	if len(parts) >= 4 {
-		idType := parts[0]
 		idNum, _ := strconv.Atoi(parts[1])
-		ep := parts[2]
-		lang := parts[3]
-
 		if idNum > 0 {
-			// 1. If AniList ID or unmapped ID, attempt MAL ID resolution via AniZip first
 			malId := resolveMalIdFromAniZip(idNum)
 			if malId > 0 {
-				candidates = append(candidates, fmt.Sprintf("mal/%d/%s/%s", malId, ep, lang))
+				targetPath = fmt.Sprintf("mal/%d/%s/%s", malId, parts[2], parts[3])
 			}
 		}
-
-		// 2. Add explicit mal and ani candidates
-		if idType == "ani" {
-			candidates = append(candidates, fmt.Sprintf("mal/%s/%s/%s", parts[1], ep, lang))
-			candidates = append(candidates, targetPath)
-		} else {
-			candidates = append(candidates, targetPath)
-			candidates = append(candidates, fmt.Sprintf("ani/%s/%s/%s", parts[1], ep, lang))
-		}
-	} else {
-		candidates = append(candidates, targetPath)
 	}
 
-	var validHtml string
-	for _, candidate := range candidates {
-		html, statusCode, err := fetchMegaplayStream(r.Context(), candidate)
-		if err != nil || statusCode != http.StatusOK {
-			continue
-		}
-		if isMegaplayValid(html) {
-			validHtml = html
-			break
-		}
+	upstreamURL := "https://megaplay.buzz/stream/" + targetPath
+	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, upstreamURL, nil)
+	if err != nil {
+		http.Error(w, `{"error":"Failed to build upstream request"}`, http.StatusInternalServerError)
+		return
 	}
 
-	if validHtml == "" {
-		// Fallback to direct fetch of targetPath
-		html, _, _ := fetchMegaplayStream(r.Context(), targetPath)
-		validHtml = html
+	upstreamReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	upstreamReq.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+	upstreamReq.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	upstreamReq.Header.Set("Referer", "https://anikoto.cz/")
+	upstreamReq.Header.Set("Sec-Fetch-Dest", "iframe")
+	upstreamReq.Header.Set("Sec-Fetch-Mode", "navigate")
+	upstreamReq.Header.Set("Sec-Fetch-Site", "cross-site")
+
+	resp, err := httpClient.Do(upstreamReq)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"Upstream fetch failed: %s"}`, err.Error()), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, `{"error":"Failed to read upstream HTML"}`, http.StatusBadGateway)
+		return
 	}
 
-	// 1. Rewrite base_url to same-origin so internal AJAX calls go through our proxy without CORS blocks
-	validHtml = strings.ReplaceAll(validHtml, "base_url: 'https://megaplay.buzz/'", "base_url: '/'")
-	validHtml = strings.ReplaceAll(validHtml, `base_url: "https://megaplay.buzz/"`, `base_url: "/"`)
-	validHtml = strings.ReplaceAll(validHtml, "https://megaplay.buzz/lib/", "/lib/")
-	validHtml = strings.ReplaceAll(validHtml, "https://megaplay.buzz/images/", "/images/")
+	rawHtml := string(bodyBytes)
 
-	// 2. Strip external trackers (statlytic & cloudflare beacon) while keeping all core player scripts intact
-	validHtml = trackerRegex.ReplaceAllString(validHtml, "")
-	validHtml = cfBeaconRegex.ReplaceAllString(validHtml, "")
-
-	// Cache sanitized HTML for 1 hour
-	embedCache.Store(cacheKey, EmbedCacheEntry{
-		HTML:      validHtml,
-		ExpiresAt: time.Now().Add(1 * time.Hour),
-	})
+	// Inject base tag so all assets, CSS, images, and scripts load from megaplay.buzz directly
+	if strings.Contains(rawHtml, "<head>") {
+		rawHtml = strings.Replace(rawHtml, "<head>", "<head>\n  <base href=\"https://megaplay.buzz/\">", 1)
+	} else if strings.Contains(rawHtml, "<HEAD>") {
+		rawHtml = strings.Replace(rawHtml, "<HEAD>", "<HEAD>\n  <base href=\"https://megaplay.buzz/\">", 1)
+	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Header().Set("Content-Security-Policy", "frame-ancestors *")
 	w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
 	w.Header().Del("X-Frame-Options")
 	w.Header().Del("Cross-Origin-Opener-Policy")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(validHtml))
+	w.WriteHeader(resp.StatusCode)
+	w.Write([]byte(rawHtml))
 }
 
 func handleMegaplaySources(w http.ResponseWriter, r *http.Request) {
