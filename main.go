@@ -821,6 +821,24 @@ func fetchMegaplayStream(ctx context.Context, path string) (string, int, error) 
 	return string(bodyBytes), resp.StatusCode, nil
 }
 
+func isMegaplayValid(html string) bool {
+	if html == "" {
+		return false
+	}
+	if strings.Contains(html, "Oops! Something went wrong") ||
+		strings.Contains(html, "Error Code: 404") ||
+		strings.Contains(html, "<title>Error") ||
+		strings.Contains(html, "Error - MegaPlay") {
+		return false
+	}
+	return strings.Contains(html, "megaplay-player") ||
+		strings.Contains(html, "newclient.min.js") ||
+		strings.Contains(html, "mg3-player") ||
+		strings.Contains(html, "e1-player") ||
+		strings.Contains(html, "jwplayer") ||
+		len(html) > 3800
+}
+
 func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 	setCORS(w)
 	if r.Method == http.MethodOptions {
@@ -840,7 +858,7 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 	cacheKey := "megaplay:" + targetPath
 	if val, ok := embedCache.Load(cacheKey); ok {
 		entry := val.(EmbedCacheEntry)
-		if time.Now().Before(entry.ExpiresAt) {
+		if time.Now().Before(entry.ExpiresAt) && isMegaplayValid(entry.HTML) {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Header().Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
 			w.Header().Set("Content-Security-Policy", "frame-ancestors *")
@@ -865,16 +883,17 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 		lang := parts[3]
 
 		if idNum > 0 {
-			// If AniList ID or ID > 50000, attempt MAL ID resolution first
+			// 1. If AniList ID or unmapped ID, attempt MAL ID resolution via AniZip first
 			malId := resolveMalIdFromAniZip(idNum)
 			if malId > 0 {
 				candidates = append(candidates, fmt.Sprintf("mal/%d/%s/%s", malId, ep, lang))
 			}
 		}
 
+		// 2. Add explicit mal and ani candidates
 		if idType == "ani" {
-			candidates = append(candidates, targetPath)
 			candidates = append(candidates, fmt.Sprintf("mal/%s/%s/%s", parts[1], ep, lang))
+			candidates = append(candidates, targetPath)
 		} else {
 			candidates = append(candidates, targetPath)
 			candidates = append(candidates, fmt.Sprintf("ani/%s/%s/%s", parts[1], ep, lang))
@@ -889,11 +908,7 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 		if err != nil || statusCode != http.StatusOK {
 			continue
 		}
-		// MegaPlay returns 200 with an error page when stream is not found
-		if strings.Contains(html, "<title>Error - MegaPlay</title>") || (len(html) < 2000 && strings.Contains(html, "Error")) {
-			continue
-		}
-		if strings.Contains(html, "jwplayer") || len(html) > 2000 {
+		if isMegaplayValid(html) {
 			validHtml = html
 			break
 		}
