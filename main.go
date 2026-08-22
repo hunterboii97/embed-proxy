@@ -920,12 +920,11 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 		validHtml = html
 	}
 
-	// 1. Inject <base href="https://megaplay.buzz/"> so styles, scripts, and media resolve to megaplay.buzz
-	if strings.Contains(validHtml, "<head>") {
-		validHtml = strings.Replace(validHtml, "<head>", "<head>\n  <base href=\"https://megaplay.buzz/\">", 1)
-	} else if strings.Contains(validHtml, "<HEAD>") {
-		validHtml = strings.Replace(validHtml, "<HEAD>", "<HEAD>\n  <base href=\"https://megaplay.buzz/\">", 1)
-	}
+	// 1. Rewrite base_url to same-origin so internal AJAX calls go through our proxy without CORS blocks
+	validHtml = strings.ReplaceAll(validHtml, "base_url: 'https://megaplay.buzz/'", "base_url: '/'")
+	validHtml = strings.ReplaceAll(validHtml, `base_url: "https://megaplay.buzz/"`, `base_url: "/"`)
+	validHtml = strings.ReplaceAll(validHtml, "https://megaplay.buzz/lib/", "/lib/")
+	validHtml = strings.ReplaceAll(validHtml, "https://megaplay.buzz/images/", "/images/")
 
 	// 2. Strip external trackers (statlytic & cloudflare beacon) while keeping all core player scripts intact
 	validHtml = trackerRegex.ReplaceAllString(validHtml, "")
@@ -945,6 +944,81 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 	w.Header().Del("Cross-Origin-Opener-Policy")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(validHtml))
+}
+
+func handleMegaplaySources(w http.ResponseWriter, r *http.Request) {
+	setCORS(w)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	upstreamURL := "https://megaplay.buzz" + r.URL.Path
+	if r.URL.RawQuery != "" {
+		upstreamURL += "?" + r.URL.RawQuery
+	}
+
+	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, upstreamURL, nil)
+	if err != nil {
+		http.Error(w, `{"error":"Failed to create upstream request"}`, http.StatusInternalServerError)
+		return
+	}
+
+	upstreamReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	upstreamReq.Header.Set("Accept", "*/*")
+	upstreamReq.Header.Set("Referer", "https://megaplay.buzz/")
+	upstreamReq.Header.Set("X-Requested-With", "XMLHttpRequest")
+
+	resp, err := httpClient.Do(upstreamReq)
+	if err != nil {
+		http.Error(w, `{"error":"Upstream fetch failed"}`, http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
+	w.Header().Set("Cache-Control", "public, max-age=600")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+func handleMegaplayLib(w http.ResponseWriter, r *http.Request) {
+	setCORS(w)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	upstreamURL := "https://megaplay.buzz" + r.URL.Path
+	if r.URL.RawQuery != "" {
+		upstreamURL += "?" + r.URL.RawQuery
+	}
+
+	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, upstreamURL, nil)
+	if err != nil {
+		http.Error(w, "error", http.StatusInternalServerError)
+		return
+	}
+
+	upstreamReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	upstreamReq.Header.Set("Referer", "https://megaplay.buzz/")
+
+	resp, err := httpClient.Do(upstreamReq)
+	if err != nil {
+		http.Error(w, "error", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	for k, v := range resp.Header {
+		w.Header()[k] = v
+	}
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -970,6 +1044,10 @@ func main() {
 	mux.HandleFunc("/health", handleHealth)
 	mux.HandleFunc("/embed/megaplay/", handleMegaplayEmbed)
 	mux.HandleFunc("/embed/megaplay", handleMegaplayEmbed)
+	mux.HandleFunc("/stream/getSources", handleMegaplaySources)
+	mux.HandleFunc("/stream/getSourcesNew", handleMegaplaySources)
+	mux.HandleFunc("/lib/", handleMegaplayLib)
+	mux.HandleFunc("/images/", handleMegaplayLib)
 	mux.HandleFunc("/p/", handleProxy)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" || r.URL.Path == "" {
@@ -978,6 +1056,14 @@ func main() {
 		}
 		if strings.HasPrefix(r.URL.Path, "/embed/megaplay") {
 			handleMegaplayEmbed(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/stream/getSources") {
+			handleMegaplaySources(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/lib/") || strings.HasPrefix(r.URL.Path, "/images/") {
+			handleMegaplayLib(w, r)
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/p") {
