@@ -837,7 +837,10 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
+	w.Header().Set("Content-Security-Policy", "frame-ancestors *")
+	w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
 	w.Header().Del("X-Frame-Options")
+	w.Header().Del("Cross-Origin-Opener-Policy")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(html))
 }
