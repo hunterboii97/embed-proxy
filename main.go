@@ -927,10 +927,7 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 		validHtml = strings.Replace(validHtml, "<HEAD>", "<HEAD>\n  <base href=\"https://megaplay.buzz/\">", 1)
 	}
 
-	// 2. Strip ad loader, anti-sandbox & popunder script (app.main.js)
-	validHtml = appMainJsRegex.ReplaceAllString(validHtml, "")
-
-	// 3. Strip tracker and beacon scripts
+	// 2. Strip external trackers (statlytic & cloudflare beacon) while keeping all core player scripts intact
 	validHtml = trackerRegex.ReplaceAllString(validHtml, "")
 	validHtml = cfBeaconRegex.ReplaceAllString(validHtml, "")
 
