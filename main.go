@@ -933,20 +933,152 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MegaPlay Stream</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>YumeZone Player</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/artplayer/dist/artplayer.css">
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/artplayer/dist/artplayer.js"></script>
     <style>
-        html, body, #player { width: 100%%; height: 100%%; margin: 0; padding: 0; background: #000; overflow: hidden; }
-        .art-video-player .art-mask { background-color: rgba(0,0,0,0.5); }
+        * { box-sizing: border-box; }
+        html, body {
+            width: 100%%;
+            height: 100%%;
+            margin: 0;
+            padding: 0;
+            background: #000000;
+            overflow: hidden;
+            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+        #player {
+            width: 100%%;
+            height: 100%%;
+        }
+        .art-video-player {
+            font-family: inherit !important;
+            --art-theme: #a855f7;
+        }
+        .art-video-player .art-bottom {
+            background: linear-gradient(to top, rgba(9, 9, 11, 0.95) 0%%, rgba(9, 9, 11, 0.7) 40%%, rgba(9, 9, 11, 0) 100%%) !important;
+            backdrop-filter: blur(8px);
+            padding: 10px 16px 14px 16px !important;
+        }
+        .art-video-player .art-progress {
+            height: 5px !important;
+            transition: height 0.2s ease !important;
+            border-radius: 4px;
+        }
+        .art-video-player .art-progress:hover {
+            height: 8px !important;
+        }
+        .art-video-player .art-progress .art-control-progress-played {
+            background: linear-gradient(90deg, #9333ea, #c084fc) !important;
+            box-shadow: 0 0 12px rgba(168, 85, 247, 0.6) !important;
+            border-radius: 4px;
+        }
+        .art-video-player .art-progress .art-control-progress-indicator {
+            background: #ffffff !important;
+            box-shadow: 0 0 10px rgba(192, 132, 252, 0.9) !important;
+            border: 2px solid #a855f7 !important;
+        }
+        .art-video-player .art-control-progress-loaded {
+            background: rgba(255, 255, 255, 0.25) !important;
+            border-radius: 4px;
+        }
+        .art-video-player .art-control-time {
+            font-family: 'Outfit', sans-serif !important;
+            font-size: 13px !important;
+            font-weight: 600 !important;
+            color: #e4e4e7 !important;
+            letter-spacing: 0.5px;
+        }
+        .art-video-player .art-icon svg {
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4));
+            transition: transform 0.15s ease, fill 0.15s ease;
+        }
+        .art-video-player .art-icon:hover svg {
+            transform: scale(1.1);
+        }
+        .art-video-player .art-state {
+            pointer-events: none;
+        }
+        .art-video-player .art-state .art-icon-state {
+            width: 72px;
+            height: 72px;
+            background: rgba(168, 85, 247, 0.85);
+            backdrop-filter: blur(12px);
+            border-radius: 50%%;
+            box-shadow: 0 0 30px rgba(168, 85, 247, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .art-video-player .art-state .art-icon-state svg {
+            width: 32px;
+            height: 32px;
+            fill: #ffffff;
+            margin-left: 3px;
+        }
+        .art-video-player .art-subtitle {
+            font-family: 'Outfit', sans-serif !important;
+            font-weight: 600 !important;
+            font-size: 26px !important;
+            color: #ffffff !important;
+            text-shadow: 0 0 4px #000, 0 0 8px #000, 2px 2px 3px #000, -2px -2px 3px #000 !important;
+            line-height: 1.4 !important;
+            bottom: 60px !important;
+        }
+        @media (max-width: 768px) {
+            .art-video-player .art-subtitle {
+                font-size: 18px !important;
+                bottom: 45px !important;
+            }
+            .art-video-player .art-bottom {
+                padding: 6px 10px 10px 10px !important;
+            }
+        }
+        .art-video-player .art-setting-panel {
+            background: rgba(24, 24, 27, 0.95) !important;
+            backdrop-filter: blur(16px) !important;
+            border: 1px solid rgba(255, 255, 255, 0.1) !important;
+            border-radius: 12px !important;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5) !important;
+        }
+        .art-video-player .art-setting-item:hover {
+            background: rgba(168, 85, 247, 0.15) !important;
+            color: #c084fc !important;
+        }
+        .art-video-player .art-setting-item.art-current {
+            color: #a855f7 !important;
+            font-weight: 600;
+        }
     </style>
 </head>
 <body>
     <div id="player"></div>
     <script>
-        const subtitles = %s || [];
+        const rawTracks = %s || [];
+        let initialSubtitle = {};
+        if (rawTracks.length > 0) {
+            const eng = rawTracks.find(t => (t.label || '').toLowerCase().includes('eng')) || rawTracks[0];
+            if (eng && eng.file) {
+                initialSubtitle = {
+                    url: eng.file,
+                    type: 'vtt',
+                    encoding: 'utf-8',
+                    escape: false,
+                    style: {
+                        color: '#ffffff',
+                        fontSize: window.innerWidth < 768 ? '18px' : '26px',
+                    },
+                };
+            }
+        }
+
         const art = new Artplayer({
             container: '#player',
             url: '%s',
@@ -955,7 +1087,11 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                 m3u8: function (video, url, art) {
                     if (Hls.isSupported()) {
                         if (art.hls) art.hls.destroy();
-                        const hls = new Hls();
+                        const hls = new Hls({
+                            maxBufferLength: 30,
+                            maxMaxBufferLength: 60,
+                            enableWorker: true,
+                        });
                         hls.loadSource(url);
                         hls.attachMedia(video);
                         art.hls = hls;
@@ -965,6 +1101,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                     }
                 },
             },
+            subtitle: initialSubtitle.url ? initialSubtitle : undefined,
             autoplay: true,
             autoSize: true,
             autoMini: true,
@@ -977,8 +1114,54 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             fullscreen: true,
             fullscreenWeb: true,
             pip: true,
-            theme: '#8b5cf6',
-            lang: 'en'
+            theme: '#a855f7',
+            lang: 'en',
+            hotkey: true,
+            airplay: true,
+            lock: true,
+            fastForward: true,
+            autoPlayback: true,
+            controls: [
+                {
+                    name: 'backward',
+                    position: 'left',
+                    index: 10,
+                    html: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg>',
+                    tooltip: 'Backward 10s',
+                    click: function () {
+                        art.currentTime = Math.max(0, art.currentTime - 10);
+                    },
+                },
+                {
+                    name: 'forward',
+                    position: 'left',
+                    index: 11,
+                    html: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/></svg>',
+                    tooltip: 'Forward 10s',
+                    click: function () {
+                        art.currentTime = Math.min(art.duration || 9999, art.currentTime + 10);
+                    },
+                },
+            ],
+            settings: rawTracks.length > 0 ? [
+                {
+                    html: 'Subtitles',
+                    tooltip: (rawTracks.find(t => (t.label || '').toLowerCase().includes('eng')) || rawTracks[0])?.label || 'Default',
+                    selector: [
+                        { html: 'Off', url: '' },
+                        ...rawTracks.map(t => ({ html: t.label, url: t.file, default: Boolean(t.default) }))
+                    ],
+                    onSelect: function (item) {
+                        if (!item.url) {
+                            art.subtitle.show = false;
+                        } else {
+                            art.subtitle.show = true;
+                            art.subtitle.switch(item.url, { name: item.html });
+                        }
+                        return item.html;
+                    },
+                }
+            ] : []
         });
     </script>
 </body>
@@ -1032,6 +1215,22 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 	// 1. Extract clean decrypted HLS stream directly from MegaPlay
 	hlsFile, tracks, err := extractMegaplayHLS(r.Context(), targetPath)
 	if err == nil && hlsFile != "" {
+		// Proxy subtitle tracks through /p/ token route so they load with proper CORS
+		var proxiedTracks []SubtitleTrack
+		for _, t := range tracks {
+			if t.File != "" {
+				subToken, subErr := encryptToken(&TokenPayload{
+					URL: t.File,
+					Ref: "https://megaplay.buzz/",
+					Exp: time.Now().Add(6 * time.Hour).Unix(),
+				})
+				if subErr == nil {
+					t.File = "/p/" + subToken
+				}
+			}
+			proxiedTracks = append(proxiedTracks, t)
+		}
+
 		// Generate encrypted proxy token for HLS streaming with Referer: https://megaplay.buzz/
 		streamToken, err := encryptToken(&TokenPayload{
 			URL: hlsFile,
@@ -1040,7 +1239,7 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 		})
 		if err == nil {
 			proxiedStreamURL := "/p/" + streamToken
-			html := renderCleanArtplayer(proxiedStreamURL, tracks)
+			html := renderCleanArtplayer(proxiedStreamURL, proxiedTracks)
 
 			embedCache.Store(cacheKey, EmbedCacheEntry{
 				HTML:      html,
