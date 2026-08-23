@@ -1283,7 +1283,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
 
 func renderCustomProxy404(path string, message string) string {
 	if message == "" {
-		message = "This episode stream is currently unavailable on Megaplay server. Please switch to Cosmic, Zoko, or Animo server below."
+		message = "This episode is currently unavailable on Megaplay server. Please switch to an alternative server below."
 	}
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
@@ -1300,41 +1300,58 @@ func renderCustomProxy404(path string, message string) string {
             width: 100%%;
             height: 100%%;
             background-color: #09090b;
+            background-image: radial-gradient(circle at center, rgba(168, 85, 247, 0.15) 0%%, rgba(9, 9, 11, 0.98) 70%%);
             color: #f4f4f5;
-            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             display: flex;
             align-items: center;
             justify-content: center;
             overflow: hidden;
             text-align: center;
             padding: 20px;
+            -webkit-font-smoothing: antialiased;
         }
-        .container {
-            max-width: 480px;
+        .error-card {
+            max-width: 520px;
             width: 100%%;
-            background: rgba(24, 24, 27, 0.85);
-            border: 1px solid rgba(168, 85, 247, 0.25);
-            border-radius: 16px;
-            padding: 32px 24px;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+            background: rgba(18, 18, 22, 0.85);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(168, 85, 247, 0.3);
+            border-radius: 20px;
+            padding: 36px 28px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7), 0 0 30px rgba(168, 85, 247, 0.15);
+            position: relative;
+            animation: fadeIn 0.4s ease-out;
         }
-        .icon-box {
-            width: 64px;
-            height: 64px;
-            margin: 0 auto 20px;
-            background: rgba(168, 85, 247, 0.12);
-            border-radius: 50%%;
-            display: flex;
+        @keyframes fadeIn {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
+        }
+        .badge {
+            display: inline-flex;
             align-items: center;
-            justify-content: center;
+            gap: 6px;
+            padding: 5px 14px;
+            background: rgba(168, 85, 247, 0.12);
+            border: 1px solid rgba(168, 85, 247, 0.3);
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 700;
             color: #c084fc;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 18px;
         }
-        .icon-box svg {
-            width: 32px;
-            height: 32px;
+        .badge-dot {
+            width: 6px;
+            height: 6px;
+            background: #a855f7;
+            border-radius: 50%%;
+            box-shadow: 0 0 8px #a855f7;
         }
         h1 {
-            font-size: 20px;
+            font-size: 22px;
             font-weight: 700;
             color: #ffffff;
             margin-bottom: 10px;
@@ -1343,56 +1360,107 @@ func renderCustomProxy404(path string, message string) string {
         p {
             font-size: 14px;
             color: #a1a1aa;
-            line-height: 1.5;
+            line-height: 1.55;
             margin-bottom: 24px;
+        }
+        .server-switcher {
+            margin-bottom: 24px;
+        }
+        .server-title {
+            font-size: 11px;
+            font-weight: 700;
+            color: #71717a;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin-bottom: 10px;
+        }
+        .pills {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            justify-content: center;
+        }
+        .pill-btn {
+            padding: 7px 14px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 10px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #e4e4e7;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .pill-btn:hover {
+            background: rgba(168, 85, 247, 0.2);
+            border-color: #a855f7;
+            color: #c084fc;
+            transform: translateY(-1px);
         }
         .actions {
             display: flex;
             gap: 12px;
             justify-content: center;
         }
-        .btn {
+        .btn-retry {
+            padding: 11px 24px;
+            background: linear-gradient(135deg, #9333ea, #c084fc);
+            border: none;
+            border-radius: 12px;
+            font-size: 13px;
+            font-weight: 700;
+            color: #ffffff;
+            cursor: pointer;
+            box-shadow: 0 4px 18px rgba(147, 51, 234, 0.45);
+            transition: all 0.2s ease;
             display: inline-flex;
             align-items: center;
             gap: 8px;
-            padding: 10px 20px;
-            border-radius: 10px;
-            font-size: 13px;
-            font-weight: 600;
-            cursor: pointer;
-            border: none;
-            transition: all 0.2s ease;
-            text-decoration: none;
         }
-        .btn-primary {
-            background: #9333ea;
-            color: #ffffff;
-            box-shadow: 0 4px 14px rgba(147, 51, 234, 0.4);
-        }
-        .btn-primary:hover {
-            background: #a855f7;
-            transform: translateY(-1px);
+        .btn-retry:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 24px rgba(168, 85, 247, 0.6);
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="icon-box">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="12" y1="8" x2="12" y2="12"></line>
-                <line x1="12" y1="16" x2="12.01" y2="16"></line>
-            </svg>
+    <div class="error-card">
+        <div class="badge">
+            <span class="badge-dot"></span>
+            Megaplay Stream Offline
         </div>
-        <h1>Megaplay Stream Unavailable</h1>
+        <h1>Stream Temporarily Unavailable</h1>
         <p>%s</p>
+        
+        <div class="server-switcher">
+            <div class="server-title">Switch Server</div>
+            <div class="pills">
+                <button class="pill-btn" onclick="switchServer('cosmic')">✨ Cosmic</button>
+                <button class="pill-btn" onclick="switchServer('zoko')">⚡ Zoko</button>
+                <button class="pill-btn" onclick="switchServer('animo')">🌀 Animo</button>
+                <button class="pill-btn" onclick="switchServer('link')">🔗 Link</button>
+                <button class="pill-btn" onclick="switchServer('nest')">🪹 Nest</button>
+            </div>
+        </div>
+
         <div class="actions">
-            <button class="btn btn-primary" onclick="window.location.reload()">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+            <button class="btn-retry" onclick="window.location.reload()">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
                 Retry Stream
             </button>
         </div>
     </div>
+
+    <script>
+        function switchServer(serverName) {
+            try {
+                window.parent.postMessage({ type: 'YUME_SWITCH_SERVER', server: serverName }, '*');
+            } catch(e) {}
+        }
+    </script>
 </body>
 </html>`, message)
 }
