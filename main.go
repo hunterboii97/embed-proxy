@@ -763,7 +763,7 @@ func resolveMalId(idNum int) int {
 		return cached.(int)
 	}
 
-	// 1. Try AniZip API
+	// Tier 1: AniZip API
 	reqURL := fmt.Sprintf("https://api.ani.zip/mappings?anilist_id=%d", idNum)
 	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
 	if err == nil {
@@ -785,7 +785,7 @@ func resolveMalId(idNum int) int {
 		}
 	}
 
-	// 2. Fallback to AniList GraphQL API
+	// Tier 2: AniList GraphQL API
 	graphqlQuery := `query ($id: Int) { Media (id: $id, type: ANIME) { idMal } }`
 	bodyBytes, _ := json.Marshal(map[string]interface{}{
 		"query": graphqlQuery,
@@ -811,6 +811,33 @@ func resolveMalId(idNum int) int {
 				resp.Body.Close()
 				malIdCache.Store(idNum, gqlRes.Data.Media.IDMal)
 				return gqlRes.Data.Media.IDMal
+			}
+			resp.Body.Close()
+		}
+	}
+
+	// Tier 3: Kitsu API Fallback
+	kitsuURL := fmt.Sprintf("https://kitsu.io/api/edge/anime?filter[anilist_id]=%d", idNum)
+	kitsuReq, err := http.NewRequest(http.MethodGet, kitsuURL, nil)
+	if err == nil {
+		kitsuReq.Header.Set("User-Agent", "Mozilla/5.0")
+		client := &http.Client{Timeout: 3 * time.Second}
+		resp, err := client.Do(kitsuReq)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			var kitsuData struct {
+				Data []struct {
+					Attributes struct {
+						MalID int `json:"malId"`
+					} `json:"attributes"`
+				} `json:"data"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&kitsuData); err == nil && len(kitsuData.Data) > 0 {
+				malId := kitsuData.Data[0].Attributes.MalID
+				if malId > 0 {
+					resp.Body.Close()
+					malIdCache.Store(idNum, malId)
+					return malId
+				}
 			}
 			resp.Body.Close()
 		}
@@ -1253,6 +1280,152 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
 </html>`, string(tracksJSON), streamURL)
 }
 
+
+func renderCustomProxy404(path string, message string) string {
+	if message == "" {
+		message = "This episode stream is currently unavailable on Megaplay server. Please switch to Cosmic, Zoko, or Animo server below."
+	}
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stream Unavailable - YumeZone</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body {
+            width: 100%%;
+            height: 100%%;
+            background-color: #09090b;
+            color: #f4f4f5;
+            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            text-align: center;
+            padding: 20px;
+        }
+        .container {
+            max-width: 480px;
+            width: 100%%;
+            background: rgba(24, 24, 27, 0.85);
+            border: 1px solid rgba(168, 85, 247, 0.25);
+            border-radius: 16px;
+            padding: 32px 24px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+        }
+        .icon-box {
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 20px;
+            background: rgba(168, 85, 247, 0.12);
+            border-radius: 50%%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #c084fc;
+        }
+        .icon-box svg {
+            width: 32px;
+            height: 32px;
+        }
+        h1 {
+            font-size: 20px;
+            font-weight: 700;
+            color: #ffffff;
+            margin-bottom: 10px;
+            letter-spacing: -0.02em;
+        }
+        p {
+            font-size: 14px;
+            color: #a1a1aa;
+            line-height: 1.5;
+            margin-bottom: 24px;
+        }
+        .actions {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px;
+            border-radius: 10px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s ease;
+            text-decoration: none;
+        }
+        .btn-primary {
+            background: #9333ea;
+            color: #ffffff;
+            box-shadow: 0 4px 14px rgba(147, 51, 234, 0.4);
+        }
+        .btn-primary:hover {
+            background: #a855f7;
+            transform: translateY(-1px);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon-box">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="12"></line>
+                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+        </div>
+        <h1>Megaplay Stream Unavailable</h1>
+        <p>%s</p>
+        <div class="actions">
+            <button class="btn btn-primary" onclick="window.location.reload()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                Retry Stream
+            </button>
+        </div>
+    </div>
+</body>
+</html>`, message)
+}
+
+func extractMegaplayHLSWithFallback(ctx context.Context, originalPath string) (string, []SubtitleTrack, error) {
+	normPath := normalizeMegaplayPath(originalPath)
+	
+	// Candidate 1: Normalized MAL path on megaplay.buzz
+	hlsFile, tracks, err := extractMegaplayHLS(ctx, normPath)
+	if err == nil && hlsFile != "" {
+		return hlsFile, tracks, nil
+	}
+
+	// Candidate 2: Original raw path on megaplay.buzz if different
+	if originalPath != normPath {
+		hlsFile, tracks, err = extractMegaplayHLS(ctx, originalPath)
+		if err == nil && hlsFile != "" {
+			return hlsFile, tracks, nil
+		}
+	}
+
+	// Candidate 3: Try alternate prefix (ani/ vs mal/)
+	if strings.HasPrefix(normPath, "mal/") {
+		aniCandidate := "ani/" + strings.TrimPrefix(normPath, "mal/")
+		hlsFile, tracks, err = extractMegaplayHLS(ctx, aniCandidate)
+		if err == nil && hlsFile != "" {
+			return hlsFile, tracks, nil
+		}
+	}
+
+	return "", nil, fmt.Errorf("all megaplay extraction mirrors failed for path: %s", originalPath)
+}
+
 func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 	setCORS(w)
 	if r.Method == http.MethodOptions {
@@ -1288,8 +1461,8 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 1. Extract clean decrypted HLS stream directly from MegaPlay
-	hlsFile, tracks, err := extractMegaplayHLS(r.Context(), targetPath)
+	// 1. Extract clean decrypted HLS stream directly from MegaPlay with multi-mirror fallbacks
+	hlsFile, tracks, err := extractMegaplayHLSWithFallback(r.Context(), targetPath)
 	if err == nil && hlsFile != "" {
 		// Proxy subtitle tracks through /p/ token route so they load with proper CORS
 		var proxiedTracks []SubtitleTrack
@@ -1334,54 +1507,16 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 2. Fallback to raw stream passthrough with base tag
-	upstreamURL := "https://megaplay.buzz/stream/" + targetPath
-	upstreamReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, upstreamURL, nil)
-	if err != nil {
-		http.Error(w, `{"error":"Failed to build upstream request"}`, http.StatusInternalServerError)
-		return
-	}
-
-	upstreamReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-	upstreamReq.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-	upstreamReq.Header.Set("Referer", "https://anikoto.cz/")
-	upstreamReq.Header.Set("Sec-Fetch-Dest", "iframe")
-	upstreamReq.Header.Set("Sec-Fetch-Mode", "navigate")
-
-	resp, err := httpClient.Do(upstreamReq)
-	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"Upstream fetch failed: %s"}`, err.Error()), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		http.Error(w, `{"error":"Failed to read upstream HTML"}`, http.StatusBadGateway)
-		return
-	}
-
-	rawHtml := string(bodyBytes)
-	noBlurStyle := `<style>
-		video, iframe, #megaplay-player, .mg3-player, #fix-area, .fix-area, body, div, canvas, .content-center {
-			filter: none !important;
-			-webkit-filter: none !important;
-			backdrop-filter: none !important;
-			-webkit-backdrop-filter: none !important;
-		}
-	</style>`
-	if strings.Contains(rawHtml, "<head>") {
-		rawHtml = strings.Replace(rawHtml, "<head>", "<head>\n  <base href=\"https://megaplay.buzz/\">\n  "+noBlurStyle, 1)
-	}
-
+	// 2. Custom YumeZone Error UI fallback when stream is unavailable across all mirrors
+	errorHTML := renderCustomProxy404(targetPath, "This episode stream is currently unavailable on Megaplay server. Please switch to Cosmic, Zoko, or Animo server below.")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	w.Header().Set("Content-Security-Policy", "frame-ancestors *")
+	w.Header().Set("Content-Security-Policy", "default-src * 'unsafe-inline' 'unsafe-eval' blob: data:; frame-ancestors *;")
 	w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
 	w.Header().Del("X-Frame-Options")
 	w.Header().Del("Cross-Origin-Opener-Policy")
-	w.WriteHeader(resp.StatusCode)
-	w.Write([]byte(rawHtml))
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(errorHTML))
 }
 
 func handleMegaplaySources(w http.ResponseWriter, r *http.Request) {
