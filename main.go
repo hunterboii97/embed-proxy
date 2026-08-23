@@ -1074,10 +1074,10 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
         }
         .art-video-player {
             font-family: inherit !important;
-            --art-theme: #a855f7;
+            --art-theme: #ffffff;
         }
         .art-video-player .art-bottom {
-            background: linear-gradient(to top, rgba(9, 9, 11, 0.95) 0%%, rgba(9, 9, 11, 0.7) 40%%, rgba(9, 9, 11, 0) 100%%) !important;
+            background: linear-gradient(to top, rgba(0, 0, 0, 0.95) 0%%, rgba(0, 0, 0, 0.5) 50%%, rgba(0, 0, 0, 0) 100%%) !important;
             padding: 10px 16px 14px 16px !important;
         }
         .art-video-player .art-progress {
@@ -1089,14 +1089,14 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             height: 8px !important;
         }
         .art-video-player .art-progress .art-control-progress-played {
-            background: linear-gradient(90deg, #9333ea, #c084fc) !important;
-            box-shadow: 0 0 12px rgba(168, 85, 247, 0.6) !important;
+            background: #ffffff !important;
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.7) !important;
             border-radius: 4px;
         }
         .art-video-player .art-progress .art-control-progress-indicator {
             background: #ffffff !important;
-            box-shadow: 0 0 10px rgba(192, 132, 252, 0.9) !important;
-            border: 2px solid #a855f7 !important;
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.9) !important;
+            border: 2px solid #000000 !important;
         }
         .art-video-player .art-control-progress-loaded {
             background: rgba(255, 255, 255, 0.25) !important;
@@ -1110,7 +1110,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             letter-spacing: 0.5px;
         }
         .art-video-player .art-icon svg {
-            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.4));
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6));
             transition: transform 0.15s ease, fill 0.15s ease;
         }
         .art-video-player .art-icon:hover svg {
@@ -1119,35 +1119,40 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
         .art-video-player .art-state {
             pointer-events: none;
         }
+        /* Custom Center Play Button matching OLED Minimal Theme */
         .art-video-player .art-state .art-icon-state {
-            width: 72px;
-            height: 72px;
-            background: rgba(168, 85, 247, 0.85);
-            border-radius: 50%%;
-            box-shadow: 0 0 30px rgba(168, 85, 247, 0.5);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+            width: 70px !important;
+            height: 70px !important;
+            background: rgba(255, 255, 255, 0.22) !important;
+            border-radius: 50%% !important;
+            box-shadow: 0 0 24px rgba(0, 0, 0, 0.6) !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            transition: transform 0.2s ease, background 0.2s ease !important;
+        }
+        .art-video-player .art-state .art-icon-state:hover {
+            transform: scale(1.1) !important;
+            background: rgba(255, 255, 255, 0.35) !important;
         }
         .art-video-player .art-state .art-icon-state svg {
-            width: 32px;
-            height: 32px;
-            fill: #ffffff;
-            margin-left: 3px;
+            width: 28px !important;
+            height: 28px !important;
+            fill: #ffffff !important;
+            margin-left: 4px !important;
         }
         .art-video-player .art-subtitle {
-            font-family: 'Outfit', sans-serif !important;
+            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif !important;
             font-weight: 600 !important;
             font-size: 26px !important;
             color: #ffffff !important;
-            text-shadow: 0 0 4px #000, 0 0 8px #000, 2px 2px 3px #000, -2px -2px 3px #000 !important;
+            text-shadow: -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000, 0 3px 6px rgba(0,0,0,0.95) !important;
             line-height: 1.4 !important;
             bottom: 60px !important;
         }
         @media (max-width: 768px) {
             .art-video-player .art-subtitle {
-                font-size: 18px !important;
+                font-size: 19px !important;
                 bottom: 45px !important;
             }
             .art-video-player .art-bottom {
@@ -1155,18 +1160,18 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             }
         }
         .art-video-player .art-setting-panel {
-            background: rgba(24, 24, 27, 0.95) !important;!important;
-            border: 1px solid rgba(255, 255, 255, 0.1) !important;
+            background: rgba(13, 13, 15, 0.96) !important;
+            border: 1px solid rgba(255, 255, 255, 0.15) !important;
             border-radius: 12px !important;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5) !important;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7) !important;
         }
         .art-video-player .art-setting-item:hover {
-            background: rgba(168, 85, 247, 0.15) !important;
-            color: #c084fc !important;
+            background: rgba(255, 255, 255, 0.12) !important;
+            color: #ffffff !important;
         }
         .art-video-player .art-setting-item.art-current {
-            color: #a855f7 !important;
-            font-weight: 600;
+            color: #ffffff !important;
+            font-weight: 700 !important;
         }
     </style>
 </head>
@@ -1185,7 +1190,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                     escape: false,
                     style: {
                         color: '#ffffff',
-                        fontSize: window.innerWidth < 768 ? '18px' : '26px',
+                        fontSize: window.innerWidth < 768 ? '19px' : '26px',
                     },
                 };
             }
@@ -1207,6 +1212,34 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                         hls.loadSource(url);
                         hls.attachMedia(video);
                         art.hls = hls;
+
+                        // Auto Highest Quality Selection & Quality Selector Menu
+                        hls.on(Hls.Events.MANIFEST_PARSED, function () {
+                            if (hls.levels && hls.levels.length > 0) {
+                                hls.currentLevel = hls.levels.length - 1; // Pick highest resolution
+                            }
+
+                            const levels = hls.levels;
+                            if (levels && levels.length > 1) {
+                                const qualitySelector = levels.map((level, index) => ({
+                                    html: level.height ? level.height + 'P' : 'Quality ' + (index + 1),
+                                    level: index,
+                                    default: index === levels.length - 1
+                                }));
+                                qualitySelector.unshift({ html: 'Auto', level: -1 });
+
+                                art.setting.add({
+                                    html: 'Quality',
+                                    tooltip: (levels[levels.length - 1].height || '1080') + 'P',
+                                    selector: qualitySelector,
+                                    onSelect: function (item) {
+                                        hls.currentLevel = item.level;
+                                        return item.html;
+                                    }
+                                });
+                            }
+                        });
+
                         art.on('destroy', () => hls.destroy());
                     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
                         video.src = url;
@@ -1215,6 +1248,8 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             },
             subtitle: initialSubtitle.url ? initialSubtitle : undefined,
             autoplay: true,
+            volume: 1.0,
+            muted: false,
             autoSize: true,
             autoMini: true,
             screenshot: true,
@@ -1226,7 +1261,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             fullscreen: true,
             fullscreenWeb: true,
             pip: true,
-            theme: '#a855f7',
+            theme: '#ffffff',
             lang: 'en',
             hotkey: true,
             airplay: true,
@@ -1275,6 +1310,11 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                 }
             ] : []
         });
+
+        art.on('ready', () => {
+            art.volume = 1.0;
+            art.muted = false;
+        });
     </script>
 </body>
 </html>`, string(tracksJSON), streamURL)
@@ -1299,10 +1339,9 @@ func renderCustomProxy404(path string, message string) string {
         html, body {
             width: 100%%;
             height: 100%%;
-            background-color: #09090b;
-            background-image: radial-gradient(circle at center, rgba(168, 85, 247, 0.15) 0%%, rgba(9, 9, 11, 0.98) 70%%);
+            background-color: #000000;
             color: #f4f4f5;
-            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -1312,20 +1351,18 @@ func renderCustomProxy404(path string, message string) string {
             -webkit-font-smoothing: antialiased;
         }
         .error-card {
-            max-width: 520px;
+            max-width: 480px;
             width: 100%%;
-            background: rgba(18, 18, 22, 0.85);
-            backdrop-filter: blur(16px);
-            -webkit-backdrop-filter: blur(16px);
-            border: 1px solid rgba(168, 85, 247, 0.3);
+            background: #0d0d11;
+            border: 1px solid rgba(255, 255, 255, 0.12);
             border-radius: 20px;
             padding: 36px 28px;
-            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7), 0 0 30px rgba(168, 85, 247, 0.15);
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.9);
             position: relative;
-            animation: fadeIn 0.4s ease-out;
+            animation: fadeIn 0.3s ease-out;
         }
         @keyframes fadeIn {
-            from { opacity: 0; transform: scale(0.95); }
+            from { opacity: 0; transform: scale(0.96); }
             to { opacity: 1; transform: scale(1); }
         }
         .badge {
@@ -1333,12 +1370,12 @@ func renderCustomProxy404(path string, message string) string {
             align-items: center;
             gap: 6px;
             padding: 5px 14px;
-            background: rgba(168, 85, 247, 0.12);
-            border: 1px solid rgba(168, 85, 247, 0.3);
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.15);
             border-radius: 999px;
             font-size: 11px;
             font-weight: 700;
-            color: #c084fc;
+            color: #e4e4e7;
             text-transform: uppercase;
             letter-spacing: 0.08em;
             margin-bottom: 18px;
@@ -1346,9 +1383,9 @@ func renderCustomProxy404(path string, message string) string {
         .badge-dot {
             width: 6px;
             height: 6px;
-            background: #a855f7;
+            background: #ffffff;
             border-radius: 50%%;
-            box-shadow: 0 0 8px #a855f7;
+            box-shadow: 0 0 8px #ffffff;
         }
         h1 {
             font-size: 22px;
@@ -1382,8 +1419,8 @@ func renderCustomProxy404(path string, message string) string {
         }
         .pill-btn {
             padding: 7px 14px;
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(255, 255, 255, 0.12);
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.15);
             border-radius: 10px;
             font-size: 12px;
             font-weight: 600;
@@ -1395,9 +1432,9 @@ func renderCustomProxy404(path string, message string) string {
             gap: 6px;
         }
         .pill-btn:hover {
-            background: rgba(168, 85, 247, 0.2);
-            border-color: #a855f7;
-            color: #c084fc;
+            background: #ffffff;
+            border-color: #ffffff;
+            color: #000000;
             transform: translateY(-1px);
         }
         .actions {
@@ -1407,14 +1444,14 @@ func renderCustomProxy404(path string, message string) string {
         }
         .btn-retry {
             padding: 11px 24px;
-            background: linear-gradient(135deg, #9333ea, #c084fc);
+            background: #ffffff;
             border: none;
             border-radius: 12px;
             font-size: 13px;
             font-weight: 700;
-            color: #ffffff;
+            color: #000000;
             cursor: pointer;
-            box-shadow: 0 4px 18px rgba(147, 51, 234, 0.45);
+            box-shadow: 0 4px 18px rgba(255, 255, 255, 0.25);
             transition: all 0.2s ease;
             display: inline-flex;
             align-items: center;
@@ -1422,7 +1459,8 @@ func renderCustomProxy404(path string, message string) string {
         }
         .btn-retry:hover {
             transform: translateY(-2px);
-            box-shadow: 0 6px 24px rgba(168, 85, 247, 0.6);
+            background: #f4f4f5;
+            box-shadow: 0 6px 24px rgba(255, 255, 255, 0.4);
         }
     </style>
 </head>
