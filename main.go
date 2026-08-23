@@ -963,7 +963,6 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
         }
         .art-video-player .art-bottom {
             background: linear-gradient(to top, rgba(9, 9, 11, 0.95) 0%%, rgba(9, 9, 11, 0.7) 40%%, rgba(9, 9, 11, 0) 100%%) !important;
-            backdrop-filter: blur(8px);
             padding: 10px 16px 14px 16px !important;
         }
         .art-video-player .art-progress {
@@ -1009,7 +1008,6 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             width: 72px;
             height: 72px;
             background: rgba(168, 85, 247, 0.85);
-            backdrop-filter: blur(12px);
             border-radius: 50%%;
             box-shadow: 0 0 30px rgba(168, 85, 247, 0.5);
             display: flex;
@@ -1042,8 +1040,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             }
         }
         .art-video-player .art-setting-panel {
-            background: rgba(24, 24, 27, 0.95) !important;
-            backdrop-filter: blur(16px) !important;
+            background: rgba(24, 24, 27, 0.95) !important;!important;
             border: 1px solid rgba(255, 255, 255, 0.1) !important;
             border-radius: 12px !important;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5) !important;
