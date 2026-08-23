@@ -1073,6 +1073,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             height: 100%%;
             position: relative;
             background: #000000;
+            overflow: hidden;
         }
         .art-video-player {
             font-family: inherit !important;
@@ -1080,22 +1081,25 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             position: relative !important;
             width: 100%% !important;
             height: 100%% !important;
+            overflow: visible !important;
         }
         .art-video-player .art-bottom {
             background: linear-gradient(to top, rgba(0, 0, 0, 0.95) 0%%, rgba(0, 0, 0, 0.6) 60%%, rgba(0, 0, 0, 0) 100%%) !important;
-            padding: 10px 16px 12px 16px !important;
+            padding: 10px 16px 14px 16px !important;
+            overflow: visible !important;
+            z-index: 60 !important;
         }
         .art-video-player .art-controls {
             display: flex !important;
             align-items: center !important;
-            height: 36px !important;
+            height: 38px !important;
             margin-top: 4px !important;
         }
         .art-video-player .art-controls-left,
         .art-video-player .art-controls-right {
             display: flex !important;
             align-items: center !important;
-            gap: 8px !important;
+            gap: 10px !important;
             height: 100%% !important;
         }
         .art-video-player .art-progress {
@@ -1130,10 +1134,10 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
         }
         .art-video-player .art-icon svg {
             filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6));
-            transition: transform 0.15s ease;
+            transition: transform 0.15s ease, opacity 0.15s ease;
         }
         .art-video-player .art-icon:hover svg {
-            transform: scale(1.1);
+            transform: scale(1.12);
         }
 
         /* Hide Artplayer default volume icon so ONLY single custom volume slider renders */
@@ -1141,7 +1145,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             display: none !important;
         }
 
-        /* Dead-Center Play Button Overlay (Start Screen & Pause State) */
+        /* Dead-Center Premium Glassmorphic Play Button */
         #yume-start-screen,
         .art-video-player .art-state {
             position: absolute !important;
@@ -1167,11 +1171,14 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
         }
         .start-play-btn,
         .art-video-player .art-state .art-icon-state {
-            width: 72px !important;
-            height: 72px !important;
-            background: rgba(255, 255, 255, 0.24) !important;
+            width: 76px !important;
+            height: 76px !important;
+            background: rgba(255, 255, 255, 0.22) !important;
             border-radius: 50%% !important;
-            box-shadow: 0 0 30px rgba(0, 0, 0, 0.8) !important;
+            border: 1.5px solid rgba(255, 255, 255, 0.35) !important;
+            box-shadow: 0 10px 35px rgba(0, 0, 0, 0.75) !important;
+            backdrop-filter: blur(12px) !important;
+            -webkit-backdrop-filter: blur(12px) !important;
             display: flex !important;
             align-items: center !important;
             justify-content: center !important;
@@ -1180,22 +1187,42 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             top: auto !important;
             left: auto !important;
             transform: none !important;
-            transition: transform 0.2s ease, background 0.2s ease !important;
+            transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s ease !important;
         }
         .start-play-btn:hover,
         .art-video-player .art-state .art-icon-state:hover {
-            transform: scale(1.1) !important;
-            background: rgba(255, 255, 255, 0.38) !important;
+            transform: scale(1.12) !important;
+            background: rgba(255, 255, 255, 0.35) !important;
         }
         .start-play-btn svg,
         .art-video-player .art-state .art-icon-state svg {
-            width: 30px !important;
-            height: 30px !important;
+            width: 34px !important;
+            height: 34px !important;
             fill: #ffffff !important;
             margin-left: 4px !important;
         }
 
-        /* Modern Sleek Volume Control Bar */
+        /* Top-Left Floating Time Badge for Mobile & Desktop */
+        #yume-top-time {
+            position: absolute;
+            top: 14px;
+            left: 14px;
+            background: rgba(13, 13, 16, 0.75);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 8px;
+            padding: 4px 10px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #ffffff;
+            letter-spacing: 0.5px;
+            z-index: 50;
+            pointer-events: none;
+            display: none;
+        }
+
+        /* Modern Sleek Dynamic Volume Slider */
         .yume-vol-wrap {
             display: flex;
             align-items: center;
@@ -1207,7 +1234,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             border: none;
             color: #ffffff;
             cursor: pointer;
-            padding: 2px;
+            padding: 4px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -1241,7 +1268,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             appearance: none;
             width: 65px;
             height: 4px;
-            background: rgba(255, 255, 255, 0.3);
+            background: linear-gradient(to right, #ffffff 0%%, #ffffff var(--vol-pct, 100%%), rgba(255, 255, 255, 0.3) var(--vol-pct, 100%%), rgba(255, 255, 255, 0.3) 100%%);
             border-radius: 2px;
             outline: none;
             cursor: pointer;
@@ -1253,7 +1280,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             height: 12px;
             border-radius: 50%%;
             background: #ffffff;
-            box-shadow: 0 0 6px rgba(0,0,0,0.5);
+            box-shadow: 0 0 6px rgba(0,0,0,0.6);
             cursor: pointer;
         }
         .yume-vol-slider::-moz-range-thumb {
@@ -1262,7 +1289,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             border-radius: 50%%;
             background: #ffffff;
             border: none;
-            box-shadow: 0 0 6px rgba(0,0,0,0.5);
+            box-shadow: 0 0 6px rgba(0,0,0,0.6);
             cursor: pointer;
         }
 
@@ -1282,25 +1309,25 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             bottom: 80px !important;
         }
 
-        /* Setting Panel Position Fix: Strictly Anchored directly above timeline on the right */
+        /* Setting Panel Position Fix: Anchored directly above timeline on the right side */
         .art-video-player .art-setting-panel,
         .art-video-player .art-setting {
             position: absolute !important;
             top: auto !important;
-            bottom: 55px !important;
-            right: 14px !important;
+            bottom: 65px !important;
+            right: 16px !important;
             left: auto !important;
             transform: none !important;
-            background: rgba(15, 15, 18, 0.96) !important;
-            backdrop-filter: blur(12px) !important;
-            -webkit-backdrop-filter: blur(12px) !important;
+            background: rgba(13, 13, 16, 0.96) !important;
+            backdrop-filter: blur(14px) !important;
+            -webkit-backdrop-filter: blur(14px) !important;
             border: 1px solid rgba(255, 255, 255, 0.15) !important;
             border-radius: 12px !important;
             box-shadow: 0 12px 36px rgba(0, 0, 0, 0.85) !important;
-            max-height: 260px !important;
+            max-height: 240px !important;
             width: 220px !important;
             overflow-y: auto !important;
-            z-index: 99 !important;
+            z-index: 200 !important;
         }
         .art-video-player .art-setting-item:hover {
             background: rgba(255, 255, 255, 0.12) !important;
@@ -1311,8 +1338,14 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             font-weight: 700 !important;
         }
 
-        /* Mobile Responsiveness */
-        @media (max-width: 768px) {
+        /* Mobile Responsiveness & Top-Left Time Badge Replacement */
+        @media (max-width: 640px) {
+            #yume-top-time {
+                display: block; /* Show time badge top-left on mobile */
+            }
+            .art-video-player .art-control-time {
+                display: none !important; /* Hide timeline time text on small mobile screens */
+            }
             .art-video-player .art-subtitle {
                 font-size: clamp(16px, 4.5vw, 24px) !important;
                 bottom: 48px !important;
@@ -1322,13 +1355,13 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             }
             .start-play-btn,
             .art-video-player .art-state .art-icon-state {
-                width: 58px !important;
-                height: 58px !important;
+                width: 60px !important;
+                height: 60px !important;
             }
             .start-play-btn svg,
             .art-video-player .art-state .art-icon-state svg {
-                width: 24px !important;
-                height: 24px !important;
+                width: 26px !important;
+                height: 26px !important;
             }
             .yume-vol-wrap:hover .yume-vol-slider-wrap {
                 width: 55px;
@@ -1341,9 +1374,10 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
 </head>
 <body>
     <div id="player">
+        <div id="yume-top-time">00:00 / 00:00</div>
         <div id="yume-start-screen">
             <div class="start-play-btn">
-                <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                <svg viewBox="0 0 24 24"><path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86a1 1 0 0 0-1.5.86z"/></svg>
             </div>
         </div>
     </div>
@@ -1442,7 +1476,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                     name: 'backward',
                     position: 'left',
                     index: 10,
-                    html: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg>',
+                    html: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg>',
                     tooltip: 'Backward 10s',
                     click: function () {
                         art.currentTime = Math.max(0, art.currentTime - 10);
@@ -1452,7 +1486,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                     name: 'forward',
                     position: 'left',
                     index: 11,
-                    html: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/></svg>',
+                    html: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/></svg>',
                     tooltip: 'Forward 10s',
                     click: function () {
                         art.currentTime = Math.min(art.duration || 9999, art.currentTime + 10);
@@ -1462,7 +1496,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                     name: 'volume-wrap',
                     position: 'left',
                     index: 15,
-                    html: '<div class="yume-vol-wrap"><button class="yume-vol-btn" id="yume-vol-btn" title="Mute/Unmute"><svg id="yume-vol-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 1 1 0 14.14"></path></svg></button><div class="yume-vol-slider-wrap"><input type="range" class="yume-vol-slider" id="yume-vol-slider" min="0" max="1" step="0.05" value="1"></div></div>',
+                    html: '<div class="yume-vol-wrap"><button class="yume-vol-btn" id="yume-vol-btn" title="Mute/Unmute"><svg id="yume-vol-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg></button><div class="yume-vol-slider-wrap"><input type="range" class="yume-vol-slider" id="yume-vol-slider" min="0" max="1" step="0.05" value="1"></div></div>',
                 }
             ],
             settings: rawTracks.length > 0 ? [
@@ -1500,22 +1534,51 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             });
         }
 
+        function formatTime(sec) {
+            sec = Math.floor(sec || 0);
+            const m = Math.floor(sec / 60);
+            const s = sec %% 60;
+            return (m < 10 ? '0' + m : m) + ':' + (s < 10 ? '0' + s : s);
+        }
+
+        art.on('video:timeupdate', () => {
+            const topTime = document.getElementById('yume-top-time');
+            if (topTime) {
+                topTime.textContent = formatTime(art.currentTime) + ' / ' + formatTime(art.duration);
+            }
+        });
+
         art.on('ready', () => {
             setTimeout(() => {
                 const volSlider = document.getElementById('yume-vol-slider');
                 const volBtn = document.getElementById('yume-vol-btn');
+                
+                const updateVolGradient = (val) => {
+                    if (volSlider) {
+                        const pct = Math.round(val * 100);
+                        volSlider.style.setProperty('--vol-pct', pct + '%%');
+                    }
+                };
+
                 if (volSlider) {
                     volSlider.value = art.volume;
+                    updateVolGradient(art.volume);
+
                     volSlider.addEventListener('input', (e) => {
                         const val = parseFloat(e.target.value);
                         art.volume = val;
                         art.muted = (val === 0);
+                        updateVolGradient(val);
                     });
                 }
                 if (volBtn) {
                     volBtn.addEventListener('click', () => {
                         art.muted = !art.muted;
-                        if (volSlider) volSlider.value = art.muted ? 0 : art.volume;
+                        const val = art.muted ? 0 : art.volume;
+                        if (volSlider) {
+                            volSlider.value = val;
+                            updateVolGradient(val);
+                        }
                     });
                 }
             }, 100);
