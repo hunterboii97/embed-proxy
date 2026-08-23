@@ -1047,17 +1047,9 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/artplayer/dist/artplayer.css">
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-    <script src="https://cdn.jsdelivr.net/npm/artplayer/dist/artplayer.js"></script>
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        video, .art-video-player, .art-video, #player {
-            filter: none !important;
-            -webkit-filter: none !important;
-            backdrop-filter: none !important;
-            -webkit-backdrop-filter: none !important;
-        }
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
         html, body {
             width: 100%%;
             height: 100%%;
@@ -1068,144 +1060,82 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             -webkit-font-smoothing: antialiased;
         }
-        #player {
+        #yume-player-container {
             width: 100%%;
             height: 100%%;
             position: relative;
             background: #000000;
             overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
-        .art-video-player {
-            font-family: inherit !important;
-            --art-theme: #ffffff;
-            position: relative !important;
-            width: 100%% !important;
-            height: 100%% !important;
-        }
-        .art-video-player .art-bottom {
-            background: linear-gradient(to top, rgba(0, 0, 0, 0.95) 0%%, rgba(0, 0, 0, 0.6) 60%%, rgba(0, 0, 0, 0) 100%%) !important;
-            padding: 10px 16px 14px 16px !important;
-            z-index: 60 !important;
-        }
-        .art-video-player .art-controls {
-            display: flex !important;
-            align-items: center !important;
-            height: 38px !important;
-            margin-top: 4px !important;
-        }
-        .art-video-player .art-controls-left,
-        .art-video-player .art-controls-right {
-            display: flex !important;
-            align-items: center !important;
-            gap: 10px !important;
-            height: 100%% !important;
-        }
-        .art-video-player .art-progress {
-            height: 4px !important;
-            transition: height 0.2s ease !important;
-            border-radius: 4px;
-        }
-        .art-video-player .art-progress:hover {
-            height: 7px !important;
-        }
-        .art-video-player .art-progress .art-control-progress-played {
-            background: #ffffff !important;
-            box-shadow: 0 0 10px rgba(255, 255, 255, 0.7) !important;
-            border-radius: 4px;
-        }
-        .art-video-player .art-progress .art-control-progress-indicator {
-            background: #ffffff !important;
-            box-shadow: 0 0 10px rgba(255, 255, 255, 0.9) !important;
-            border: 2px solid #000000 !important;
-        }
-        .art-video-player .art-control-progress-loaded {
-            background: rgba(255, 255, 255, 0.25) !important;
-            border-radius: 4px;
-        }
-        .art-video-player .art-control-time {
-            font-family: 'Outfit', sans-serif !important;
-            font-size: 13px !important;
-            font-weight: 600 !important;
-            color: #e4e4e7 !important;
-            letter-spacing: 0.5px;
-            margin-left: 4px !important;
-        }
-        .art-video-player .art-icon svg {
-            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6));
-            transition: transform 0.15s ease, opacity 0.15s ease;
-        }
-        .art-video-player .art-icon:hover svg {
-            transform: scale(1.12);
+        video {
+            width: 100%%;
+            height: 100%%;
+            object-fit: contain;
+            background: #000000;
+            outline: none;
         }
 
-        /* Hide Artplayer default settings drawer and volume icon */
-        .art-video-player .art-settings,
-        .art-video-player .art-control-volume {
-            display: none !important;
-        }
-
-        /* Dead-Center Premium Glassmorphic Play Button */
-        #yume-start-screen,
-        .art-video-player .art-state {
-            position: absolute !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: 100%% !important;
-            height: 100%% !important;
-            display: flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            z-index: 30 !important;
-            background: rgba(0, 0, 0, 0.3);
+        /* Initial Start Screen & Pause Overlay */
+        .yume-center-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%%;
+            height: 100%%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 40;
+            background: rgba(0, 0, 0, 0.25);
             cursor: pointer;
-            transition: opacity 0.3s ease;
+            transition: opacity 0.25s ease;
+        }
+        .yume-center-overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
         }
         #yume-start-screen {
             background: #000000 !important;
             z-index: 100 !important;
         }
-        #yume-start-screen.hidden {
-            opacity: 0;
-            pointer-events: none;
+        .yume-big-play-btn {
+            width: 76px;
+            height: 76px;
+            background: rgba(255, 255, 255, 0.22);
+            border-radius: 50%%;
+            border: 1.5px solid rgba(255, 255, 255, 0.35);
+            box-shadow: 0 10px 35px rgba(0, 0, 0, 0.75);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s ease;
         }
-        .start-play-btn,
-        .art-video-player .art-state .art-icon-state {
-            width: 76px !important;
-            height: 76px !important;
-            background: rgba(255, 255, 255, 0.22) !important;
-            border-radius: 50%% !important;
-            border: 1.5px solid rgba(255, 255, 255, 0.35) !important;
-            box-shadow: 0 10px 35px rgba(0, 0, 0, 0.75) !important;
-            backdrop-filter: blur(12px) !important;
-            -webkit-backdrop-filter: blur(12px) !important;
-            display: flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            margin: auto !important;
-            position: relative !important;
-            top: auto !important;
-            left: auto !important;
-            transform: none !important;
-            transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s ease !important;
+        .yume-center-overlay:hover .yume-big-play-btn {
+            transform: scale(1.12);
+            background: rgba(255, 255, 255, 0.35);
         }
-        .start-play-btn:hover,
-        .art-video-player .art-state .art-icon-state:hover {
-            transform: scale(1.12) !important;
-            background: rgba(255, 255, 255, 0.35) !important;
-        }
-        .start-play-btn svg,
-        .art-video-player .art-state .art-icon-state svg {
-            width: 34px !important;
-            height: 34px !important;
-            fill: #ffffff !important;
-            margin-left: 4px !important;
+        .yume-big-play-btn svg {
+            width: 32px;
+            height: 32px;
+            fill: #ffffff;
+            margin-left: 4px;
         }
 
-        /* Top-Left Floating Time Badge for Mobile */
-        #yume-top-time {
+        /* Top Bar Floating Time (Mobile) */
+        #yume-top-bar {
             position: absolute;
             top: 14px;
             left: 14px;
+            display: none;
+            z-index: 45;
+            pointer-events: none;
+        }
+        .yume-time-badge {
             background: rgba(13, 13, 16, 0.75);
             backdrop-filter: blur(8px);
             -webkit-backdrop-filter: blur(8px);
@@ -1216,20 +1146,151 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             font-weight: 600;
             color: #ffffff;
             letter-spacing: 0.5px;
-            z-index: 50;
-            pointer-events: none;
-            display: none;
         }
 
-        /* Modern Sleek Dynamic Volume Slider */
-        .yume-vol-wrap {
+        /* Anime Subtitle Layer */
+        #yume-subtitle-display {
+            position: absolute;
+            bottom: 68px;
+            left: 5%%;
+            right: 5%%;
+            text-align: center;
+            pointer-events: none;
+            z-index: 35;
+            transition: bottom 0.25s ease;
+        }
+        #yume-player-container.controls-hidden #yume-subtitle-display {
+            bottom: 24px;
+        }
+        .yume-sub-text {
+            display: inline-block;
+            font-family: 'Outfit', sans-serif;
+            font-weight: 600;
+            font-size: clamp(20px, 3.2vw, 36px);
+            color: #ffffff;
+            text-shadow: -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000, 0 3px 6px rgba(0,0,0,0.95);
+            line-height: 1.35;
+            padding: 2px 10px;
+        }
+        :fullscreen .yume-sub-text {
+            font-size: clamp(24px, 4vw, 48px);
+        }
+
+        /* Bottom Controls Bar */
+        #yume-controls-bar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(to top, rgba(0, 0, 0, 0.95) 0%%, rgba(0, 0, 0, 0.6) 60%%, rgba(0, 0, 0, 0) 100%%);
+            padding: 10px 16px 14px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            z-index: 50;
+            transition: opacity 0.3s ease, transform 0.3s ease;
+        }
+        #yume-player-container.controls-hidden #yume-controls-bar {
+            opacity: 0;
+            pointer-events: none;
+            transform: translateY(8px);
+        }
+
+        /* Progress Bar Timeline */
+        .yume-progress-container {
+            position: relative;
+            width: 100%%;
+            height: 14px;
             display: flex;
             align-items: center;
-            gap: 6px;
+            cursor: pointer;
+        }
+        .yume-progress-bg {
+            position: absolute;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.25);
+            border-radius: 4px;
+            transition: height 0.15s ease;
+        }
+        .yume-progress-container:hover .yume-progress-bg {
+            height: 7px;
+        }
+        .yume-progress-buffered {
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            background: rgba(255, 255, 255, 0.4);
+            border-radius: 4px;
+            width: 0%%;
+        }
+        .yume-progress-played {
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            background: #ffffff;
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.8);
+            border-radius: 4px;
+            width: 0%%;
+        }
+        .yume-progress-thumb {
+            position: absolute;
+            top: 50%%;
+            transform: translate(-50%%, -50%%) scale(0);
+            width: 12px;
+            height: 12px;
+            background: #ffffff;
+            border: 2px solid #000000;
+            border-radius: 50%%;
+            box-shadow: 0 0 8px rgba(255, 255, 255, 0.9);
+            transition: transform 0.15s ease;
+            pointer-events: none;
+        }
+        .yume-progress-container:hover .yume-progress-thumb {
+            transform: translate(-50%%, -50%%) scale(1);
+        }
+
+        /* Hover Time Tooltip */
+        #yume-hover-time {
+            position: absolute;
+            bottom: 22px;
+            transform: translateX(-50%%);
+            background: rgba(13, 13, 16, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            padding: 3px 8px;
+            font-size: 11px;
+            font-weight: 600;
+            color: #ffffff;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.15s ease;
+            white-space: nowrap;
+        }
+        .yume-progress-container:hover #yume-hover-time {
+            opacity: 1;
+        }
+
+        /* Controls Row */
+        .yume-controls-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 38px;
+        }
+        .yume-controls-left,
+        .yume-controls-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
             height: 100%%;
         }
-        .yume-vol-btn,
-        .yume-ctrl-btn {
+
+        /* Control Buttons */
+        .yume-btn {
             background: none;
             border: none;
             color: #ffffff;
@@ -1242,10 +1303,23 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             opacity: 0.9;
             transition: transform 0.15s ease, opacity 0.15s ease;
         }
-        .yume-vol-btn:hover,
-        .yume-ctrl-btn:hover {
+        .yume-btn:hover {
             opacity: 1;
-            transform: scale(1.1);
+            transform: scale(1.12);
+        }
+        .yume-btn svg {
+            width: 20px;
+            height: 20px;
+            stroke-width: 2.2;
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6));
+        }
+
+        /* Volume Slider */
+        .yume-vol-wrap {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            height: 100%%;
         }
         .yume-vol-slider-wrap {
             width: 0;
@@ -1290,45 +1364,39 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             cursor: pointer;
         }
 
-        /* Anime Subtitle Styling & Fluid Scaling for Fullscreen */
-        .art-video-player .art-subtitle {
-            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif !important;
-            font-weight: 600 !important;
-            font-size: clamp(20px, 3.2vw, 36px) !important;
-            color: #ffffff !important;
-            text-shadow: -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000, 0 3px 6px rgba(0,0,0,0.95) !important;
-            line-height: 1.4 !important;
-            bottom: 60px !important;
-        }
-        .art-video-player.art-fullscreen .art-subtitle,
-        :fullscreen .art-subtitle {
-            font-size: clamp(24px, 4vw, 48px) !important;
-            bottom: 80px !important;
+        /* Time Text */
+        .yume-time-text {
+            font-family: 'Outfit', sans-serif;
+            font-size: 13px;
+            font-weight: 600;
+            color: #e4e4e7;
+            letter-spacing: 0.5px;
+            margin-left: 4px;
         }
 
-        /* Custom Floating Settings Popover Anchored Strictly Above Gear Icon */
-        .yume-popover {
-            position: absolute !important;
-            bottom: 65px !important;
-            right: 16px !important;
-            width: 230px !important;
-            max-height: 280px !important;
-            background: rgba(13, 13, 16, 0.96) !important;
-            backdrop-filter: blur(16px) !important;
-            -webkit-backdrop-filter: blur(16px) !important;
-            border: 1px solid rgba(255, 255, 255, 0.15) !important;
-            border-radius: 14px !important;
-            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.85) !important;
-            z-index: 1000 !important;
-            overflow: hidden !important;
-            color: #ffffff !important;
-            font-family: 'Outfit', sans-serif !important;
-            transition: opacity 0.18s ease, transform 0.18s ease !important;
+        /* Floating Settings Popover */
+        #yume-settings-popover {
+            position: absolute;
+            bottom: 60px;
+            right: 16px;
+            width: 230px;
+            max-height: 280px;
+            background: rgba(13, 13, 16, 0.96);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 14px;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.85);
+            z-index: 1000;
+            overflow: hidden;
+            color: #ffffff;
+            font-family: 'Outfit', sans-serif;
+            transition: opacity 0.18s ease, transform 0.18s ease;
         }
-        .yume-popover.hidden {
-            opacity: 0 !important;
-            pointer-events: none !important;
-            transform: translateY(8px) scale(0.96) !important;
+        #yume-settings-popover.hidden {
+            opacity: 0;
+            pointer-events: none;
+            transform: translateY(8px) scale(0.96);
         }
         .yume-menu-view {
             padding: 6px 0;
@@ -1395,28 +1463,25 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
 
         /* Mobile Responsiveness */
         @media (max-width: 640px) {
-            #yume-top-time {
-                display: block; /* Show time badge top-left on mobile */
+            #yume-top-bar {
+                display: block;
             }
-            .art-video-player .art-control-time {
-                display: none !important; /* Hide timeline time text on small mobile screens */
+            .yume-time-text {
+                display: none;
             }
-            .art-video-player .art-subtitle {
-                font-size: clamp(16px, 4.5vw, 24px) !important;
-                bottom: 48px !important;
+            .yume-sub-text {
+                font-size: clamp(16px, 4.5vw, 24px);
             }
-            .art-video-player .art-bottom {
-                padding: 6px 10px 10px 10px !important;
+            #yume-controls-bar {
+                padding: 6px 10px 10px 10px;
             }
-            .start-play-btn,
-            .art-video-player .art-state .art-icon-state {
-                width: 60px !important;
-                height: 60px !important;
+            .yume-big-play-btn {
+                width: 60px;
+                height: 60px;
             }
-            .start-play-btn svg,
-            .art-video-player .art-state .art-icon-state svg {
-                width: 26px !important;
-                height: 26px !important;
+            .yume-big-play-btn svg {
+                width: 26px;
+                height: 26px;
             }
             .yume-vol-wrap:hover .yume-vol-slider-wrap {
                 width: 55px;
@@ -1424,37 +1489,51 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             .yume-vol-slider {
                 width: 48px;
             }
-            .yume-popover {
-                right: 8px !important;
-                bottom: 55px !important;
-                width: 210px !important;
+            #yume-settings-popover {
+                right: 8px;
+                bottom: 55px;
+                width: 210px;
             }
         }
     </style>
 </head>
 <body>
-    <div id="player">
-        <div id="yume-top-time">00:00 / 00:00</div>
+    <div id="yume-player-container">
+        <video id="yume-video" playsinline preload="auto"></video>
         
-        <div id="yume-start-screen">
-            <div class="start-play-btn">
+        <!-- Subtitle Render Layer -->
+        <div id="yume-subtitle-display"><span class="yume-sub-text" id="yume-sub-content"></span></div>
+
+        <!-- Top Bar Mobile Time -->
+        <div id="yume-top-bar"><span class="yume-time-badge" id="yume-top-time">00:00 / 00:00</span></div>
+
+        <!-- Initial Start Screen Overlay -->
+        <div id="yume-start-screen" class="yume-center-overlay">
+            <div class="yume-big-play-btn">
                 <svg viewBox="0 0 24 24"><path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86a1 1 0 0 0-1.5.86z"/></svg>
             </div>
         </div>
 
-        <!-- Flawless Floating Settings Popover strictly positioned above timeline -->
-        <div id="yume-settings-popover" class="yume-popover hidden">
+        <!-- Pause Center Overlay -->
+        <div id="yume-pause-overlay" class="yume-center-overlay hidden">
+            <div class="yume-big-play-btn">
+                <svg viewBox="0 0 24 24"><path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86a1 1 0 0 0-1.5.86z"/></svg>
+            </div>
+        </div>
+
+        <!-- Floating Settings Popover Strictly Above Gear Button -->
+        <div id="yume-settings-popover" class="hidden">
             <div id="yume-menu-main" class="yume-menu-view">
                 <div class="yume-menu-item" id="yume-row-quality">
-                    <span class="yume-item-label">Quality</span>
+                    <span>Quality</span>
                     <span class="yume-item-val" id="yume-val-quality">Auto <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg></span>
                 </div>
                 <div class="yume-menu-item" id="yume-row-subtitles">
-                    <span class="yume-item-label">Subtitles</span>
+                    <span>Subtitles</span>
                     <span class="yume-item-val" id="yume-val-subtitles">Default <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg></span>
                 </div>
                 <div class="yume-menu-item" id="yume-row-speed">
-                    <span class="yume-item-label">Speed</span>
+                    <span>Speed</span>
                     <span class="yume-item-val" id="yume-val-speed">Normal <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg></span>
                 </div>
             </div>
@@ -1464,7 +1543,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
                     <span>Quality</span>
                 </div>
-                <div id="yume-quality-list" class="yume-options-list"></div>
+                <div id="yume-quality-list"></div>
             </div>
 
             <div id="yume-menu-subtitles" class="yume-menu-view hidden">
@@ -1472,7 +1551,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
                     <span>Subtitles</span>
                 </div>
-                <div id="yume-subtitles-list" class="yume-options-list"></div>
+                <div id="yume-subtitles-list"></div>
             </div>
 
             <div id="yume-menu-speed" class="yume-menu-view hidden">
@@ -1480,136 +1559,117 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
                     <span>Speed</span>
                 </div>
-                <div id="yume-speed-list" class="yume-options-list"></div>
+                <div id="yume-speed-list"></div>
+            </div>
+        </div>
+
+        <!-- Controls Bar -->
+        <div id="yume-controls-bar">
+            <!-- Progress Timeline -->
+            <div class="yume-progress-container" id="yume-progress-wrap">
+                <div id="yume-hover-time">00:00</div>
+                <div class="yume-progress-bg">
+                    <div class="yume-progress-buffered" id="yume-prog-buf"></div>
+                    <div class="yume-progress-played" id="yume-prog-play"></div>
+                </div>
+                <div class="yume-progress-thumb" id="yume-prog-thumb"></div>
+            </div>
+
+            <!-- Controls Row -->
+            <div class="yume-controls-row">
+                <div class="yume-controls-left">
+                    <!-- Play / Pause -->
+                    <button class="yume-btn" id="yume-btn-play" title="Play / Pause">
+                        <svg id="yume-icon-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                        <svg id="yume-icon-pause" viewBox="0 0 24 24" fill="currentColor" style="display:none;"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                    </button>
+
+                    <!-- Skip -10s -->
+                    <button class="yume-btn" id="yume-btn-rewind" title="Rewind 10s">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg>
+                    </button>
+
+                    <!-- Skip +10s -->
+                    <button class="yume-btn" id="yume-btn-forward" title="Forward 10s">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/></svg>
+                    </button>
+
+                    <!-- Volume -->
+                    <div class="yume-vol-wrap">
+                        <button class="yume-btn" id="yume-btn-vol" title="Mute / Unmute">
+                            <svg id="yume-icon-vol-high" viewBox="0 0 24 24" fill="none" stroke="currentColor"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg>
+                            <svg id="yume-icon-vol-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="display:none;"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>
+                        </button>
+                        <div class="yume-vol-slider-wrap">
+                            <input type="range" class="yume-vol-slider" id="yume-vol-range" min="0" max="1" step="0.05" value="1">
+                        </div>
+                    </div>
+
+                    <!-- Time Text -->
+                    <span class="yume-time-text" id="yume-time-display">00:00 / 00:00</span>
+                </div>
+
+                <div class="yume-controls-right">
+                    <!-- Settings Gear -->
+                    <button class="yume-btn" id="yume-btn-settings" title="Settings">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                    </button>
+
+                    <!-- Fullscreen -->
+                    <button class="yume-btn" id="yume-btn-fs" title="Fullscreen (F)">
+                        <svg id="yume-icon-fs-enter" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg>
+                        <svg id="yume-icon-fs-exit" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="display:none;"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"></path></svg>
+                    </button>
+                </div>
             </div>
         </div>
     </div>
 
     <script>
+        const streamURL = '%s';
         const rawTracks = %s || [];
-        let initialSubtitle = {};
-        if (rawTracks.length > 0) {
-            const eng = rawTracks.find(t => (t.label || '').toLowerCase().includes('eng')) || rawTracks[0];
-            if (eng && eng.file) {
-                initialSubtitle = {
-                    url: eng.file,
-                    type: 'vtt',
-                    encoding: 'utf-8',
-                    escape: false,
-                    style: {
-                        color: '#ffffff',
-                    },
-                };
-            }
-        }
 
-        const art = new Artplayer({
-            container: '#player',
-            url: '%s',
-            type: 'm3u8',
-            customType: {
-                m3u8: function (video, url, art) {
-                    if (Hls.isSupported()) {
-                        if (art.hls) art.hls.destroy();
-                        const hls = new Hls({
-                            maxBufferLength: 30,
-                            maxMaxBufferLength: 60,
-                            enableWorker: true,
-                        });
-                        hls.loadSource(url);
-                        hls.attachMedia(video);
-                        art.hls = hls;
-
-                        hls.on(Hls.Events.MANIFEST_PARSED, function () {
-                            if (hls.levels && hls.levels.length > 0) {
-                                hls.currentLevel = hls.levels.length - 1; // Auto highest resolution
-                            }
-                            initQualityMenu(hls);
-                        });
-
-                        art.on('destroy', () => hls.destroy());
-                    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                        video.src = url;
-                    }
-                },
-            },
-            subtitle: initialSubtitle.url ? initialSubtitle : undefined,
-            autoplay: false,
-            volume: 1.0,
-            isLive: false,
-            muted: false,
-            autoSize: true,
-            autoMini: true,
-            screenshot: false,
-            setting: false,
-            loop: false,
-            flip: false,
-            playbackRate: false,
-            aspectRatio: false,
-            fullscreen: true,
-            fullscreenWeb: false,
-            pip: false,
-            theme: '#ffffff',
-            lang: 'en',
-            hotkey: true,
-            airplay: false,
-            lock: true,
-            fastForward: true,
-            autoPlayback: true,
-            controls: [
-                {
-                    name: 'backward',
-                    position: 'left',
-                    index: 10,
-                    html: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg>',
-                    tooltip: 'Backward 10s',
-                    click: function () {
-                        art.currentTime = Math.max(0, art.currentTime - 10);
-                    },
-                },
-                {
-                    name: 'forward',
-                    position: 'left',
-                    index: 11,
-                    html: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/></svg>',
-                    tooltip: 'Forward 10s',
-                    click: function () {
-                        art.currentTime = Math.min(art.duration || 9999, art.currentTime + 10);
-                    },
-                },
-                {
-                    name: 'volume-wrap',
-                    position: 'left',
-                    index: 15,
-                    html: '<div class="yume-vol-wrap"><button class="yume-vol-btn" id="yume-vol-btn" title="Mute/Unmute"><svg id="yume-vol-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg></button><div class="yume-vol-slider-wrap"><input type="range" class="yume-vol-slider" id="yume-vol-slider" min="0" max="1" step="0.05" value="1"></div></div>',
-                },
-                {
-                    name: 'settings-gear',
-                    position: 'right',
-                    index: 20,
-                    html: '<button class="yume-ctrl-btn" id="yume-gear-btn" title="Settings"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></button>',
-                    click: function () {
-                        toggleSettingsPopover();
-                    }
-                }
-            ]
-        });
-
-        // Click-to-Play Start Screen
+        const container = document.getElementById('yume-player-container');
+        const video = document.getElementById('yume-video');
         const startScreen = document.getElementById('yume-start-screen');
-        if (startScreen) {
-            startScreen.addEventListener('click', () => {
-                startScreen.classList.add('hidden');
-                art.volume = 1.0;
-                art.muted = false;
-                art.play();
-                setTimeout(() => {
-                    if (startScreen.parentNode) startScreen.parentNode.removeChild(startScreen);
-                }, 350);
-            });
-        }
+        const pauseOverlay = document.getElementById('yume-pause-overlay');
+        const controlsBar = document.getElementById('yume-controls-bar');
+        
+        const btnPlay = document.getElementById('yume-btn-play');
+        const iconPlay = document.getElementById('yume-icon-play');
+        const iconPause = document.getElementById('yume-icon-pause');
+        
+        const btnRewind = document.getElementById('yume-btn-rewind');
+        const btnForward = document.getElementById('yume-btn-forward');
+        
+        const btnVol = document.getElementById('yume-btn-vol');
+        const iconVolHigh = document.getElementById('yume-icon-vol-high');
+        const iconVolMute = document.getElementById('yume-icon-vol-mute');
+        const volRange = document.getElementById('yume-vol-range');
+        
+        const timeDisplay = document.getElementById('yume-time-display');
+        const topTime = document.getElementById('yume-top-time');
+        
+        const progWrap = document.getElementById('yume-progress-wrap');
+        const progBuf = document.getElementById('yume-prog-buf');
+        const progPlay = document.getElementById('yume-prog-play');
+        const progThumb = document.getElementById('yume-prog-thumb');
+        const hoverTime = document.getElementById('yume-hover-time');
+        
+        const btnSettings = document.getElementById('yume-btn-settings');
+        const settingsPopover = document.getElementById('yume-settings-popover');
+        
+        const btnFs = document.getElementById('yume-btn-fs');
+        const iconFsEnter = document.getElementById('yume-icon-fs-enter');
+        const iconFsExit = document.getElementById('yume-icon-fs-exit');
 
-        // Time updates
+        const subContent = document.getElementById('yume-sub-content');
+
+        let hlsInstance = null;
+        let activeCues = [];
+        let isSeeking = false;
+        let hideControlsTimeout = null;
+
         function formatTime(sec) {
             sec = Math.floor(sec || 0);
             const m = Math.floor(sec / 60);
@@ -1617,93 +1677,229 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             return (m < 10 ? '0' + m : m) + ':' + (s < 10 ? '0' + s : s);
         }
 
-        art.on('video:timeupdate', () => {
-            const topTime = document.getElementById('yume-top-time');
-            if (topTime) {
-                topTime.textContent = formatTime(art.currentTime) + ' / ' + formatTime(art.duration);
+        // HLS Init
+        if (Hls.isSupported()) {
+            hlsInstance = new Hls({
+                maxBufferLength: 30,
+                maxMaxBufferLength: 60,
+                enableWorker: true
+            });
+            hlsInstance.loadSource(streamURL);
+            hlsInstance.attachMedia(video);
+
+            hlsInstance.on(Hls.Events.MANIFEST_PARSED, function () {
+                if (hlsInstance.levels && hlsInstance.levels.length > 0) {
+                    hlsInstance.currentLevel = hlsInstance.levels.length - 1; // Highest quality default
+                }
+                initQualityMenu(hlsInstance);
+            });
+
+            hlsInstance.on(Hls.ErrorTypes.NETWORK_ERROR, () => hlsInstance.startLoad());
+            hlsInstance.on(Hls.ErrorTypes.MEDIA_ERROR, () => hlsInstance.recoverMediaError());
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            video.src = streamURL;
+        }
+
+        // Play / Pause Logic
+        function togglePlay() {
+            if (video.paused || video.ended) {
+                video.play();
+            } else {
+                video.pause();
+            }
+        }
+
+        video.addEventListener('play', () => {
+            iconPlay.style.display = 'none';
+            iconPause.style.display = 'block';
+            pauseOverlay.classList.add('hidden');
+            resetHideControlsTimer();
+        });
+
+        video.addEventListener('pause', () => {
+            iconPlay.style.display = 'block';
+            iconPause.style.display = 'none';
+            if (!startScreen || startScreen.classList.contains('hidden')) {
+                pauseOverlay.classList.remove('hidden');
+            }
+            container.classList.remove('controls-hidden');
+            if (hideControlsTimeout) clearTimeout(hideControlsTimeout);
+        });
+
+        btnPlay.addEventListener('click', togglePlay);
+        pauseOverlay.addEventListener('click', togglePlay);
+        video.addEventListener('click', (e) => {
+            if (!settingsPopover.contains(e.target) && !e.target.closest('#yume-btn-settings')) {
+                togglePlay();
             }
         });
 
-        // Volume logic
-        art.on('ready', () => {
+        // Start Screen Click-to-Play
+        startScreen.addEventListener('click', () => {
+            startScreen.classList.add('hidden');
+            video.volume = 1.0;
+            video.muted = false;
+            video.play();
             setTimeout(() => {
-                const volSlider = document.getElementById('yume-vol-slider');
-                const volBtn = document.getElementById('yume-vol-btn');
-                
-                const updateVolGradient = (val) => {
-                    if (volSlider) {
-                        const pct = Math.round(val * 100);
-                        volSlider.style.setProperty('--vol-pct', pct + '%%');
-                    }
-                };
-
-                if (volSlider) {
-                    volSlider.value = art.volume;
-                    updateVolGradient(art.volume);
-
-                    volSlider.addEventListener('input', (e) => {
-                        const val = parseFloat(e.target.value);
-                        art.volume = val;
-                        art.muted = (val === 0);
-                        updateVolGradient(val);
-                    });
-                }
-                if (volBtn) {
-                    volBtn.addEventListener('click', () => {
-                        art.muted = !art.muted;
-                        const val = art.muted ? 0 : art.volume;
-                        if (volSlider) {
-                            volSlider.value = val;
-                            updateVolGradient(val);
-                        }
-                    });
-                }
-
-                initSubtitlesMenu();
-                initSpeedMenu();
-            }, 100);
+                if (startScreen.parentNode) startScreen.parentNode.removeChild(startScreen);
+            }, 350);
         });
 
-        // Floating Settings Popover Controller
-        const popover = document.getElementById('yume-settings-popover');
+        // 10s Rewind & Forward
+        btnRewind.addEventListener('click', () => {
+            video.currentTime = Math.max(0, video.currentTime - 10);
+            resetHideControlsTimer();
+        });
+        btnForward.addEventListener('click', () => {
+            video.currentTime = Math.min(video.duration || 9999, video.currentTime + 10);
+            resetHideControlsTimer();
+        });
+
+        // Volume Controller
+        function updateVolumeUI(val, isMuted) {
+            volRange.value = isMuted ? 0 : val;
+            const pct = Math.round((isMuted ? 0 : val) * 100);
+            volRange.style.setProperty('--vol-pct', pct + '%%');
+            if (isMuted || val === 0) {
+                iconVolHigh.style.display = 'none';
+                iconVolMute.style.display = 'block';
+            } else {
+                iconVolHigh.style.display = 'block';
+                iconVolMute.style.display = 'none';
+            }
+        }
+
+        volRange.addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            video.volume = val;
+            video.muted = (val === 0);
+            updateVolumeUI(val, video.muted);
+        });
+
+        btnVol.addEventListener('click', () => {
+            video.muted = !video.muted;
+            updateVolumeUI(video.volume, video.muted);
+        });
+
+        // Progress & Time Updates
+        video.addEventListener('timeupdate', () => {
+            if (!isSeeking && video.duration) {
+                const pct = (video.currentTime / video.duration) * 100;
+                progPlay.style.width = pct + '%%';
+                progThumb.style.left = pct + '%%';
+                
+                const timeStr = formatTime(video.currentTime) + ' / ' + formatTime(video.duration);
+                timeDisplay.textContent = timeStr;
+                topTime.textContent = timeStr;
+            }
+            updateSubtitles();
+        });
+
+        video.addEventListener('progress', () => {
+            if (video.buffered.length > 0 && video.duration) {
+                const bufEnd = video.buffered.end(video.buffered.length - 1);
+                progBuf.style.width = (bufEnd / video.duration) * 100 + '%%';
+            }
+        });
+
+        // Progress Scrubbing & Hover Tooltip
+        function seek(e) {
+            const rect = progWrap.getBoundingClientRect();
+            const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            if (video.duration) {
+                video.currentTime = pos * video.duration;
+            }
+        }
+
+        progWrap.addEventListener('click', seek);
+        progWrap.addEventListener('mousemove', (e) => {
+            const rect = progWrap.getBoundingClientRect();
+            const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            hoverTime.style.left = (pos * 100) + '%%';
+            if (video.duration) {
+                hoverTime.textContent = formatTime(pos * video.duration);
+            }
+        });
+
+        // Fullscreen Controller
+        function toggleFullscreen() {
+            if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+                if (container.requestFullscreen) container.requestFullscreen();
+                else if (container.webkitRequestFullscreen) container.webkitRequestFullscreen();
+            } else {
+                if (document.exitFullscreen) document.exitFullscreen();
+                else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+            }
+        }
+
+        btnFs.addEventListener('click', toggleFullscreen);
+
+        function onFsChange() {
+            const isFs = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+            iconFsEnter.style.display = isFs ? 'none' : 'block';
+            iconFsExit.style.display = isFs ? 'block' : 'none';
+        }
+        document.addEventListener('fullscreenchange', onFsChange);
+        document.addEventListener('webkitfullscreenchange', onFsChange);
+
+        // Auto-Hide Controls on Inactivity
+        function resetHideControlsTimer() {
+            container.classList.remove('controls-hidden');
+            if (hideControlsTimeout) clearTimeout(hideControlsTimeout);
+            if (!video.paused) {
+                hideControlsTimeout = setTimeout(() => {
+                    if (!settingsPopover.classList.contains('hidden')) return;
+                    container.classList.add('controls-hidden');
+                }, 2500);
+            }
+        }
+
+        container.addEventListener('mousemove', resetHideControlsTimer);
+        container.addEventListener('touchstart', resetHideControlsTimer);
+
+        // Settings Popover Controller
         const menuMain = document.getElementById('yume-menu-main');
         const menuQuality = document.getElementById('yume-menu-quality');
         const menuSubtitles = document.getElementById('yume-menu-subtitles');
         const menuSpeed = document.getElementById('yume-menu-speed');
 
-        function toggleSettingsPopover() {
-            if (!popover) return;
-            if (popover.classList.contains('hidden')) {
+        function toggleSettings() {
+            if (settingsPopover.classList.contains('hidden')) {
                 showMenu('main');
-                popover.classList.remove('hidden');
+                settingsPopover.classList.remove('hidden');
             } else {
-                popover.classList.add('hidden');
+                settingsPopover.classList.add('hidden');
             }
         }
 
         function showMenu(name) {
             [menuMain, menuQuality, menuSubtitles, menuSpeed].forEach(m => m && m.classList.add('hidden'));
-            if (name === 'main' && menuMain) menuMain.classList.remove('hidden');
-            if (name === 'quality' && menuQuality) menuQuality.classList.remove('hidden');
-            if (name === 'subtitles' && menuSubtitles) menuSubtitles.classList.remove('hidden');
-            if (name === 'speed' && menuSpeed) menuSpeed.classList.remove('hidden');
+            if (name === 'main') menuMain.classList.remove('hidden');
+            if (name === 'quality') menuQuality.classList.remove('hidden');
+            if (name === 'subtitles') menuSubtitles.classList.remove('hidden');
+            if (name === 'speed') menuSpeed.classList.remove('hidden');
         }
 
-        document.getElementById('yume-row-quality')?.addEventListener('click', () => showMenu('quality'));
-        document.getElementById('yume-row-subtitles')?.addEventListener('click', () => showMenu('subtitles'));
-        document.getElementById('yume-row-speed')?.addEventListener('click', () => showMenu('speed'));
+        btnSettings.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleSettings();
+        });
 
-        document.getElementById('yume-back-quality')?.addEventListener('click', () => showMenu('main'));
-        document.getElementById('yume-back-subtitles')?.addEventListener('click', () => showMenu('main'));
-        document.getElementById('yume-back-speed')?.addEventListener('click', () => showMenu('main'));
+        document.getElementById('yume-row-quality').addEventListener('click', () => showMenu('quality'));
+        document.getElementById('yume-row-subtitles').addEventListener('click', () => showMenu('subtitles'));
+        document.getElementById('yume-row-speed').addEventListener('click', () => showMenu('speed'));
 
-        // Close settings when clicking outside
+        document.getElementById('yume-back-quality').addEventListener('click', () => showMenu('main'));
+        document.getElementById('yume-back-subtitles').addEventListener('click', () => showMenu('main'));
+        document.getElementById('yume-back-speed').addEventListener('click', () => showMenu('main'));
+
         document.addEventListener('click', (e) => {
-            if (popover && !popover.contains(e.target) && !e.target.closest('#yume-gear-btn')) {
-                popover.classList.add('hidden');
+            if (!settingsPopover.contains(e.target) && !e.target.closest('#yume-btn-settings')) {
+                settingsPopover.classList.add('hidden');
             }
         });
 
+        // Quality Menu Setup
         function initQualityMenu(hls) {
             const list = document.getElementById('yume-quality-list');
             if (!list || !hls || !hls.levels) return;
@@ -1733,6 +1929,65 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             });
         }
 
+        // Subtitles Parser & Menu Setup
+        function parseVTT(text) {
+            const cues = [];
+            const lines = text.split(/\r?\n/);
+            let i = 0;
+            while (i < lines.length) {
+                const line = lines[i].trim();
+                if (line.includes('-->')) {
+                    const parts = line.split('-->');
+                    const start = parseVTTTime(parts[0].trim());
+                    const end = parseVTTTime(parts[1].trim().split(' ')[0]);
+                    let content = '';
+                    i++;
+                    while (i < lines.length && lines[i].trim() !== '') {
+                        content += (content ? '<br>' : '') + lines[i].trim();
+                        i++;
+                    }
+                    cues.push({ start, end, text: content });
+                }
+                i++;
+            }
+            return cues;
+        }
+
+        function parseVTTTime(str) {
+            const parts = str.split(':');
+            let s = 0;
+            if (parts.length === 3) {
+                s = parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
+            } else if (parts.length === 2) {
+                s = parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
+            }
+            return s;
+        }
+
+        function loadSubtitleTrack(url) {
+            if (!url) {
+                activeCues = [];
+                subContent.innerHTML = '';
+                return;
+            }
+            fetch(url)
+                .then(r => r.text())
+                .then(vtt => {
+                    activeCues = parseVTT(vtt);
+                })
+                .catch(() => { activeCues = []; });
+        }
+
+        function updateSubtitles() {
+            if (!activeCues.length) {
+                subContent.innerHTML = '';
+                return;
+            }
+            const t = video.currentTime;
+            const currentCue = activeCues.find(c => t >= c.start && t <= c.end);
+            subContent.innerHTML = currentCue ? currentCue.text : '';
+        }
+
         function initSubtitlesMenu() {
             const list = document.getElementById('yume-subtitles-list');
             if (!list) return;
@@ -1742,7 +1997,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             offDiv.className = 'yume-option';
             offDiv.textContent = 'Off';
             offDiv.onclick = () => {
-                art.subtitle.show = false;
+                loadSubtitleTrack('');
                 list.querySelectorAll('.yume-option').forEach(el => el.classList.remove('active'));
                 offDiv.classList.add('active');
                 document.getElementById('yume-val-subtitles').innerHTML = 'Off <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
@@ -1755,8 +2010,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                 div.className = 'yume-option' + (idx === 0 ? ' active' : '');
                 div.textContent = t.label || ('Track ' + (idx + 1));
                 div.onclick = () => {
-                    art.subtitle.show = true;
-                    art.subtitle.switch(t.file, { name: t.label });
+                    loadSubtitleTrack(t.file);
                     list.querySelectorAll('.yume-option').forEach(el => el.classList.remove('active'));
                     div.classList.add('active');
                     document.getElementById('yume-val-subtitles').innerHTML = (t.label || 'On') + ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
@@ -1764,8 +2018,14 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                 };
                 list.appendChild(div);
             });
+
+            // Load default subtitle track on start
+            if (rawTracks.length > 0 && rawTracks[0].file) {
+                loadSubtitleTrack(rawTracks[0].file);
+            }
         }
 
+        // Speed Menu Setup
         function initSpeedMenu() {
             const list = document.getElementById('yume-speed-list');
             if (!list) return;
@@ -1776,7 +2036,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                 div.className = 'yume-option' + (s === 1.0 ? ' active' : '');
                 div.textContent = s === 1.0 ? 'Normal (1.0x)' : s + 'x';
                 div.onclick = () => {
-                    art.playbackRate = s;
+                    video.playbackRate = s;
                     list.querySelectorAll('.yume-option').forEach(el => el.classList.remove('active'));
                     div.classList.add('active');
                     document.getElementById('yume-val-speed').innerHTML = (s === 1.0 ? 'Normal' : s + 'x') + ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
@@ -1785,9 +2045,43 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                 list.appendChild(div);
             });
         }
+
+        // Keyboard Shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+            if (e.key === ' ' || e.key.toLowerCase() === 'k') {
+                e.preventDefault();
+                togglePlay();
+            } else if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'j') {
+                e.preventDefault();
+                video.currentTime = Math.max(0, video.currentTime - 10);
+            } else if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'l') {
+                e.preventDefault();
+                video.currentTime = Math.min(video.duration || 9999, video.currentTime + 10);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                video.volume = Math.min(1, video.volume + 0.1);
+                video.muted = false;
+                updateVolumeUI(video.volume, video.muted);
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                video.volume = Math.max(0, video.volume - 0.1);
+                updateVolumeUI(video.volume, video.muted);
+            } else if (e.key.toLowerCase() === 'm') {
+                video.muted = !video.muted;
+                updateVolumeUI(video.volume, video.muted);
+            } else if (e.key.toLowerCase() === 'f') {
+                toggleFullscreen();
+            }
+            resetHideControlsTimer();
+        });
+
+        // Initialize Menus
+        initSubtitlesMenu();
+        initSpeedMenu();
     </script>
 </body>
-</html>`, string(tracksJSON), streamURL)
+</html>`, streamURL, string(tracksJSON))
 }
 
 
