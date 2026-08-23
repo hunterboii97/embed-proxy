@@ -755,41 +755,123 @@ var (
 	malIdCache sync.Map
 )
 
-func resolveMalIdFromAniZip(anilistId int) int {
-	if anilistId <= 0 {
+func resolveMalId(idNum int) int {
+	if idNum <= 0 {
 		return 0
 	}
-	if cached, ok := malIdCache.Load(anilistId); ok {
+	if cached, ok := malIdCache.Load(idNum); ok {
 		return cached.(int)
 	}
 
-	reqURL := fmt.Sprintf("https://api.ani.zip/mappings?anilist_id=%d", anilistId)
+	// 1. Try AniZip API
+	reqURL := fmt.Sprintf("https://api.ani.zip/mappings?anilist_id=%d", idNum)
 	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
-	if err != nil {
-		return 0
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-
-	client := &http.Client{Timeout: 4 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		if resp != nil {
+	if err == nil {
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+		client := &http.Client{Timeout: 3 * time.Second}
+		resp, err := client.Do(req)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			var data struct {
+				Mappings struct {
+					MalID int `json:"mal_id"`
+				} `json:"mappings"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&data); err == nil && data.Mappings.MalID > 0 {
+				resp.Body.Close()
+				malIdCache.Store(idNum, data.Mappings.MalID)
+				return data.Mappings.MalID
+			}
 			resp.Body.Close()
 		}
-		return 0
 	}
-	defer resp.Body.Close()
 
-	var data struct {
-		Mappings struct {
-			MalID int `json:"mal_id"`
-		} `json:"mappings"`
+	// 2. Fallback to AniList GraphQL API
+	graphqlQuery := `query ($id: Int) { Media (id: $id, type: ANIME) { idMal } }`
+	bodyBytes, _ := json.Marshal(map[string]interface{}{
+		"query": graphqlQuery,
+		"variables": map[string]interface{}{
+			"id": idNum,
+		},
+	})
+	gqlReq, err := http.NewRequest(http.MethodPost, "https://graphql.anilist.co", bytes.NewBuffer(bodyBytes))
+	if err == nil {
+		gqlReq.Header.Set("Content-Type", "application/json")
+		gqlReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+		client := &http.Client{Timeout: 3 * time.Second}
+		resp, err := client.Do(gqlReq)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			var gqlRes struct {
+				Data struct {
+					Media struct {
+						IDMal int `json:"idMal"`
+					} `json:"Media"`
+				} `json:"data"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&gqlRes); err == nil && gqlRes.Data.Media.IDMal > 0 {
+				resp.Body.Close()
+				malIdCache.Store(idNum, gqlRes.Data.Media.IDMal)
+				return gqlRes.Data.Media.IDMal
+			}
+			resp.Body.Close()
+		}
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err == nil && data.Mappings.MalID > 0 {
-		malIdCache.Store(anilistId, data.Mappings.MalID)
-		return data.Mappings.MalID
-	}
+
 	return 0
+}
+
+func normalizeMegaplayPath(rawPath string) string {
+	cleanPath := strings.TrimPrefix(rawPath, "/")
+	parts := strings.Split(cleanPath, "/")
+	if len(parts) == 0 || parts[0] == "" {
+		return rawPath
+	}
+
+	prefix := ""
+	idStr := ""
+	ep := "1"
+	lang := "sub"
+
+	if parts[0] == "mal" || parts[0] == "ani" {
+		prefix = parts[0]
+		if len(parts) > 1 {
+			idStr = parts[1]
+		}
+		if len(parts) > 2 {
+			ep = parts[2]
+		}
+		if len(parts) > 3 {
+			lang = parts[3]
+		}
+	} else {
+		idStr = parts[0]
+		if len(parts) > 1 {
+			ep = parts[1]
+		}
+		if len(parts) > 2 {
+			lang = parts[2]
+		}
+	}
+
+	idNum, err := strconv.Atoi(idStr)
+	if err != nil || idNum <= 0 {
+		return rawPath
+	}
+
+	// If prefix is mal and idNum is small (< 100000), check if it's already a valid MAL ID
+	if prefix == "mal" && idNum < 100000 {
+		return fmt.Sprintf("mal/%d/%s/%s", idNum, ep, lang)
+	}
+
+	// Try resolving idNum as AniList ID -> MAL ID
+	malId := resolveMalId(idNum)
+	if malId > 0 {
+		return fmt.Sprintf("mal/%d/%s/%s", malId, ep, lang)
+	}
+
+	if prefix != "" {
+		return fmt.Sprintf("%s/%d/%s/%s", prefix, idNum, ep, lang)
+	}
+	return fmt.Sprintf("mal/%d/%s/%s", idNum, ep, lang)
 }
 
 func fetchMegaplayStream(ctx context.Context, path string) (string, int, error) {
@@ -943,6 +1025,12 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
     <script src="https://cdn.jsdelivr.net/npm/artplayer/dist/artplayer.js"></script>
     <style>
         * { box-sizing: border-box; }
+        video, .art-video-player, .art-video, #player {
+            filter: none !important;
+            -webkit-filter: none !important;
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
+        }
         html, body {
             width: 100%%;
             height: 100%%;
@@ -1180,17 +1268,8 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auto-resolve AniList ID to MAL ID if needed
-	parts := strings.Split(targetPath, "/")
-	if len(parts) >= 4 {
-		idNum, _ := strconv.Atoi(parts[1])
-		if idNum > 0 {
-			malId := resolveMalIdFromAniZip(idNum)
-			if malId > 0 {
-				targetPath = fmt.Sprintf("mal/%d/%s/%s", malId, parts[2], parts[3])
-			}
-		}
-	}
+	// Auto-normalize path and resolve AniList ID to MAL ID
+	targetPath = normalizeMegaplayPath(targetPath)
 
 	// Check cache for instant load
 	cacheKey := "megaplay:clean:" + targetPath
@@ -1283,8 +1362,16 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rawHtml := string(bodyBytes)
+	noBlurStyle := `<style>
+		video, iframe, #megaplay-player, .mg3-player, #fix-area, .fix-area, body, div, canvas, .content-center {
+			filter: none !important;
+			-webkit-filter: none !important;
+			backdrop-filter: none !important;
+			-webkit-backdrop-filter: none !important;
+		}
+	</style>`
 	if strings.Contains(rawHtml, "<head>") {
-		rawHtml = strings.Replace(rawHtml, "<head>", "<head>\n  <base href=\"https://megaplay.buzz/\">", 1)
+		rawHtml = strings.Replace(rawHtml, "<head>", "<head>\n  <base href=\"https://megaplay.buzz/\">\n  "+noBlurStyle, 1)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
