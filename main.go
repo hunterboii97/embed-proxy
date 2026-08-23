@@ -1184,6 +1184,24 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             font-size: clamp(24px, 4vw, 48px);
         }
 
+        /* Flash Effect on Screenshot */
+        #yume-flash {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%%;
+            height: 100%%;
+            background: #ffffff;
+            opacity: 0;
+            pointer-events: none;
+            z-index: 2000;
+            transition: opacity 0.15s ease-out;
+        }
+        #yume-flash.flash {
+            opacity: 0.8;
+            transition: none;
+        }
+
         /* Bottom Controls Bar */
         #yume-controls-bar {
             position: absolute;
@@ -1389,10 +1407,10 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             margin-left: 2px;
         }
 
-        /* Floating Settings Popover */
+        /* Floating Settings Popover Elevated Above Timeline */
         #yume-settings-popover {
             position: absolute;
-            bottom: 60px;
+            bottom: 70px;
             right: 16px;
             width: 230px;
             max-height: 280px;
@@ -1401,7 +1419,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             -webkit-backdrop-filter: blur(16px);
             border: 1px solid rgba(255, 255, 255, 0.15);
             border-radius: 14px;
-            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.85);
+            box-shadow: 0 14px 44px rgba(0, 0, 0, 0.9);
             z-index: 1000;
             overflow: hidden;
             color: #ffffff;
@@ -1507,7 +1525,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             }
             #yume-settings-popover {
                 right: 8px;
-                bottom: 55px;
+                bottom: 64px;
                 width: 210px;
             }
         }
@@ -1515,7 +1533,8 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
 </head>
 <body>
     <div id="yume-player-container">
-        <video id="yume-video" playsinline preload="auto"></video>
+        <div id="yume-flash"></div>
+        <video id="yume-video" playsinline preload="auto" crossorigin="anonymous"></video>
         
         <!-- Subtitle Render Layer -->
         <div id="yume-subtitle-display"><span class="yume-sub-text" id="yume-sub-content"></span></div>
@@ -1537,7 +1556,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             </div>
         </div>
 
-        <!-- Floating Settings Popover Strictly Above Gear Button -->
+        <!-- Floating Settings Popover Elevated Above Timeline -->
         <div id="yume-settings-popover" class="hidden">
             <div id="yume-menu-main" class="yume-menu-view">
                 <div class="yume-menu-item" id="yume-row-quality">
@@ -1546,7 +1565,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                 </div>
                 <div class="yume-menu-item" id="yume-row-subtitles">
                     <span>Subtitles</span>
-                    <span class="yume-item-val" id="yume-val-subtitles">Default <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg></span>
+                    <span class="yume-item-val" id="yume-val-subtitles">Off <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg></span>
                 </div>
                 <div class="yume-menu-item" id="yume-row-speed">
                     <span>Speed</span>
@@ -1634,6 +1653,11 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                 </div>
 
                 <div class="yume-controls-right">
+                    <!-- Screenshot Button -->
+                    <button class="yume-btn" id="yume-btn-snap" title="Screenshot">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+                    </button>
+
                     <!-- Settings Gear -->
                     <button class="yume-btn" id="yume-btn-settings" title="Settings">
                         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
@@ -1658,6 +1682,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
         const startScreen = document.getElementById('yume-start-screen');
         const pauseOverlay = document.getElementById('yume-pause-overlay');
         const controlsBar = document.getElementById('yume-controls-bar');
+        const flashOverlay = document.getElementById('yume-flash');
         
         const btnPlay = document.getElementById('yume-btn-play');
         const iconPlay = document.getElementById('yume-icon-play');
@@ -1665,6 +1690,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
         
         const btnRewind = document.getElementById('yume-btn-rewind');
         const btnForward = document.getElementById('yume-btn-forward');
+        const btnSnap = document.getElementById('yume-btn-snap');
         
         const volWrapBox = document.getElementById('yume-vol-wrap-box');
         const btnVol = document.getElementById('yume-btn-vol');
@@ -1777,6 +1803,33 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
         });
         btnForward.addEventListener('click', () => {
             video.currentTime = Math.min(video.duration || 9999, video.currentTime + 10);
+            resetHideControlsTimer();
+        });
+
+        // Screenshot Feature
+        btnSnap.addEventListener('click', () => {
+            try {
+                if (!video.videoWidth || !video.videoHeight) return;
+                const canvas = document.createElement('canvas');
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                
+                // Visual Flash Animation
+                flashOverlay.classList.add('flash');
+                setTimeout(() => { flashOverlay.classList.remove('flash'); }, 150);
+
+                const dataURL = canvas.toDataURL('image/png');
+                const a = document.createElement('a');
+                a.href = dataURL;
+                a.download = 'YumeZone_Snapshot_' + Math.floor(video.currentTime) + 's.png';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            } catch (err) {
+                console.error('Screenshot error:', err);
+            }
             resetHideControlsTimer();
         });
 
@@ -2085,8 +2138,9 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             if (!list) return;
             list.innerHTML = '';
 
+            // 1. Off option (Active by default as requested)
             const offDiv = document.createElement('div');
-            offDiv.className = 'yume-option';
+            offDiv.className = 'yume-option active';
             offDiv.textContent = 'Off';
             offDiv.onclick = () => {
                 loadSubtitleTrack('');
@@ -2097,23 +2151,29 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             };
             list.appendChild(offDiv);
 
-            rawTracks.forEach((t, idx) => {
+            // 2. Tracks options (English prioritized as default candidate when enabled)
+            const sortedTracks = [...rawTracks].sort((a, b) => {
+                const aEng = (a.label || '').toLowerCase().includes('eng') ? -1 : 1;
+                const bEng = (b.label || '').toLowerCase().includes('eng') ? -1 : 1;
+                return aEng - bEng;
+            });
+
+            sortedTracks.forEach((t) => {
                 const div = document.createElement('div');
-                div.className = 'yume-option' + (idx === 0 ? ' active' : '');
-                div.textContent = t.label || ('Track ' + (idx + 1));
+                div.className = 'yume-option';
+                div.textContent = t.label || 'English';
                 div.onclick = () => {
                     loadSubtitleTrack(t.file);
                     list.querySelectorAll('.yume-option').forEach(el => el.classList.remove('active'));
                     div.classList.add('active');
-                    document.getElementById('yume-val-subtitles').innerHTML = (t.label || 'On') + ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+                    document.getElementById('yume-val-subtitles').innerHTML = (t.label || 'English') + ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
                     showMenu('main');
                 };
                 list.appendChild(div);
             });
 
-            if (rawTracks.length > 0 && rawTracks[0].file) {
-                loadSubtitleTrack(rawTracks[0].file);
-            }
+            // By default, subtitles are OFF on start
+            loadSubtitleTrack('');
         }
 
         // Speed Menu Setup
