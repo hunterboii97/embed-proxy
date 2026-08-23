@@ -1051,7 +1051,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/artplayer/dist/artplayer.js"></script>
     <style>
-        * { box-sizing: border-box; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
         video, .art-video-player, .art-video, #player {
             filter: none !important;
             -webkit-filter: none !important;
@@ -1071,14 +1071,15 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
         #player {
             width: 100%%;
             height: 100%%;
+            position: relative;
         }
-                .art-video-player {
+        .art-video-player {
             font-family: inherit !important;
             --art-theme: #ffffff;
         }
         .art-video-player .art-bottom {
             background: linear-gradient(to top, rgba(0, 0, 0, 0.95) 0%%, rgba(0, 0, 0, 0.6) 60%%, rgba(0, 0, 0, 0) 100%%) !important;
-            padding: 10px 16px 14px 16px !important;
+            padding: 12px 18px 16px 18px !important;
         }
         .art-video-player .art-progress {
             height: 5px !important;
@@ -1108,12 +1109,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             font-weight: 600 !important;
             color: #e4e4e7 !important;
             letter-spacing: 0.5px;
-        }
-        .art-video-player .art-control-volume .art-volume-slider {
-            background: rgba(255, 255, 255, 0.2) !important;
-        }
-        .art-video-player .art-control-volume .art-volume-slider-handle {
-            background: #ffffff !important;
+            margin-left: 6px !important;
         }
         .art-video-player .art-icon svg {
             filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6));
@@ -1122,31 +1118,93 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
         .art-video-player .art-icon:hover svg {
             transform: scale(1.1);
         }
+
+        /* Dead-Center Minimal Play Button matching user screenshot */
         .art-video-player .art-state {
-            pointer-events: none;
-        }
-        /* Single Minimal Center Play Button matching screenshot */
-        .art-video-player .art-state .art-icon-state {
-            width: 70px !important;
-            height: 70px !important;
-            background: rgba(255, 255, 255, 0.22) !important;
-            border-radius: 50%% !important;
-            box-shadow: 0 0 24px rgba(0, 0, 0, 0.6) !important;
+            position: absolute !important;
+            top: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            bottom: 0 !important;
             display: flex !important;
             align-items: center !important;
             justify-content: center !important;
+            pointer-events: none !important;
+            z-index: 20 !important;
+        }
+        .art-video-player .art-state .art-icon-state {
+            width: 72px !important;
+            height: 72px !important;
+            background: rgba(255, 255, 255, 0.25) !important;
+            border-radius: 50%% !important;
+            box-shadow: 0 0 30px rgba(0, 0, 0, 0.7) !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            margin: 0 !important;
+            transform: translate(0, 0) !important;
             transition: transform 0.2s ease, background 0.2s ease !important;
         }
         .art-video-player .art-state .art-icon-state:hover {
             transform: scale(1.1) !important;
-            background: rgba(255, 255, 255, 0.35) !important;
+            background: rgba(255, 255, 255, 0.38) !important;
         }
         .art-video-player .art-state .art-icon-state svg {
-            width: 28px !important;
-            height: 28px !important;
+            width: 30px !important;
+            height: 30px !important;
             fill: #ffffff !important;
             margin-left: 4px !important;
         }
+
+        /* Custom Interactive Volume Wrap */
+        .yume-vol-wrap {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            position: relative;
+        }
+        .yume-vol-btn {
+            background: none;
+            border: none;
+            color: #ffffff;
+            cursor: pointer;
+            padding: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            outline: none;
+            transition: transform 0.15s ease;
+        }
+        .yume-vol-btn:hover {
+            transform: scale(1.1);
+        }
+        .yume-vol-btn svg {
+            width: 20px;
+            height: 20px;
+        }
+        .yume-vol-slider-wrap {
+            width: 0;
+            overflow: hidden;
+            transition: width 0.2s ease, opacity 0.2s ease;
+            opacity: 0;
+            display: flex;
+            align-items: center;
+        }
+        .yume-vol-wrap:hover .yume-vol-slider-wrap,
+        .yume-vol-slider-wrap:focus-within {
+            width: 68px;
+            opacity: 1;
+        }
+        .yume-vol-slider {
+            width: 60px;
+            height: 4px;
+            accent-color: #ffffff;
+            cursor: pointer;
+            outline: none;
+            border-radius: 2px;
+        }
+
+        /* Anime Subtitle Styling */
         .art-video-player .art-subtitle {
             font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif !important;
             font-weight: 600 !important;
@@ -1154,35 +1212,19 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             color: #ffffff !important;
             text-shadow: -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000, 0 3px 6px rgba(0,0,0,0.95) !important;
             line-height: 1.4 !important;
-            bottom: 60px !important;
+            bottom: 65px !important;
         }
-        /* Mobile Responsiveness Rules */
-        @media (max-width: 768px) {
-            .art-video-player .art-subtitle {
-                font-size: 18px !important;
-                bottom: 45px !important;
-            }
-            .art-video-player .art-bottom {
-                padding: 6px 10px 10px 10px !important;
-            }
-            .art-video-player .art-control-pip,
-            .art-video-player .art-control-airplay {
-                display: none !important;
-            }
-            .art-video-player .art-state .art-icon-state {
-                width: 56px !important;
-                height: 56px !important;
-            }
-            .art-video-player .art-state .art-icon-state svg {
-                width: 22px !important;
-                height: 22px !important;
-            }
-        }
+
+        /* Setting Panel Styling & Position Fix */
         .art-video-player .art-setting-panel {
             background: rgba(13, 13, 15, 0.96) !important;
             border: 1px solid rgba(255, 255, 255, 0.15) !important;
             border-radius: 12px !important;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7) !important;
+            right: 16px !important;
+            bottom: 60px !important;
+            max-height: 80%% !important;
+            overflow-y: auto !important;
         }
         .art-video-player .art-setting-item:hover {
             background: rgba(255, 255, 255, 0.12) !important;
@@ -1191,6 +1233,31 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
         .art-video-player .art-setting-item.art-current {
             color: #ffffff !important;
             font-weight: 700 !important;
+        }
+
+        /* Mobile Responsiveness */
+        @media (max-width: 768px) {
+            .art-video-player .art-subtitle {
+                font-size: 18px !important;
+                bottom: 50px !important;
+            }
+            .art-video-player .art-bottom {
+                padding: 8px 12px 12px 12px !important;
+            }
+            .art-video-player .art-state .art-icon-state {
+                width: 58px !important;
+                height: 58px !important;
+            }
+            .art-video-player .art-state .art-icon-state svg {
+                width: 24px !important;
+                height: 24px !important;
+            }
+            .yume-vol-wrap:hover .yume-vol-slider-wrap {
+                width: 55px;
+            }
+            .yume-vol-slider {
+                width: 50px;
+            }
         }
     </style>
 </head>
@@ -1209,13 +1276,13 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                     escape: false,
                     style: {
                         color: '#ffffff',
-                        fontSize: window.innerWidth < 768 ? '19px' : '26px',
+                        fontSize: window.innerWidth < 768 ? '18px' : '26px',
                     },
                 };
             }
         }
 
-                const art = new Artplayer({
+        const art = new Artplayer({
             container: '#player',
             url: '%s',
             type: 'm3u8',
@@ -1271,19 +1338,19 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             muted: false,
             autoSize: true,
             autoMini: true,
-            screenshot: true,
+            screenshot: false,
             setting: true,
             loop: false,
             flip: false,
             playbackRate: true,
-            aspectRatio: true,
+            aspectRatio: false,
             fullscreen: true,
             fullscreenWeb: false,
-            pip: true,
+            pip: false,
             theme: '#ffffff',
             lang: 'en',
             hotkey: true,
-            airplay: true,
+            airplay: false,
             lock: true,
             fastForward: true,
             autoPlayback: true,
@@ -1308,6 +1375,12 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                         art.currentTime = Math.min(art.duration || 9999, art.currentTime + 10);
                     },
                 },
+                {
+                    name: 'volume-wrap',
+                    position: 'left',
+                    index: 15,
+                    html: '<div class="yume-vol-wrap"><button class="yume-vol-btn" id="yume-vol-btn" title="Mute/Unmute"><svg id="yume-vol-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 1 1 0 14.14"></path></svg></button><div class="yume-vol-slider-wrap"><input type="range" class="yume-vol-slider" id="yume-vol-slider" min="0" max="1" step="0.05" value="1"></div></div>',
+                }
             ],
             settings: rawTracks.length > 0 ? [
                 {
@@ -1330,10 +1403,29 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             ] : []
         });
 
-        // Ensure volume and un-mute persistence
+        // Initialize Volume & Un-mute Listener
         art.on('ready', () => {
             art.volume = 1.0;
             art.muted = false;
+            
+            setTimeout(() => {
+                const volSlider = document.getElementById('yume-vol-slider');
+                const volBtn = document.getElementById('yume-vol-btn');
+                if (volSlider) {
+                    volSlider.value = art.volume;
+                    volSlider.addEventListener('input', (e) => {
+                        const val = parseFloat(e.target.value);
+                        art.volume = val;
+                        art.muted = (val === 0);
+                    });
+                }
+                if (volBtn) {
+                    volBtn.addEventListener('click', () => {
+                        art.muted = !art.muted;
+                        if (volSlider) volSlider.value = art.muted ? 0 : art.volume;
+                    });
+                }
+            }, 100);
         });
     </script>
 </body>
