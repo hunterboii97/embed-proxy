@@ -1072,12 +1072,12 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             width: 100%%;
             height: 100%%;
         }
-        .art-video-player {
+                .art-video-player {
             font-family: inherit !important;
             --art-theme: #ffffff;
         }
         .art-video-player .art-bottom {
-            background: linear-gradient(to top, rgba(0, 0, 0, 0.95) 0%%, rgba(0, 0, 0, 0.5) 50%%, rgba(0, 0, 0, 0) 100%%) !important;
+            background: linear-gradient(to top, rgba(0, 0, 0, 0.95) 0%%, rgba(0, 0, 0, 0.6) 60%%, rgba(0, 0, 0, 0) 100%%) !important;
             padding: 10px 16px 14px 16px !important;
         }
         .art-video-player .art-progress {
@@ -1109,6 +1109,12 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             color: #e4e4e7 !important;
             letter-spacing: 0.5px;
         }
+        .art-video-player .art-control-volume .art-volume-slider {
+            background: rgba(255, 255, 255, 0.2) !important;
+        }
+        .art-video-player .art-control-volume .art-volume-slider-handle {
+            background: #ffffff !important;
+        }
         .art-video-player .art-icon svg {
             filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6));
             transition: transform 0.15s ease, fill 0.15s ease;
@@ -1119,7 +1125,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
         .art-video-player .art-state {
             pointer-events: none;
         }
-        /* Custom Center Play Button matching OLED Minimal Theme */
+        /* Single Minimal Center Play Button matching screenshot */
         .art-video-player .art-state .art-icon-state {
             width: 70px !important;
             height: 70px !important;
@@ -1150,13 +1156,26 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             line-height: 1.4 !important;
             bottom: 60px !important;
         }
+        /* Mobile Responsiveness Rules */
         @media (max-width: 768px) {
             .art-video-player .art-subtitle {
-                font-size: 19px !important;
+                font-size: 18px !important;
                 bottom: 45px !important;
             }
             .art-video-player .art-bottom {
                 padding: 6px 10px 10px 10px !important;
+            }
+            .art-video-player .art-control-pip,
+            .art-video-player .art-control-airplay {
+                display: none !important;
+            }
+            .art-video-player .art-state .art-icon-state {
+                width: 56px !important;
+                height: 56px !important;
+            }
+            .art-video-player .art-state .art-icon-state svg {
+                width: 22px !important;
+                height: 22px !important;
             }
         }
         .art-video-player .art-setting-panel {
@@ -1196,7 +1215,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             }
         }
 
-        const art = new Artplayer({
+                const art = new Artplayer({
             container: '#player',
             url: '%s',
             type: 'm3u8',
@@ -1213,10 +1232,9 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                         hls.attachMedia(video);
                         art.hls = hls;
 
-                        // Auto Highest Quality Selection & Quality Selector Menu
                         hls.on(Hls.Events.MANIFEST_PARSED, function () {
                             if (hls.levels && hls.levels.length > 0) {
-                                hls.currentLevel = hls.levels.length - 1; // Pick highest resolution
+                                hls.currentLevel = hls.levels.length - 1; // Auto highest resolution
                             }
 
                             const levels = hls.levels;
@@ -1249,17 +1267,18 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             subtitle: initialSubtitle.url ? initialSubtitle : undefined,
             autoplay: true,
             volume: 1.0,
+            isLive: false,
             muted: false,
             autoSize: true,
             autoMini: true,
             screenshot: true,
             setting: true,
             loop: false,
-            flip: true,
+            flip: false,
             playbackRate: true,
             aspectRatio: true,
             fullscreen: true,
-            fullscreenWeb: true,
+            fullscreenWeb: false,
             pip: true,
             theme: '#ffffff',
             lang: 'en',
@@ -1311,6 +1330,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             ] : []
         });
 
+        // Ensure volume and un-mute persistence
         art.on('ready', () => {
             art.volume = 1.0;
             art.muted = false;
