@@ -42,9 +42,10 @@ type TokenPayload struct {
 }
 
 var (
-	proxySecretKey []byte
-	allowedOrigins []string
-	httpClient     *http.Client
+	proxySecretKey      []byte
+	allowedOrigins      []string
+	allowedEmbedDomains []string
+	httpClient          *http.Client
 	// 64KB Buffer Pool for zero-copy high-throughput video segment streaming
 	bufferPool = sync.Pool{
 		New: func() interface{} {
@@ -300,6 +301,20 @@ func initConfig() {
 		}
 	}
 
+	embedStr := os.Getenv("ALLOWED_EMBED_DOMAINS")
+	if embedStr == "" {
+		embedStr = os.Getenv("ALLOWED_ORIGINS")
+	}
+	if embedStr == "" {
+		embedStr = "yumezone.live,*.yumezone.live,localhost,127.0.0.1"
+	}
+	for _, o := range strings.Split(embedStr, ",") {
+		o = strings.TrimSpace(strings.ToLower(o))
+		if o != "" {
+			allowedEmbedDomains = append(allowedEmbedDomains, o)
+		}
+	}
+
 	transport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
@@ -320,6 +335,134 @@ func initConfig() {
 		Transport: transport,
 		Timeout:   35 * time.Second,
 	}
+}
+
+func isDomainAllowed(hostOrURL string, proxyHost string) bool {
+	if hostOrURL == "" {
+		return false
+	}
+	h := hostOrURL
+	if strings.Contains(h, "://") {
+		u, err := url.Parse(h)
+		if err == nil {
+			h = u.Hostname()
+		}
+	} else {
+		h = strings.Split(h, ":")[0]
+	}
+	h = strings.ToLower(strings.TrimSpace(h))
+
+	cleanProxyHost := strings.ToLower(strings.TrimSpace(strings.Split(proxyHost, ":")[0]))
+	if cleanProxyHost != "" && (h == cleanProxyHost || strings.HasSuffix(h, "."+cleanProxyHost)) {
+		return true
+	}
+
+	for _, allowed := range allowedEmbedDomains {
+		allowed = strings.ToLower(strings.TrimSpace(allowed))
+		if strings.Contains(allowed, "://") {
+			u, err := url.Parse(allowed)
+			if err == nil {
+				allowed = u.Hostname()
+			}
+		} else {
+			allowed = strings.Split(allowed, ":")[0]
+		}
+
+		if allowed == "" {
+			continue
+		}
+		if allowed == "*" {
+			return true
+		}
+		if (allowed == "localhost" || allowed == "127.0.0.1") && (h == "localhost" || h == "127.0.0.1") {
+			return true
+		}
+		if strings.HasPrefix(allowed, "*.") {
+			suffix := strings.TrimPrefix(allowed, "*.")
+			if h == suffix || strings.HasSuffix(h, "."+suffix) {
+				return true
+			}
+		}
+		if h == allowed || strings.HasSuffix(h, "."+allowed) {
+			return true
+		}
+	}
+	return false
+}
+
+func isEmbedAllowed(r *http.Request) bool {
+	secDest := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Dest")))
+	secMode := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Mode")))
+	ref := r.Header.Get("Referer")
+	origin := r.Header.Get("Origin")
+
+	// 1. Direct browser tab navigation: user opens URL directly in address bar to watch
+	if (secDest == "document" || secDest == "") && (secMode == "navigate" || secMode == "") {
+		if ref == "" || isDomainAllowed(ref, r.Host) {
+			return true
+		}
+	}
+
+	// 2. Iframe embed request: must have an authorized Referer or Origin
+	if secDest == "iframe" || secMode == "nested-navigate" {
+		if ref != "" && isDomainAllowed(ref, r.Host) {
+			return true
+		}
+		if origin != "" && isDomainAllowed(origin, r.Host) {
+			return true
+		}
+		// Unauthorized or stripped referer within an iframe
+		return false
+	}
+
+	// 3. General request with Referer
+	if ref != "" {
+		return isDomainAllowed(ref, r.Host)
+	}
+
+	// Direct link access with no referer
+	return true
+}
+
+func buildFrameAncestorsCSP(proxyHost string) string {
+	ancestors := []string{"'self'"}
+	if proxyHost != "" {
+		h := strings.Split(proxyHost, ":")[0]
+		ancestors = append(ancestors, fmt.Sprintf("https://%s", h), fmt.Sprintf("http://%s", h))
+		if strings.Contains(proxyHost, ":") {
+			ancestors = append(ancestors, fmt.Sprintf("http://%s", proxyHost), fmt.Sprintf("https://%s", proxyHost))
+		}
+	}
+
+	for _, d := range allowedEmbedDomains {
+		d = strings.ToLower(strings.TrimSpace(d))
+		if d == "" {
+			continue
+		}
+		if strings.HasPrefix(d, "http://") || strings.HasPrefix(d, "https://") {
+			ancestors = append(ancestors, d)
+			continue
+		}
+		if d == "localhost" || d == "127.0.0.1" {
+			ancestors = append(ancestors, "http://localhost:*", "http://127.0.0.1:*", "http://localhost", "http://127.0.0.1")
+			continue
+		}
+		if strings.HasPrefix(d, "*.") {
+			ancestors = append(ancestors, fmt.Sprintf("https://%s", d), fmt.Sprintf("http://%s", d))
+		} else {
+			ancestors = append(ancestors, fmt.Sprintf("https://%s", d), fmt.Sprintf("https://*.%s", d), fmt.Sprintf("http://%s", d))
+		}
+	}
+
+	seen := make(map[string]bool)
+	var unique []string
+	for _, a := range ancestors {
+		if !seen[a] {
+			seen[a] = true
+			unique = append(unique, a)
+		}
+	}
+	return strings.Join(unique, " ")
 }
 
 func decryptToken(tokenStr string) (*TokenPayload, error) {
@@ -2454,6 +2597,16 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Enforce Allowed Site / Domain Embed Restriction
+	if !isEmbedAllowed(r) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Security-Policy", "frame-ancestors 'none';")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte("Embedding not allowed: domain is not authorized to embed this player."))
+		return
+	}
+
 	targetPath := strings.TrimPrefix(r.URL.Path, "/embed/megaplay/")
 	targetPath = strings.TrimPrefix(targetPath, "/embed/megaplay")
 	targetPath = strings.TrimPrefix(targetPath, "/")
@@ -2464,6 +2617,8 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 
 	// Auto-normalize path and resolve AniList ID to MAL ID
 	targetPath = normalizeMegaplayPath(targetPath)
+	frameAncestors := buildFrameAncestorsCSP(r.Host)
+	cspHeader := fmt.Sprintf("default-src * 'unsafe-inline' 'unsafe-eval' blob: data:; frame-ancestors %s;", frameAncestors)
 
 	// Check cache for instant load
 	cacheKey := "megaplay:clean:" + targetPath
@@ -2472,7 +2627,7 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 		if time.Now().Before(entry.ExpiresAt) {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Header().Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
-			w.Header().Set("Content-Security-Policy", "default-src * 'unsafe-inline' 'unsafe-eval' blob: data:; frame-ancestors *;")
+			w.Header().Set("Content-Security-Policy", cspHeader)
 			w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
 			w.Header().Del("X-Frame-Options")
 			w.Header().Del("Cross-Origin-Opener-Policy")
@@ -2518,7 +2673,7 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Header().Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
-			w.Header().Set("Content-Security-Policy", "default-src * 'unsafe-inline' 'unsafe-eval' blob: data:; frame-ancestors *;")
+			w.Header().Set("Content-Security-Policy", cspHeader)
 			w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
 			w.Header().Del("X-Frame-Options")
 			w.Header().Del("Cross-Origin-Opener-Policy")
@@ -2532,7 +2687,7 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 	errorHTML := renderCustomProxy404(targetPath, "This episode stream is currently unavailable on Megaplay server. Please switch to Cosmic, Zoko, or Animo server below.")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	w.Header().Set("Content-Security-Policy", "default-src * 'unsafe-inline' 'unsafe-eval' blob: data:; frame-ancestors *;")
+	w.Header().Set("Content-Security-Policy", cspHeader)
 	w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
 	w.Header().Del("X-Frame-Options")
 	w.Header().Del("Cross-Origin-Opener-Policy")
@@ -2646,10 +2801,13 @@ func handleDocs(w http.ResponseWriter, r *http.Request) {
 		scheme = "http"
 	}
 
+	frameAncestors := buildFrameAncestorsCSP(host)
+	cspHeader := fmt.Sprintf("default-src * 'unsafe-inline' 'unsafe-eval' blob: data:; frame-ancestors %s;", frameAncestors)
+
 	html := renderEmbedDocsHTML(scheme, host)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
-	w.Header().Set("Content-Security-Policy", "default-src * 'unsafe-inline' 'unsafe-eval' blob: data:; frame-ancestors *;")
+	w.Header().Set("Content-Security-Policy", cspHeader)
 	w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
 	w.Header().Del("X-Frame-Options")
 	w.Header().Del("Cross-Origin-Opener-Policy")

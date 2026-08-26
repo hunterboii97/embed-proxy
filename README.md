@@ -1,16 +1,16 @@
 # MegaPlay Stream & Clean Embed Proxy API
 
-Dedicated high-performance Go reverse proxy and ad-free embed sanitizer for **MegaPlay** (`megaplay.buzz`). Extracts clean HLS streams, proxies M3U8 video chunks with automatic CDN referer spoofing and permissive CORS, and renders a 100% ad-free OLED video player with MyAnimeList & AniList catalog mapping.
+Dedicated high-performance Go reverse proxy, embed sanitizer, and security layer for **MegaPlay** (`megaplay.buzz`). Extracts clean HLS streams, proxies M3U8 video chunks with automatic CDN referer spoofing and permissive CORS, and renders a 100% ad-free OLED video player with MyAnimeList & AniList catalog mapping.
 
 ## 🚀 Key Features
 
+- **Allowed Site / Domain Embedding Security**: Enforces strict `ALLOWED_EMBED_DOMAINS` environment configuration. Only whitelisted sites can embed the player in an `<iframe>` (unauthorized domains get rejected at the HTTP/CSP level in advance without loading). Anyone with the direct link in a browser tab can watch freely.
 - **Ad & Popup Stripping**: Sanitizes MegaPlay stream sources by bypassing ad scripts (`app.main.js`), tracker beacons, and anti-sandbox blockers.
 - **MyAnimeList & AniList Catalog Resolution**: Embed directly via MAL ID (`/embed/megaplay/mal/{id}/{ep}/{lang}`) or AniList ID (`/embed/megaplay/ani/{id}/{ep}/{lang}`) with automated 3-tier fallback resolution (AniZip -> AniList GraphQL -> Kitsu).
 - **Clean OLED Bespoke Video Player**: High-resolution streaming with 60fps scrub bar, 10s skip, landscape fullscreen, mobile touch volume, and multi-track subtitle switching.
 - **Bi-Directional `postMessage` Telemetry**: Emits `time`, `complete`, `watching-log`, and `YUME_SWITCH_SERVER` events to the parent website for progress tracking and auto-next episode triggers.
 - **HLS / TS Stream Proxying**: High-throughput zero-copy M3U8 playlist rewriting and chunk streaming with AES-GCM token verification.
 - **Upstream CDN Whitelists**: Injects required `Referer: https://megaplay.buzz/` and permissive CORS headers for all MegaPlay streaming CDNs.
-- **Interactive Documentation & Sandbox**: Built-in dark OLED web application served at `/`, `/docs`, and `/api` for webmasters to configure, test, and preview embeds in real-time.
 
 ---
 
@@ -43,28 +43,6 @@ Dedicated high-performance Go reverse proxy and ad-free embed sanitizer for **Me
 </div>
 ```
 
-### Player `postMessage` Listener Example
-
-```javascript
-window.addEventListener("message", function (event) {
-  let data = event.data;
-  if (typeof data === "string") {
-    try { data = JSON.parse(data); } catch (e) { return; }
-  }
-  if (!data) return;
-
-  // Handle watch progress
-  if (data.event === "time") {
-    console.log("Progress:", data.time, "/", data.duration, "(" + data.percent + "%)");
-  }
-
-  // Handle auto-next episode
-  if (data.event === "complete") {
-    console.log("Episode finished! Triggering next episode...");
-  }
-});
-```
-
 ---
 
 ## ⚙️ Environment Variables
@@ -73,19 +51,8 @@ window.addEventListener("message", function (event) {
 | :--- | :--- | :--- |
 | `PORT` | `5001` | Server listen port (automatically provided by Railway) |
 | `PROXY_SECRET` | *(required)* | 32-character AES-256 key matching Render Backend |
-| `ALLOWED_ORIGINS` | `yumezone.live,localhost` | Whitelisted origins for CORS |
-
----
-
-## 🛠️ Local Development
-
-```bash
-# Run locally
-go run main.go
-
-# Build standalone binary
-go build -ldflags="-s -w" -o yume-proxy main.go
-```
+| `ALLOWED_EMBED_DOMAINS` | `yumezone.live,*.yumezone.live,localhost,127.0.0.1` | Whitelisted domains permitted to embed the player in an `<iframe>` (blocks unauthorized embeds in advance) |
+| `ALLOWED_ORIGINS` | `yumezone.live,localhost,127.0.0.1` | Whitelisted origins for general CORS requests |
 
 ---
 
@@ -95,5 +62,6 @@ go build -ldflags="-s -w" -o yume-proxy main.go
 2. Railway will automatically build using the multi-stage `Dockerfile`.
 3. Set the environment variables in Railway Dashboard:
    - `PROXY_SECRET`: (your shared secret key)
+   - `ALLOWED_EMBED_DOMAINS`: `yumezone.live,*.yumezone.live,localhost,127.0.0.1`
    - `ALLOWED_ORIGINS`: `https://yumezone.live,https://www.yumezone.live`
 4. Add your custom domain or use Railway's default domain.
