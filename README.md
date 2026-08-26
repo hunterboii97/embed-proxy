@@ -1,17 +1,16 @@
-# YumeZone Go Stream & Clean Embed Proxy API
+# MegaPlay Stream & Clean Embed Proxy API
 
-High-performance, zero-cold-start streaming reverse proxy, anime embed provider, and interactive documentation engine built with Go 1.22 and Alpine Linux for YumeZone.
+Dedicated high-performance Go reverse proxy and ad-free embed sanitizer for **MegaPlay** (`megaplay.buzz`). Extracts clean HLS streams, proxies M3U8 video chunks with automatic CDN referer spoofing and permissive CORS, and renders a 100% ad-free OLED video player with MyAnimeList & AniList catalog mapping.
 
-## 🚀 Features
+## 🚀 Key Features
 
-- **Interactive Web Documentation & Embed Sandbox**: Built-in dark OLED web application served at `/`, `/docs`, and `/api` for webmasters to configure, test, and preview embeds in real-time.
-- **MyAnimeList & AniList Auto-Resolution**: Direct embed routes by MAL ID (`/embed/megaplay/mal/{id}/{ep}/{lang}`) and AniList ID (`/embed/megaplay/ani/{id}/{ep}/{lang}`) with automated 3-tier fallback resolution (AniZip -> AniList GraphQL -> Kitsu).
-- **Clean OLED Bespoke Video Player**: 100% ad-free, zero-popup player featuring 60fps scrubbing, 10s skip, mobile landscape fullscreen, touch volume, and multi-track subtitle switching.
+- **Ad & Popup Stripping**: Sanitizes MegaPlay stream sources by bypassing ad scripts (`app.main.js`), tracker beacons, and anti-sandbox blockers.
+- **MyAnimeList & AniList Catalog Resolution**: Embed directly via MAL ID (`/embed/megaplay/mal/{id}/{ep}/{lang}`) or AniList ID (`/embed/megaplay/ani/{id}/{ep}/{lang}`) with automated 3-tier fallback resolution (AniZip -> AniList GraphQL -> Kitsu).
+- **Clean OLED Bespoke Video Player**: High-resolution streaming with 60fps scrub bar, 10s skip, landscape fullscreen, mobile touch volume, and multi-track subtitle switching.
 - **Bi-Directional `postMessage` Telemetry**: Emits `time`, `complete`, `watching-log`, and `YUME_SWITCH_SERVER` events to the parent website for progress tracking and auto-next episode triggers.
 - **HLS / TS Stream Proxying**: High-throughput zero-copy M3U8 playlist rewriting and chunk streaming with AES-GCM token verification.
-- **30+ CDN Spoofing Whitelists**: Automatic Referer, Origin, and Sec-Fetch headers injection for upstream anime CDNs.
-- **In-Memory Caching**: Ultra-fast sub-2ms response times for repeat playlist and embed requests.
-- **Ultra-Low Resource Footprint**: Consumes only ~15–25MB RAM and near-zero idle CPU.
+- **Upstream CDN Whitelists**: Injects required `Referer: https://megaplay.buzz/` and permissive CORS headers for all MegaPlay streaming CDNs.
+- **Interactive Documentation & Sandbox**: Built-in dark OLED web application served at `/`, `/docs`, and `/api` for webmasters to configure, test, and preview embeds in real-time.
 
 ---
 
@@ -21,11 +20,10 @@ High-performance, zero-cold-start streaming reverse proxy, anime embed provider,
 | :--- | :--- | :--- |
 | `GET` | `/` or `/docs` or `/api` | Interactive Web Documentation & Live Embed Sandbox |
 | `GET` | `/embed/megaplay/mal/{mal_id}/{ep_num}/{language}` | Clean OLED embed player for MyAnimeList ID |
-| `GET` | `/embed/megaplay/ani/{anilist_id}/{ep_num}/{language}` | Clean OLED embed player for AniList ID (auto-resolved) |
+| `GET` | `/embed/megaplay/ani/{anilist_id}/{ep_num}/{language}` | Clean OLED embed player for AniList ID (auto-resolved to MAL) |
 | `GET` | `/embed/megaplay/s-2/{episode_id}/{language}` | Direct embed player for catalog episode ID |
 | `GET` | `/p/{encrypted_token}` | Secure HLS playlist / TS video segment stream proxy |
-| `GET` | `/stream/getSources` | Direct JSON stream sources extractor |
-| `POST` | `/api/mapping-request` | Submit missing MAL/AniList catalog ID mapping requests |
+| `GET` | `/stream/getSources` | Direct upstream JSON stream sources extractor |
 | `GET` | `/health` | Service healthcheck & timestamp information |
 
 ---
@@ -33,7 +31,7 @@ High-performance, zero-cold-start streaming reverse proxy, anime embed provider,
 ## 💻 Webmaster Quick Integration
 
 ```html
-<!-- Responsive 16:9 Video Wrapper -->
+<!-- Responsive 16:9 Video Embed Container -->
 <div style="position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 12px; overflow: hidden;">
   <iframe 
     src="https://yume-proxy-railway-production.up.railway.app/embed/megaplay/mal/5114/1/sub"
@@ -62,7 +60,7 @@ window.addEventListener("message", function (event) {
 
   // Handle auto-next episode
   if (data.event === "complete") {
-    console.log("Episode completed. Triggering next episode...");
+    console.log("Episode finished! Triggering next episode...");
   }
 });
 ```

@@ -2704,8 +2704,8 @@ const docsHTMLTemplate = `<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-    <title>YumeZone Stream & Video Embed API — Documentation & Sandbox</title>
-    <meta name="description" content="High-performance, zero-ad anime embed player and HLS reverse proxy API with MyAnimeList & AniList catalog resolution, subtitle streaming, and bi-directional player event hooks.">
+    <title>MegaPlay Embed & Stream Proxy API — Documentation & Embed Sandbox</title>
+    <meta name="description" content="Dedicated high-performance Go reverse proxy and ad-free embed sanitizer for MegaPlay (megaplay.buzz). Features MyAnimeList & AniList catalog resolution, HLS stream proxying, and custom OLED video player.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -2720,10 +2720,9 @@ const docsHTMLTemplate = `<!DOCTYPE html>
         :root {
             --bg: #07050d;
             --bg-elevated: #0e0a17;
-            --bg-card: rgba(18, 14, 28, 0.72);
-            --bg-card-hover: rgba(26, 20, 42, 0.85);
-            --border: rgba(162, 155, 254, 0.12);
-            --border-glow: rgba(162, 155, 254, 0.3);
+            --bg-card: rgba(18, 14, 28, 0.75);
+            --border: rgba(162, 155, 254, 0.14);
+            --border-glow: rgba(162, 155, 254, 0.32);
             --text-main: #f8fafc;
             --text-muted: #94a3b8;
             --accent: #6366f1;
@@ -2732,8 +2731,6 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             --accent-glow: rgba(99, 102, 241, 0.25);
             --emerald: #10b981;
             --emerald-dim: rgba(16, 185, 129, 0.12);
-            --amber: #f59e0b;
-            --rose: #f43f5e;
             --mono: "JetBrains Mono", ui-monospace, monospace;
             --sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
             --radius-sm: 8px;
@@ -2755,9 +2752,9 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             -webkit-font-smoothing: antialiased;
             -moz-osx-font-smoothing: grayscale;
             background-image:
-                radial-gradient(ellipse 900px 500px at 15% -10%, rgba(99, 102, 241, 0.28), transparent 60%),
-                radial-gradient(ellipse 700px 450px at 90% 15%, rgba(168, 85, 247, 0.16), transparent 55%),
-                radial-gradient(ellipse 800px 600px at 50% 120%, rgba(99, 102, 241, 0.1), transparent 50%);
+                radial-gradient(ellipse 900px 500px at 15% -10%, rgba(99, 102, 241, 0.25), transparent 60%),
+                radial-gradient(ellipse 700px 450px at 90% 15%, rgba(168, 85, 247, 0.15), transparent 55%),
+                radial-gradient(ellipse 800px 600px at 50% 120%, rgba(99, 102, 241, 0.08), transparent 50%);
             background-attachment: fixed;
         }
 
@@ -2777,7 +2774,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             position: sticky;
             top: 0;
             z-index: 100;
-            background: rgba(7, 5, 13, 0.82);
+            background: rgba(7, 5, 13, 0.85);
             backdrop-filter: blur(16px);
             -webkit-backdrop-filter: blur(16px);
             border-bottom: 1px solid var(--border);
@@ -2797,7 +2794,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             display: flex;
             align-items: center;
             gap: 0.65rem;
-            font-size: 1.125rem;
+            font-size: 1.1rem;
             font-weight: 800;
             color: #ffffff;
             letter-spacing: -0.02em;
@@ -2808,7 +2805,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             width: 32px;
             height: 32px;
             border-radius: 10px;
-            background: linear-gradient(135deg, var(--accent), #a855f7);
+            background: linear-gradient(135deg, var(--accent), #8b5cf6);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -2876,7 +2873,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
         .doc-hero-section {
             max-width: 1240px;
             margin: 0 auto;
-            padding: 2.75rem 1.5rem 1.5rem;
+            padding: 2.5rem 1.5rem 1.25rem;
         }
 
         .doc-hero-card {
@@ -2884,7 +2881,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             background: linear-gradient(145deg, rgba(20, 16, 32, 0.95), rgba(11, 8, 18, 0.98));
             border: 1px solid var(--border);
             border-radius: var(--radius-lg);
-            padding: 2.75rem 2.5rem;
+            padding: 2.5rem 2.25rem;
             box-shadow: var(--shadow);
             overflow: hidden;
         }
@@ -2896,7 +2893,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             left: -20%;
             width: 80%;
             height: 150%;
-            background: radial-gradient(circle, rgba(99, 102, 241, 0.18), transparent 60%);
+            background: radial-gradient(circle, rgba(99, 102, 241, 0.16), transparent 60%);
             pointer-events: none;
         }
 
@@ -2906,22 +2903,22 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             gap: 0.5rem;
             font-size: 0.75rem;
             font-weight: 800;
-            letter-spacing: 0.12em;
+            letter-spacing: 0.1em;
             text-transform: uppercase;
             color: var(--accent-soft);
             background: var(--accent-dim);
             border: 1px solid rgba(162, 155, 254, 0.25);
             padding: 0.35rem 0.85rem;
             border-radius: 999px;
-            margin-bottom: 1.25rem;
+            margin-bottom: 1.15rem;
         }
 
         .doc-hero-card h1 {
-            font-size: clamp(2.1rem, 4.5vw, 3rem);
+            font-size: clamp(1.9rem, 4vw, 2.75rem);
             font-weight: 800;
             letter-spacing: -0.03em;
-            line-height: 1.15;
-            margin-bottom: 1rem;
+            line-height: 1.18;
+            margin-bottom: 0.85rem;
             background: linear-gradient(110deg, #ffffff 0%, #d8d4ff 45%, var(--accent-soft) 100%);
             -webkit-background-clip: text;
             background-clip: text;
@@ -2929,29 +2926,29 @@ const docsHTMLTemplate = `<!DOCTYPE html>
         }
 
         .doc-hero-lead {
-            font-size: 1.05rem;
+            font-size: 1rem;
             color: var(--text-muted);
             max-width: 44rem;
             line-height: 1.68;
-            margin-bottom: 1.75rem;
+            margin-bottom: 1.5rem;
         }
 
         .hero-actions {
             display: flex;
             flex-wrap: wrap;
             gap: 0.85rem;
-            margin-bottom: 2rem;
+            margin-bottom: 1.75rem;
         }
 
         .btn-primary {
             display: inline-flex;
             align-items: center;
             gap: 0.55rem;
-            padding: 0.75rem 1.4rem;
+            padding: 0.7rem 1.35rem;
             background: linear-gradient(135deg, var(--accent), #7c3aed);
             color: #ffffff;
             font-weight: 700;
-            font-size: 0.9rem;
+            font-size: 0.875rem;
             border-radius: var(--radius-sm);
             border: none;
             cursor: pointer;
@@ -2971,11 +2968,11 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             display: inline-flex;
             align-items: center;
             gap: 0.55rem;
-            padding: 0.75rem 1.3rem;
+            padding: 0.7rem 1.25rem;
             background: rgba(255, 255, 255, 0.05);
             color: var(--accent-soft);
             font-weight: 600;
-            font-size: 0.9rem;
+            font-size: 0.875rem;
             border-radius: var(--radius-sm);
             border: 1px solid var(--border);
             cursor: pointer;
@@ -2992,9 +2989,9 @@ const docsHTMLTemplate = `<!DOCTYPE html>
 
         .hero-metrics {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
             gap: 1rem;
-            padding-top: 1.5rem;
+            padding-top: 1.25rem;
             border-top: 1px solid var(--border);
         }
 
@@ -3005,27 +3002,27 @@ const docsHTMLTemplate = `<!DOCTYPE html>
         }
 
         .metric-icon {
-            width: 36px;
-            height: 36px;
-            border-radius: 10px;
+            width: 34px;
+            height: 34px;
+            border-radius: 8px;
             background: rgba(99, 102, 241, 0.1);
             border: 1px solid rgba(162, 155, 254, 0.15);
             display: flex;
             align-items: center;
             justify-content: center;
             color: var(--accent-soft);
-            font-size: 0.95rem;
+            font-size: 0.9rem;
             flex-shrink: 0;
         }
 
         .metric-info h4 {
-            font-size: 0.875rem;
+            font-size: 0.85rem;
             font-weight: 700;
             color: var(--text-main);
         }
 
         .metric-info p {
-            font-size: 0.75rem;
+            font-size: 0.725rem;
             color: var(--text-muted);
         }
 
@@ -3033,7 +3030,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
         .doc-shell {
             max-width: 1240px;
             margin: 0 auto;
-            padding: 1.5rem 1.5rem 4rem;
+            padding: 1.25rem 1.5rem 4rem;
         }
 
         .doc-layout {
@@ -3063,9 +3060,9 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             background: var(--bg-card);
             border: 1px solid var(--border);
             border-radius: var(--radius-md);
-            padding: 1.75rem;
+            padding: 1.6rem;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
-            transition: border-color 0.2s ease, transform 0.2s ease;
+            transition: border-color 0.2s ease;
         }
 
         .doc-card:hover {
@@ -3076,11 +3073,11 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             display: flex;
             align-items: center;
             justify-content: space-between;
-            margin-bottom: 1rem;
+            margin-bottom: 0.85rem;
         }
 
         .card-title {
-            font-size: 1.15rem;
+            font-size: 1.1rem;
             font-weight: 800;
             color: var(--accent-soft);
             display: flex;
@@ -3094,14 +3091,14 @@ const docsHTMLTemplate = `<!DOCTYPE html>
         }
 
         .doc-card p {
-            font-size: 0.9rem;
+            font-size: 0.875rem;
             color: var(--text-muted);
-            margin-bottom: 0.85rem;
+            margin-bottom: 0.75rem;
             line-height: 1.65;
         }
 
         .doc-card h3 {
-            font-size: 0.95rem;
+            font-size: 0.925rem;
             font-weight: 700;
             color: var(--text-main);
             margin: 1.25rem 0 0.5rem;
@@ -3115,9 +3112,9 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             display: flex;
             gap: 0.85rem;
             align-items: flex-start;
-            padding: 0.95rem 1.1rem;
+            padding: 0.85rem 1rem;
             border-radius: var(--radius-sm);
-            margin: 1rem 0;
+            margin: 0.85rem 0;
             font-size: 0.85rem;
             line-height: 1.6;
         }
@@ -3134,24 +3131,12 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             color: #e0e7ff;
         }
 
-        .doc-alert.warn {
-            background: rgba(245, 158, 11, 0.1);
-            border: 1px solid rgba(245, 158, 11, 0.28);
-            color: #fef3c7;
-        }
-
-        .doc-alert.success {
-            background: var(--emerald-dim);
-            border: 1px solid rgba(16, 185, 129, 0.3);
-            color: #d1fae5;
-        }
-
         /* Endpoint Spec Panel */
         .ep-badge-row {
             display: flex;
             align-items: center;
             gap: 0.6rem;
-            margin-bottom: 0.75rem;
+            margin-bottom: 0.65rem;
         }
 
         .method-badge {
@@ -3168,7 +3153,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
 
         .ep-path {
             font-family: var(--mono);
-            font-size: 0.85rem;
+            font-size: 0.825rem;
             font-weight: 600;
             color: #e2e8f0;
             background: rgba(0, 0, 0, 0.5);
@@ -3191,7 +3176,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
 
         .code-box pre {
             font-family: var(--mono);
-            font-size: 0.8rem;
+            font-size: 0.78rem;
             color: #c4b5fd;
             line-height: 1.55;
             white-space: pre-wrap;
@@ -3221,7 +3206,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
         /* Parameter Tables */
         .param-table-wrap {
             overflow-x: auto;
-            margin: 1rem 0;
+            margin: 0.85rem 0;
             border: 1px solid var(--border);
             border-radius: var(--radius-sm);
         }
@@ -3267,13 +3252,6 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             text-transform: uppercase;
         }
 
-        .opt-tag {
-            font-size: 0.7rem;
-            font-weight: 600;
-            color: var(--text-muted);
-            text-transform: uppercase;
-        }
-
         /* Sticky Interactive Tester Rail */
         .doc-rail {
             position: sticky;
@@ -3289,7 +3267,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
         }
 
         .tester-title {
-            font-size: 1.125rem;
+            font-size: 1.1rem;
             font-weight: 800;
             color: #ffffff;
             display: flex;
@@ -3301,12 +3279,12 @@ const docsHTMLTemplate = `<!DOCTYPE html>
         .tester-sub {
             font-size: 0.8rem;
             color: var(--text-muted);
-            margin-bottom: 1.25rem;
+            margin-bottom: 1.15rem;
             line-height: 1.5;
         }
 
         .form-group {
-            margin-bottom: 0.9rem;
+            margin-bottom: 0.85rem;
         }
 
         .form-group label {
@@ -3319,7 +3297,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             margin-bottom: 0.35rem;
         }
 
-        .form-input, .form-select, .form-textarea {
+        .form-input, .form-select {
             width: 100%;
             background: rgba(7, 5, 13, 0.75);
             border: 1px solid var(--border);
@@ -3333,7 +3311,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             transition: all 0.15s ease;
         }
 
-        .form-input:focus, .form-select:focus, .form-textarea:focus {
+        .form-input:focus, .form-select:focus {
             border-color: var(--accent);
             box-shadow: 0 0 0 2px var(--accent-dim);
         }
@@ -3347,11 +3325,6 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             cursor: pointer;
         }
 
-        .form-textarea {
-            min-height: 80px;
-            resize: vertical;
-        }
-
         .tester-btn-row {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -3361,8 +3334,8 @@ const docsHTMLTemplate = `<!DOCTYPE html>
 
         .tester-out {
             display: none;
-            margin-top: 1.25rem;
-            padding-top: 1.25rem;
+            margin-top: 1.15rem;
+            padding-top: 1.15rem;
             border-top: 1px solid var(--border);
             animation: fadeIn 0.3s ease-out;
         }
@@ -3393,8 +3366,8 @@ const docsHTMLTemplate = `<!DOCTYPE html>
         .doc-footer {
             border-top: 1px solid var(--border);
             background: rgba(7, 5, 13, 0.95);
-            padding: 2.5rem 1.5rem;
-            margin-top: 4rem;
+            padding: 2rem 1.5rem;
+            margin-top: 3.5rem;
         }
 
         .footer-inner {
@@ -3421,63 +3394,63 @@ const docsHTMLTemplate = `<!DOCTYPE html>
         <div class="doc-nav-container">
             <a href="/" class="doc-brand">
                 <div class="doc-brand-icon"><i class="fas fa-play"></i></div>
-                <div>YumeZone <span>Stream API</span></div>
+                <div>MegaPlay <span>Stream Proxy API</span></div>
             </a>
             <ul class="doc-nav-links">
                 <li><a href="#overview">Overview</a></li>
+                <li><a href="#how-it-works">How It Works</a></li>
                 <li><a href="#endpoints">Endpoints</a></li>
                 <li><a href="#guide">Integration</a></li>
                 <li><a href="#events">Player Events</a></li>
                 <li><a href="#test-embed">Live Tester</a></li>
-                <li><a href="#contact">Request ID</a></li>
             </ul>
-            <div class="status-badge">
+            <a href="/health" target="_blank" class="status-badge">
                 <span class="status-dot"></span>
-                API Operational
-            </div>
+                Proxy Active
+            </a>
         </div>
     </header>
 
     <!-- Hero Section -->
     <section class="doc-hero-section" id="overview">
         <div class="doc-hero-card">
-            <div class="hero-chip"><i class="fas fa-bolt"></i> High-Performance Video Embed & Stream Engine</div>
-            <h1>Zero-Ad Anime Embed & HLS Streaming API</h1>
+            <div class="hero-chip"><i class="fas fa-shield-halved"></i> Dedicated MegaPlay Stream Reverse Proxy</div>
+            <h1>MegaPlay Video Embed & HLS Proxy API</h1>
             <p class="doc-hero-lead">
-                A seamless, plug-and-play streaming solution for webmasters and anime websites. Built with Go 1.22 and Alpine Linux, featuring automatic MyAnimeList & AniList catalog resolution, high-throughput HLS reverse proxying, multi-track subtitle delivery, and bi-directional postMessage player telemetry.
+                A dedicated reverse proxy and player sanitizer for <strong>MegaPlay</strong> (<code>megaplay.buzz</code>). Extracts clean streams, proxies M3U8 video chunks with automatic CDN referer spoofing and permissive CORS, and renders a 100% ad-free OLED video player with MyAnimeList & AniList catalog mapping.
             </p>
             <div class="hero-actions">
-                <a href="#test-embed" class="btn-primary"><i class="fas fa-play-circle"></i> Test Your Embed</a>
-                <a href="#endpoints" class="btn-secondary"><i class="fas fa-code"></i> View Endpoints</a>
-                <a href="#guide" class="btn-secondary"><i class="fas fa-book-open"></i> Integration Guide</a>
+                <a href="#test-embed" class="btn-primary"><i class="fas fa-play-circle"></i> Test In Sandbox</a>
+                <a href="#endpoints" class="btn-secondary"><i class="fas fa-code"></i> Endpoints List</a>
+                <a href="#guide" class="btn-secondary"><i class="fas fa-book-open"></i> Integration Code</a>
             </div>
             <div class="hero-metrics">
                 <div class="metric-box">
-                    <div class="metric-icon"><i class="fas fa-shield-halved"></i></div>
+                    <div class="metric-icon"><i class="fas fa-ban"></i></div>
                     <div class="metric-info">
-                        <h4>Zero Popup Ads</h4>
-                        <p>100% clean video player</p>
-                    </div>
-                </div>
-                <div class="metric-box">
-                    <div class="metric-icon"><i class="fas fa-gauge-high"></i></div>
-                    <div class="metric-info">
-                        <h4>Sub-2ms Cache</h4>
-                        <p>Instant playlist response</p>
+                        <h4>Zero Popups</h4>
+                        <p>Strips ad scripts & trackers</p>
                     </div>
                 </div>
                 <div class="metric-box">
                     <div class="metric-icon"><i class="fas fa-lock"></i></div>
                     <div class="metric-info">
                         <h4>AES-GCM Proxy</h4>
-                        <p>Encrypted token security</p>
+                        <p>Encrypted <code>/p/{token}</code> streaming</p>
                     </div>
                 </div>
                 <div class="metric-box">
-                    <div class="metric-icon"><i class="fas fa-globe"></i></div>
+                    <div class="metric-icon"><i class="fas fa-arrows-split-up-and-left"></i></div>
                     <div class="metric-info">
-                        <h4>30+ CDN Whitelists</h4>
-                        <p>Global multi-mirror streaming</p>
+                        <h4>Referer Spoofing</h4>
+                        <p>Bypasses CDN hotlink locks</p>
+                    </div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-icon"><i class="fas fa-id-badge"></i></div>
+                    <div class="metric-info">
+                        <h4>AniList to MAL</h4>
+                        <p>Auto-translates catalog IDs</p>
                     </div>
                 </div>
             </div>
@@ -3489,18 +3462,21 @@ const docsHTMLTemplate = `<!DOCTYPE html>
         <div class="doc-layout">
             <!-- Main Editorial Column -->
             <main class="doc-content">
-                <!-- Why Choose Section -->
-                <div class="doc-card">
+                <!-- How It Works Section -->
+                <div class="doc-card" id="how-it-works">
                     <div class="card-header">
-                        <h2 class="card-title"><i class="fas fa-layer-group"></i> Architecture & Features</h2>
+                        <h2 class="card-title"><i class="fas fa-gears"></i> How This Proxy Works</h2>
                     </div>
                     <p>
-                        YumeZone Stream & Proxy provides a unified embed layer and proxy pipeline designed to eliminate ad injections, bypass CDN hotlink protections, and simplify anime catalog integration.
+                        Direct MegaPlay iframe embeds contain intrusive ad loaders (<code>app.main.js</code>), analytics trackers, and strict sandbox limitations. Additionally, MegaPlay CDN video segments block direct browser requests unless spoofed with <code>Referer: https://megaplay.buzz/</code>.
                     </p>
+                    <p>This proxy resolves these issues in 3 automated steps:</p>
                     <div class="doc-alert info">
-                        <i class="fas fa-info-circle"></i>
+                        <i class="fas fa-circle-nodes"></i>
                         <div>
-                            <strong>Universal Catalog Compatibility:</strong> Embed episodes using <strong>MyAnimeList ID</strong> (<code>mal/{id}</code>), <strong>AniList ID</strong> (<code>ani/{id}</code>), or <strong>Catalog Episode ID</strong> (<code>s-2/{ep_id}</code>).
+                            <strong>1. Extraction:</strong> When you request <code>/embed/megaplay/...</code>, the proxy queries MegaPlay's source resolver (<code>getSources</code>) on the fly to obtain the real HLS stream URL and subtitle tracks.<br><br>
+                            <strong>2. Media Proxying:</strong> Subtitles and M3U8 playlists are proxied through <code>/p/{token}</code> with encrypted tokens, injecting required <code>Referer</code> / <code>Origin</code> headers and permissive CORS headers.<br><br>
+                            <strong>3. Clean Player Delivery:</strong> Returns a custom OLED HTML5 player with multi-subtitles, 60fps scrubbing, and mobile landscape fullscreen.
                         </div>
                     </div>
                 </div>
@@ -3510,15 +3486,15 @@ const docsHTMLTemplate = `<!DOCTYPE html>
                     <div class="card-header">
                         <h2 class="card-title"><i class="fas fa-server"></i> API Endpoints</h2>
                     </div>
-                    <p>Use the endpoints below to embed clean video players or stream HLS chunks directly into your web applications.</p>
+                    <p>All proxy and embed routes available on this service:</p>
 
                     <!-- Endpoint 1: MAL Embed -->
-                    <h3><i class="fas fa-play"></i> 1. MyAnimeList Embed Player</h3>
+                    <h3><i class="fas fa-play"></i> 1. MyAnimeList (MAL) Embed Player</h3>
                     <div class="ep-badge-row">
                         <span class="method-badge">GET</span>
                         <span class="ep-path">{{BASE_URL}}/embed/megaplay/mal/{mal_id}/{ep_num}/{language}</span>
                     </div>
-                    <p>Streams the episode using a MyAnimeList ID with our custom OLED HTML5 player.</p>
+                    <p>Embeds MegaPlay video stream using MyAnimeList ID with our clean player.</p>
                     <div class="param-table-wrap">
                         <table class="param-table">
                             <thead>
@@ -3536,14 +3512,14 @@ const docsHTMLTemplate = `<!DOCTYPE html>
                                     <td>Integer</td>
                                     <td><span class="req-tag">Yes</span></td>
                                     <td>MyAnimeList anime ID</td>
-                                    <td><code>5114</code> (FMA:B), <code>21</code> (One Piece)</td>
+                                    <td><code>5114</code> (FMA:B), <code>21</code> (One Piece), <code>52991</code> (Frieren)</td>
                                 </tr>
                                 <tr>
                                     <td>ep_num</td>
                                     <td>Integer</td>
                                     <td><span class="req-tag">Yes</span></td>
                                     <td>Episode number</td>
-                                    <td><code>1</code>, <code>2</code>, <code>24</code></td>
+                                    <td><code>1</code>, <code>2</code>, <code>12</code></td>
                                 </tr>
                                 <tr>
                                     <td>language</td>
@@ -3557,24 +3533,24 @@ const docsHTMLTemplate = `<!DOCTYPE html>
                     </div>
 
                     <!-- Endpoint 2: AniList Embed -->
-                    <h3><i class="fas fa-shuffle"></i> 2. AniList Embed Player (Auto-Mapped)</h3>
+                    <h3><i class="fas fa-shuffle"></i> 2. AniList Embed Player (Auto-Mapped to MAL)</h3>
                     <div class="ep-badge-row">
                         <span class="method-badge">GET</span>
                         <span class="ep-path">{{BASE_URL}}/embed/megaplay/ani/{anilist_id}/{ep_num}/{language}</span>
                     </div>
-                    <p>Automatically resolves AniList IDs to MyAnimeList IDs via multi-tier lookups (AniZip & AniList GraphQL) with 100% catalog coverage.</p>
+                    <p>Automatically maps AniList ID to MAL ID on the fly (via AniZip / AniList GraphQL) for 100% catalog coverage on MegaPlay.</p>
                     <div class="code-box">
                         <button class="btn-copy-code" onclick="copySnippet(this)"><i class="far fa-copy"></i></button>
                         <pre>&lt;iframe src="{{BASE_URL}}/embed/megaplay/ani/154587/1/sub" width="100%" height="100%" frameborder="0" scrolling="no" allowfullscreen&gt;&lt;/iframe&gt;</pre>
                     </div>
 
                     <!-- Endpoint 3: Catalog Stream ID -->
-                    <h3><i class="fas fa-hashtag"></i> 3. Direct Catalog Episode ID</h3>
+                    <h3><i class="fas fa-hashtag"></i> 3. Direct Catalog Episode ID (s-2)</h3>
                     <div class="ep-badge-row">
                         <span class="method-badge">GET</span>
                         <span class="ep-path">{{BASE_URL}}/embed/megaplay/s-2/{episode_id}/{language}</span>
                     </div>
-                    <p>Compatible with Anikoto and legacy HiAnime server episode IDs.</p>
+                    <p>Directly loads stream using Anikoto / MegaPlay catalog episode ID (e.g. <code>136197</code>).</p>
 
                     <!-- Endpoint 4: Encrypted Stream Proxy -->
                     <h3><i class="fas fa-lock"></i> 4. Encrypted Media & HLS Chunk Proxy</h3>
@@ -3582,15 +3558,15 @@ const docsHTMLTemplate = `<!DOCTYPE html>
                         <span class="method-badge">GET</span>
                         <span class="ep-path">{{BASE_URL}}/p/{encrypted_token}</span>
                     </div>
-                    <p>High-throughput media proxy for <code>.m3u8</code> manifests, <code>.ts</code> video segments, and <code>.vtt</code> subtitle tracks with zero-copy buffer pooling and automated CDN header spoofing.</p>
+                    <p>Internal high-throughput proxy for <code>.m3u8</code> manifests, <code>.ts</code> video segments, and <code>.vtt</code> subtitle tracks with 64KB memory pool and automated CDN header spoofing.</p>
 
                     <!-- Endpoint 5: Health Check -->
-                    <h3><i class="fas fa-heart-pulse"></i> 5. Service Health</h3>
+                    <h3><i class="fas fa-heart-pulse"></i> 5. Health Check</h3>
                     <div class="ep-badge-row">
                         <span class="method-badge">GET</span>
                         <span class="ep-path">{{BASE_URL}}/health</span>
                     </div>
-                    <p>Returns service status, version, and server timestamp.</p>
+                    <p>Returns service JSON status: <code>{"ok":true,"service":"yumezone-proxy-railway","version":"2.0.0"}</code>.</p>
                 </div>
 
                 <!-- Integration Guide -->
@@ -3598,12 +3574,12 @@ const docsHTMLTemplate = `<!DOCTYPE html>
                     <div class="card-header">
                         <h2 class="card-title"><i class="fas fa-code"></i> Integration Guide</h2>
                     </div>
-                    <p>Follow these best practices to embed the player seamlessly on your website with full responsive aspect ratio and smooth mobile playback.</p>
+                    <p>Standard responsive iframe code to embed on any anime website:</p>
 
-                    <h3><i class="fas fa-display"></i> Responsive 16:9 CSS Container</h3>
+                    <h3><i class="fas fa-display"></i> Responsive 16:9 Aspect Ratio Snippet</h3>
                     <div class="code-box">
                         <button class="btn-copy-code" onclick="copySnippet(this)"><i class="far fa-copy"></i></button>
-                        <pre>&lt;!-- Responsive 16:9 Video Wrapper --&gt;
+                        <pre>&lt;!-- Responsive 16:9 Video Embed Container --&gt;
 &lt;div style="position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 12px; overflow: hidden;"&gt;
   &lt;iframe 
     src="{{BASE_URL}}/embed/megaplay/mal/5114/1/sub"
@@ -3619,10 +3595,10 @@ const docsHTMLTemplate = `<!DOCTYPE html>
                 <!-- Player Events & Telemetry API -->
                 <div class="doc-card" id="events">
                     <div class="card-header">
-                        <h2 class="card-title"><i class="fas fa-chart-line"></i> Player Events & Telemetry API</h2>
+                        <h2 class="card-title"><i class="fas fa-chart-line"></i> Player Events (`postMessage`)</h2>
                     </div>
                     <p>
-                        The embedded player emits real-time bi-directional telemetry events via <code>window.postMessage</code>. You can listen from your parent web app to track watch progress, sync watch history, or trigger automatic next-episode navigation.
+                        The embedded player sends real-time events via <code>window.postMessage</code>. You can listen from your parent web app to track watch progress, sync watch history, or trigger automatic next-episode navigation.
                     </p>
 
                     <div class="param-table-wrap">
@@ -3638,22 +3614,22 @@ const docsHTMLTemplate = `<!DOCTYPE html>
                                 <tr>
                                     <td><code>time</code></td>
                                     <td><code>time</code>, <code>duration</code>, <code>percent</code></td>
-                                    <td>Emitted during playback with current seconds, total duration, and percentage.</td>
+                                    <td>Emitted during playback with current position, duration, and percentage.</td>
                                 </tr>
                                 <tr>
                                     <td><code>complete</code></td>
                                     <td><code>event: "complete"</code></td>
-                                    <td>Emitted when the episode reaches the end (ideal for Auto-Next).</td>
+                                    <td>Emitted when the episode reaches the end (ideal for Auto-Next Episode).</td>
                                 </tr>
                                 <tr>
                                     <td><code>watching-log</code></td>
                                     <td><code>currentTime</code>, <code>duration</code></td>
-                                    <td>Periodic watch-time logging event for backend progress sync.</td>
+                                    <td>Periodic watch-time logging event.</td>
                                 </tr>
                                 <tr>
                                     <td><code>YUME_SWITCH_SERVER</code></td>
                                     <td><code>server: string</code></td>
-                                    <td>Emitted when the user chooses an alternate server from the fallback UI.</td>
+                                    <td>Emitted when the user chooses an alternate server from the fallback frame.</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -3676,49 +3652,15 @@ const docsHTMLTemplate = `<!DOCTYPE html>
 
   // 2. Handle episode completion (Auto-Next Episode)
   if (data.event === "complete") {
-    console.log("Episode finished! Playing next episode...");
-    // playNextEpisode();
+    console.log("Episode finished! Triggering next episode...");
   }
 
   // 3. Handle server switch requests
   if (data.type === "YUME_SWITCH_SERVER") {
-    console.log("User requested fallback server:", data.server);
+    console.log("User clicked fallback server:", data.server);
   }
 });</pre>
                     </div>
-                </div>
-
-                <!-- Missing Title / ID Request Form -->
-                <div class="doc-card" id="contact">
-                    <div class="card-header">
-                        <h2 class="card-title"><i class="fas fa-envelope"></i> Request ID Mapping / Missing Title</h2>
-                    </div>
-                    <p>If a specific MyAnimeList or AniList ID does not resolve, submit the ID below and our catalog mapping index will update it promptly.</p>
-                    <form id="req-mapping-form">
-                        <div class="form-group">
-                            <label for="req-type">ID Type</label>
-                            <select class="form-select" id="req-type">
-                                <option value="MAL">MyAnimeList (MAL ID)</option>
-                                <option value="AniList">AniList (AniList ID)</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="req-id">Numeric Anime ID</label>
-                            <input type="text" class="form-input" id="req-id" placeholder="e.g. 5114" required inputmode="numeric" />
-                        </div>
-                        <div class="form-group">
-                            <label for="req-ep">Episode Number (optional)</label>
-                            <input type="text" class="form-input" id="req-ep" placeholder="e.g. 1" inputmode="numeric" />
-                        </div>
-                        <div class="form-group">
-                            <label for="req-msg">Notes / Details</label>
-                            <textarea class="form-textarea" id="req-msg" placeholder="Describe the title, language (Sub/Dub), or issue..." required></textarea>
-                        </div>
-                        <button type="submit" class="btn-primary" id="req-submit-btn" style="width: 100%; justify-content: center;">
-                            <i class="fas fa-paper-plane"></i> Send Mapping Request
-                        </button>
-                        <p id="req-status-msg" style="display:none; margin-top:0.75rem; font-size:0.85rem; font-weight:600;"></p>
-                    </form>
                 </div>
             </main>
 
@@ -3740,7 +3682,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
 
                         <div class="form-group" id="group-series-id">
                             <label for="sb-series-id">Anime ID</label>
-                            <input type="text" class="form-input" id="sb-series-id" value="5114" placeholder="e.g. 5114 (FMA:B)" required inputmode="numeric" />
+                            <input type="text" class="form-input" id="sb-series-id" value="5114" placeholder="e.g. 5114 (FMA:B), 21 (One Piece)" required inputmode="numeric" />
                         </div>
 
                         <div class="form-group" id="group-ep-num">
@@ -3751,14 +3693,14 @@ const docsHTMLTemplate = `<!DOCTYPE html>
                         <div class="form-group">
                             <label for="sb-lang">Language</label>
                             <select class="form-select" id="sb-lang">
-                                <option value="sub">Sub (Japanese + Multi-Subtitles)</option>
+                                <option value="sub">Sub (Japanese Audio + Multi-Subtitles)</option>
                                 <option value="dub">Dub (English Audio)</option>
                             </select>
                         </div>
 
                         <div class="tester-btn-row">
                             <button type="submit" class="btn-primary" style="justify-content: center;">
-                                <i class="fas fa-play"></i> Generate Embed
+                                <i class="fas fa-play"></i> Generate & Test
                             </button>
                             <button type="button" class="btn-secondary" id="btn-gen-both" style="justify-content: center;">
                                 <i class="fas fa-layer-group"></i> Sub + Dub
@@ -3785,14 +3727,14 @@ const docsHTMLTemplate = `<!DOCTYPE html>
     <footer class="doc-footer">
         <div class="footer-inner">
             <div>
-                <strong>YumeZone Stream & Proxy Engine</strong> — Zero-Ad Multi-Mirror Anime Streaming Infrastructure.
+                <strong>MegaPlay Stream Reverse Proxy</strong> — Ad-Free Anime Embed & HLS Streaming Engine.
             </div>
             <div class="footer-links">
                 <a href="#overview">Overview</a>
                 <a href="#endpoints">Endpoints</a>
                 <a href="#events">Events</a>
                 <a href="#test-embed">Tester</a>
-                <a href="/health">Health</a>
+                <a href="/health" target="_blank">Health</a>
             </div>
         </div>
     </footer>
@@ -3880,7 +3822,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
                 $("group-ep-num").style.display = "none";
             } else {
                 $("group-series-id").querySelector("label").textContent = mode === "mal" ? "MyAnimeList (MAL ID)" : "AniList ID";
-                $("sb-series-id").placeholder = mode === "mal" ? "e.g. 5114 (FMA:B)" : "e.g. 154587 (Frieren)";
+                $("sb-series-id").placeholder = mode === "mal" ? "e.g. 5114 (FMA:B), 21 (One Piece)" : "e.g. 154587 (Frieren), 16498 (AOT)";
                 $("sb-series-id").value = mode === "mal" ? "5114" : "154587";
                 $("group-ep-num").style.display = "block";
             }
@@ -3925,53 +3867,6 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             $("preview-frame").src = subUrl;
             $("sb-output").scrollIntoView({ behavior: "smooth", block: "nearest" });
         });
-
-        // Mapping Request Form handler
-        $("req-mapping-form").addEventListener("submit", async (e) => {
-            e.preventDefault();
-            const btn = $("req-submit-btn");
-            const status = $("req-status-msg");
-            const idType = $("req-type").value;
-            const extId = $("req-id").value.trim();
-            const ep = $("req-ep").value.trim();
-            const msg = $("req-msg").value.trim();
-
-            if (!extId || !msg) return alert("Please fill in the ID and description.");
-
-            btn.disabled = true;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Submitting...';
-            status.style.display = "none";
-
-            try {
-                const res = await fetch("/api/mapping-request", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        id_type: idType,
-                        external_id: parseInt(extId, 10) || extId,
-                        episode: ep,
-                        message: msg
-                    })
-                });
-                const data = await res.json();
-                status.style.display = "block";
-                if (res.ok && data.ok) {
-                    status.style.color = "var(--emerald)";
-                    status.textContent = data.message || "Thank you! Request received.";
-                    $("req-mapping-form").reset();
-                } else {
-                    status.style.color = "var(--rose)";
-                    status.textContent = data.error || "Submission error. Please try again.";
-                }
-            } catch (err) {
-                status.style.display = "block";
-                status.style.color = "var(--rose)";
-                status.textContent = "Network error. Please try again later.";
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = '<i class="fas fa-paper-plane"></i> Send Mapping Request';
-            }
-        });
     </script>
 </body>
 </html>`
@@ -3992,7 +3887,6 @@ func main() {
 	mux.HandleFunc("/health", handleHealth)
 	mux.HandleFunc("/docs", handleDocs)
 	mux.HandleFunc("/api", handleDocs)
-	mux.HandleFunc("/api/mapping-request", handleMappingRequest)
 	mux.HandleFunc("/embed/megaplay/", handleMegaplayEmbed)
 	mux.HandleFunc("/embed/megaplay", handleMegaplayEmbed)
 	mux.HandleFunc("/stream/getSources", handleMegaplaySources)
@@ -4003,10 +3897,6 @@ func main() {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" || r.URL.Path == "" || r.URL.Path == "/docs" || r.URL.Path == "/api" {
 			handleDocs(w, r)
-			return
-		}
-		if r.URL.Path == "/api/mapping-request" {
-			handleMappingRequest(w, r)
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/embed/megaplay") {
@@ -4036,11 +3926,12 @@ func main() {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	log.Printf("🚀 YumeZone Go Stream & Clean Embed Proxy running on 0.0.0.0:%d", port)
+	log.Printf("🚀 MegaPlay Stream & Clean Embed Proxy running on 0.0.0.0:%d", port)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Proxy server failed: %v", err)
 	}
 }
+
 
 
 
