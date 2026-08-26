@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"compress/flate"
+	"compress/gzip"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -1496,6 +1498,14 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
         .yume-btn:active {
             transform: scale(0.94);
         }
+        #yume-btn-cc.active {
+            color: #818cf8;
+            background: rgba(99, 102, 241, 0.18);
+        }
+        #yume-btn-cc.active svg {
+            stroke: #a5b4fc;
+            filter: drop-shadow(0 0 6px rgba(99, 102, 241, 0.8));
+        }
 
         /* Modern Touch-Friendly Volume Slider */
         .yume-vol-wrap {
@@ -1824,6 +1834,11 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
                 </div>
 
                 <div class="yume-controls-right">
+                    <!-- CC Subtitle Button -->
+                    <button class="yume-btn" id="yume-btn-cc" title="Toggle Subtitles (CC)">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 10a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2"/><path d="M16 10a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2"/></svg>
+                    </button>
+
                     <!-- Screenshot Button -->
                     <button class="yume-btn" id="yume-btn-snap" title="Screenshot">
                         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
@@ -2255,31 +2270,80 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
         }
         function initSubtitlesMenu() {
             const list = document.getElementById('yume-subtitles-list');
+            const ccBtn = document.getElementById('yume-btn-cc');
             if (!list) return;
+            list.innerHTML = '';
+
             const offDiv = document.createElement('div');
-            offDiv.className = 'yume-option active';
+            offDiv.className = 'yume-option' + (rawTracks.length === 0 ? ' active' : '');
             offDiv.textContent = 'Off';
             offDiv.onclick = () => {
                 activeCues = [];
+                subContent.innerHTML = '';
                 list.querySelectorAll('.yume-option').forEach(el => el.classList.remove('active'));
                 offDiv.classList.add('active');
+                if (ccBtn) ccBtn.classList.remove('active');
                 document.getElementById('yume-val-subtitles').innerHTML = 'Off <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
                 showMenu('main');
             };
             list.appendChild(offDiv);
-            rawTracks.forEach(t => {
+
+            let autoLoaded = false;
+            rawTracks.forEach((t, idx) => {
                 const div = document.createElement('div');
                 div.className = 'yume-option';
-                div.textContent = t.label || 'English';
-                div.onclick = () => {
-                    fetch(t.file).then(r => r.text()).then(vtt => activeCues = parseVTT(vtt)).catch(() => activeCues = []);
+                const label = t.label || ('Subtitle ' + (idx + 1));
+                div.textContent = label;
+                
+                const activateTrack = () => {
+                    fetch(t.file)
+                        .then(r => r.text())
+                        .then(vtt => {
+                            activeCues = parseVTT(vtt);
+                            if (ccBtn) ccBtn.classList.add('active');
+                        })
+                        .catch(() => {
+                            activeCues = [];
+                            if (ccBtn) ccBtn.classList.remove('active');
+                        });
                     list.querySelectorAll('.yume-option').forEach(el => el.classList.remove('active'));
                     div.classList.add('active');
-                    document.getElementById('yume-val-subtitles').innerHTML = (t.label || 'English') + ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+                    document.getElementById('yume-val-subtitles').innerHTML = label + ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+                };
+
+                div.onclick = () => {
+                    activateTrack();
                     showMenu('main');
                 };
                 list.appendChild(div);
+
+                if (!autoLoaded && (t.default || label.toLowerCase().includes('eng') || rawTracks.length === 1 || idx === 0)) {
+                    activateTrack();
+                    autoLoaded = true;
+                }
             });
+
+            if (ccBtn) {
+                if (rawTracks.length === 0) {
+                    ccBtn.style.opacity = '0.35';
+                    ccBtn.title = 'No Subtitles Available';
+                } else {
+                    ccBtn.style.opacity = '1';
+                    ccBtn.onclick = () => {
+                        if (activeCues.length > 0) {
+                            activeCues = [];
+                            subContent.innerHTML = '';
+                            ccBtn.classList.remove('active');
+                            list.querySelectorAll('.yume-option').forEach(el => el.classList.remove('active'));
+                            offDiv.classList.add('active');
+                            document.getElementById('yume-val-subtitles').innerHTML = 'Off <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+                        } else {
+                            const firstTrack = list.querySelectorAll('.yume-option')[1];
+                            if (firstTrack) firstTrack.click();
+                        }
+                    };
+                }
+            }
         }
         function initSpeedMenu() {
             const list = document.getElementById('yume-speed-list');
@@ -2723,88 +2787,154 @@ var (
 	animeSaltCache     sync.Map
 )
 
-func resolveAnimeTitle(idNum int) string {
-	if idNum <= 0 {
+func readResponseBody(resp *http.Response) ([]byte, error) {
+	if resp == nil || resp.Body == nil {
+		return nil, fmt.Errorf("empty response")
+	}
+	defer resp.Body.Close()
+
+	var reader io.Reader = resp.Body
+	encoding := strings.ToLower(resp.Header.Get("Content-Encoding"))
+	if strings.Contains(encoding, "gzip") {
+		gzReader, err := gzip.NewReader(resp.Body)
+		if err == nil {
+			defer gzReader.Close()
+			reader = gzReader
+		}
+	} else if strings.Contains(encoding, "deflate") {
+		flReader := flate.NewReader(resp.Body)
+		defer flReader.Close()
+		reader = flReader
+	}
+
+	return io.ReadAll(reader)
+}
+
+func resolveAnimeTitle(anilistID int, malID int) string {
+	if anilistID <= 0 && malID <= 0 {
 		return ""
 	}
-	if cached, ok := animeTitleCache.Load(idNum); ok {
+	cacheKey := fmt.Sprintf("ani:%d_mal:%d", anilistID, malID)
+	if cached, ok := animeTitleCache.Load(cacheKey); ok {
 		return cached.(string)
 	}
 
-	// 1. AniZip API
-	reqURL := fmt.Sprintf("https://api.ani.zip/mappings?anilist_id=%d", idNum)
-	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+	// 1. AniZip API (supports both anilist_id and mal_id)
+	var aniZipURL string
+	if anilistID > 0 {
+		aniZipURL = fmt.Sprintf("https://api.ani.zip/mappings?anilist_id=%d", anilistID)
+	} else {
+		aniZipURL = fmt.Sprintf("https://api.ani.zip/mappings?mal_id=%d", malID)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, aniZipURL, nil)
 	if err == nil {
 		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-		client := &http.Client{Timeout: 3 * time.Second}
+		client := &http.Client{Timeout: 4 * time.Second}
 		resp, err := client.Do(req)
 		if err == nil && resp.StatusCode == http.StatusOK {
-			var data struct {
-				Titles struct {
-					En        string `json:"en"`
-					Rj        string `json:"rj"`
-					Canonical string `json:"canonical"`
-				} `json:"titles"`
+			bodyBytes, bErr := readResponseBody(resp)
+			if bErr == nil {
+				var data struct {
+					Titles struct {
+						En        string `json:"en"`
+						Canonical string `json:"canonical"`
+						Rj        string `json:"rj"`
+					} `json:"titles"`
+				}
+				if err := json.Unmarshal(bodyBytes, &data); err == nil {
+					title := data.Titles.En
+					if title == "" {
+						title = data.Titles.Canonical
+					}
+					if title == "" {
+						title = data.Titles.Rj
+					}
+					if title != "" {
+						animeTitleCache.Store(cacheKey, title)
+						return title
+					}
+				}
 			}
-			if err := json.NewDecoder(resp.Body).Decode(&data); err == nil {
-				title := data.Titles.En
-				if title == "" {
-					title = data.Titles.Rj
-				}
-				if title == "" {
-					title = data.Titles.Canonical
-				}
-				if title != "" {
-					resp.Body.Close()
-					animeTitleCache.Store(idNum, title)
-					return title
-				}
-			}
-			resp.Body.Close()
 		}
 	}
 
-	// 2. AniList GraphQL API
-	graphqlQuery := `query ($id: Int) { Media (id: $id, type: ANIME) { title { english romaji userPreferred } } }`
-	bodyBytes, _ := json.Marshal(map[string]interface{}{
-		"query": graphqlQuery,
-		"variables": map[string]interface{}{
-			"id": idNum,
-		},
-	})
-	gqlReq, err := http.NewRequest(http.MethodPost, "https://graphql.anilist.co", bytes.NewBuffer(bodyBytes))
-	if err == nil {
-		gqlReq.Header.Set("Content-Type", "application/json")
-		gqlReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-		client := &http.Client{Timeout: 3 * time.Second}
-		resp, err := client.Do(gqlReq)
-		if err == nil && resp.StatusCode == http.StatusOK {
-			var gqlRes struct {
-				Data struct {
-					Media struct {
-						Title struct {
-							English       string `json:"english"`
-							Romaji        string `json:"romaji"`
-							UserPreferred string `json:"userPreferred"`
-						} `json:"title"`
-					} `json:"Media"`
-				} `json:"data"`
+	// 2. AniList GraphQL (if anilistID is present)
+	if anilistID > 0 {
+		graphqlQuery := `query ($id: Int) { Media (id: $id, type: ANIME) { title { english userPreferred romaji } } }`
+		bodyBytes, _ := json.Marshal(map[string]interface{}{
+			"query": graphqlQuery,
+			"variables": map[string]interface{}{
+				"id": anilistID,
+			},
+		})
+		gqlReq, err := http.NewRequest(http.MethodPost, "https://graphql.anilist.co", bytes.NewBuffer(bodyBytes))
+		if err == nil {
+			gqlReq.Header.Set("Content-Type", "application/json")
+			gqlReq.Header.Set("User-Agent", "Mozilla/5.0")
+			client := &http.Client{Timeout: 4 * time.Second}
+			resp, err := client.Do(gqlReq)
+			if err == nil && resp.StatusCode == http.StatusOK {
+				bodyBytes, bErr := readResponseBody(resp)
+				if bErr == nil {
+					var gqlRes struct {
+						Data struct {
+							Media struct {
+								Title struct {
+									English       string `json:"english"`
+									UserPreferred string `json:"userPreferred"`
+									Romaji        string `json:"romaji"`
+								} `json:"title"`
+							} `json:"Media"`
+						} `json:"data"`
+					}
+					if err := json.Unmarshal(bodyBytes, &gqlRes); err == nil {
+						t := gqlRes.Data.Media.Title.English
+						if t == "" {
+							t = gqlRes.Data.Media.Title.UserPreferred
+						}
+						if t == "" {
+							t = gqlRes.Data.Media.Title.Romaji
+						}
+						if t != "" {
+							animeTitleCache.Store(cacheKey, t)
+							return t
+						}
+					}
+				}
 			}
-			if err := json.NewDecoder(resp.Body).Decode(&gqlRes); err == nil {
-				t := gqlRes.Data.Media.Title.English
-				if t == "" {
-					t = gqlRes.Data.Media.Title.Romaji
-				}
-				if t == "" {
-					t = gqlRes.Data.Media.Title.UserPreferred
-				}
-				if t != "" {
-					resp.Body.Close()
-					animeTitleCache.Store(idNum, t)
-					return t
+		}
+	}
+
+	// 3. Jikan / MAL API (if malID is present)
+	if malID > 0 {
+		reqURL := fmt.Sprintf("https://api.jikan.moe/v4/anime/%d", malID)
+		req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+		if err == nil {
+			req.Header.Set("User-Agent", "Mozilla/5.0")
+			client := &http.Client{Timeout: 4 * time.Second}
+			resp, err := client.Do(req)
+			if err == nil && resp.StatusCode == http.StatusOK {
+				bodyBytes, bErr := readResponseBody(resp)
+				if bErr == nil {
+					var jikanData struct {
+						Data struct {
+							TitleEnglish string `json:"title_english"`
+							Title        string `json:"title"`
+						} `json:"data"`
+					}
+					if err := json.Unmarshal(bodyBytes, &jikanData); err == nil {
+						t := jikanData.Data.TitleEnglish
+						if t == "" {
+							t = jikanData.Data.Title
+						}
+						if t != "" {
+							animeTitleCache.Store(cacheKey, t)
+							return t
+						}
+					}
 				}
 			}
-			resp.Body.Close()
 		}
 	}
 
@@ -2820,73 +2950,68 @@ func resolveAnimeSaltSlug(ctx context.Context, anilistID int, malID int, manualS
 		return cached.(string), nil
 	}
 
-	title := ""
-	if anilistID > 0 {
-		title = resolveAnimeTitle(anilistID)
-	}
-	if title == "" && malID > 0 {
-		reqURL := fmt.Sprintf("https://api.jikan.moe/v4/anime/%d", malID)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-		if err == nil {
-			req.Header.Set("User-Agent", "Mozilla/5.0")
-			client := &http.Client{Timeout: 3 * time.Second}
-			resp, err := client.Do(req)
-			if err == nil && resp.StatusCode == http.StatusOK {
-				var jikanData struct {
-					Data struct {
-						Title        string `json:"title"`
-						TitleEnglish string `json:"title_english"`
-					} `json:"data"`
-				}
-				if err := json.NewDecoder(resp.Body).Decode(&jikanData); err == nil {
-					title = jikanData.Data.TitleEnglish
-					if title == "" {
-						title = jikanData.Data.Title
-					}
-				}
-				resp.Body.Close()
-			}
-		}
-	}
-
+	title := resolveAnimeTitle(anilistID, malID)
 	if title == "" {
-		return "", fmt.Errorf("could not resolve anime title")
+		return "", fmt.Errorf("could not resolve anime title for ani:%d mal:%d", anilistID, malID)
 	}
 
-	cleanQuery := strings.Map(func(r rune) rune {
+	cleanTitle := strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == ' ' {
 			return r
 		}
 		return ' '
 	}, title)
-	cleanQuery = strings.Join(strings.Fields(cleanQuery), "+")
+	cleanTitle = strings.Join(strings.Fields(cleanTitle), " ")
 
-	searchURL := "https://animesalt.cx/?s=" + cleanQuery
-	searchReq, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
-	if err != nil {
-		return "", err
+	queries := []string{cleanTitle}
+	if strings.Contains(title, ":") {
+		queries = append(queries, strings.TrimSpace(strings.Split(title, ":")[0]))
 	}
-	searchReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	searchReq.Header.Set("Referer", "https://animesalt.cx/")
-
-	resp, err := httpClient.Do(searchReq)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
+	if strings.Contains(title, "-") {
+		queries = append(queries, strings.TrimSpace(strings.Split(title, "-")[0]))
 	}
 
-	html := string(bodyBytes)
-	slugRegex := regexp.MustCompile(`https?://animesalt\.cx/series/([a-zA-Z0-9\-]+)/`)
-	matches := slugRegex.FindStringSubmatch(html)
-	if len(matches) > 1 {
-		slug := matches[1]
-		animeSaltSlugCache.Store(cacheKey, slug)
-		return slug, nil
+	targetSlug := strings.ToLower(strings.ReplaceAll(cleanTitle, " ", "-"))
+	slugRegex := regexp.MustCompile(`https?://animesalt\.cx/series/([a-zA-Z0-9\-]+)/?`)
+
+	for _, q := range queries {
+		encodedQ := url.QueryEscape(q)
+		searchURL := "https://animesalt.cx/?s=" + encodedQ
+		searchReq, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
+		if err != nil {
+			continue
+		}
+		searchReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+		searchReq.Header.Set("Referer", "https://animesalt.cx/")
+
+		resp, err := httpClient.Do(searchReq)
+		if err != nil {
+			continue
+		}
+		bodyBytes, err := readResponseBody(resp)
+		if err != nil {
+			continue
+		}
+
+		html := string(bodyBytes)
+		allMatches := slugRegex.FindAllStringSubmatch(html, -1)
+		if len(allMatches) > 0 {
+			for _, m := range allMatches {
+				if len(m) > 1 && m[1] == targetSlug {
+					animeSaltSlugCache.Store(cacheKey, m[1])
+					return m[1], nil
+				}
+			}
+			firstSlug := allMatches[0][1]
+			animeSaltSlugCache.Store(cacheKey, firstSlug)
+			return firstSlug, nil
+		}
+	}
+
+	// Direct slug fallback from cleanTitle if search yielded no hits
+	if targetSlug != "" {
+		animeSaltSlugCache.Store(cacheKey, targetSlug)
+		return targetSlug, nil
 	}
 
 	return "", fmt.Errorf("no matching series found on AnimeSalt for: %s", title)
@@ -2923,13 +3048,13 @@ func extractAnimeSaltHLS(ctx context.Context, slug string, season int, ep int, h
 		if err != nil {
 			return "", nil, "", err
 		}
-		defer epResp.Body.Close()
 
 		if epResp.StatusCode != http.StatusOK {
+			epResp.Body.Close()
 			return "", nil, "", fmt.Errorf("animesalt episode page returned %d", epResp.StatusCode)
 		}
 
-		bodyBytes, err := io.ReadAll(epResp.Body)
+		bodyBytes, err := readResponseBody(epResp)
 		if err != nil {
 			return "", nil, "", err
 		}
@@ -2974,13 +3099,13 @@ func extractAnimeSaltHLS(ctx context.Context, slug string, season int, ep int, h
 	if err != nil {
 		return "", nil, "", err
 	}
-	defer apiResp.Body.Close()
 
 	if apiResp.StatusCode != http.StatusOK {
+		apiResp.Body.Close()
 		return "", nil, "", fmt.Errorf("getVideo API returned %d", apiResp.StatusCode)
 	}
 
-	bodyBytes, err := io.ReadAll(apiResp.Body)
+	bodyBytes, err := readResponseBody(apiResp)
 	if err != nil {
 		return "", nil, "", err
 	}
@@ -2994,8 +3119,7 @@ func extractAnimeSaltHLS(ctx context.Context, slug string, season int, ep int, h
 			vReq.Header.Set("Referer", episodeReferer)
 			vResp, vErr := httpClient.Do(vReq)
 			if vErr == nil && vResp.StatusCode == http.StatusOK {
-				vBytes, _ := io.ReadAll(vResp.Body)
-				vResp.Body.Close()
+				vBytes, _ := readResponseBody(vResp)
 				m3u8Regex := regexp.MustCompile(`https?://[^\s"'<>]+\.m3u8[^\s"'<>]*`)
 				m3u8Match := m3u8Regex.FindString(string(vBytes))
 				if m3u8Match != "" {
@@ -3047,27 +3171,33 @@ func handleAnimeSaltEmbed(w http.ResponseWriter, r *http.Request) {
 	ep := 1
 	lang := "hin"
 	hash := ""
+	anilistID := 0
+	malID := 0
 
-	if len(parts) >= 3 && parts[0] == "ani" {
-		idNum, _ := strconv.Atoi(parts[1])
-		ep, _ = strconv.Atoi(parts[2])
+	if len(parts) >= 2 && parts[0] == "ani" {
+		anilistID, _ = strconv.Atoi(parts[1])
+		if len(parts) > 2 && parts[2] != "" {
+			ep, _ = strconv.Atoi(parts[2])
+		}
 		if len(parts) > 3 && parts[3] != "" {
 			lang = parts[3]
 		}
 		var err error
-		slug, err = resolveAnimeSaltSlug(r.Context(), idNum, 0, "")
+		slug, err = resolveAnimeSaltSlug(r.Context(), anilistID, 0, "")
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":"Failed to resolve AnimeSalt slug: %s"}`, err.Error()), http.StatusNotFound)
 			return
 		}
-	} else if len(parts) >= 3 && parts[0] == "mal" {
-		idNum, _ := strconv.Atoi(parts[1])
-		ep, _ = strconv.Atoi(parts[2])
+	} else if len(parts) >= 2 && parts[0] == "mal" {
+		malID, _ = strconv.Atoi(parts[1])
+		if len(parts) > 2 && parts[2] != "" {
+			ep, _ = strconv.Atoi(parts[2])
+		}
 		if len(parts) > 3 && parts[3] != "" {
 			lang = parts[3]
 		}
 		var err error
-		slug, err = resolveAnimeSaltSlug(r.Context(), 0, idNum, "")
+		slug, err = resolveAnimeSaltSlug(r.Context(), 0, malID, "")
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":"Failed to resolve AnimeSalt slug: %s"}`, err.Error()), http.StatusNotFound)
 			return
@@ -3077,9 +3207,6 @@ func handleAnimeSaltEmbed(w http.ResponseWriter, r *http.Request) {
 			hash = parts[1]
 		} else {
 			hash = parts[0]
-		}
-		if qLang := r.URL.Query().Get("lang"); qLang != "" {
-			lang = qLang
 		}
 	} else if len(parts) >= 1 {
 		epPart := parts[0]
@@ -3093,10 +3220,36 @@ func handleAnimeSaltEmbed(w http.ResponseWriter, r *http.Request) {
 			ep, _ = strconv.Atoi(m[3])
 		} else {
 			slug = epPart
+			if len(parts) > 1 && parts[1] != "" {
+				ep, _ = strconv.Atoi(parts[1])
+			}
+			if len(parts) > 2 && parts[2] != "" {
+				lang = parts[2]
+			}
 		}
-		if qLang := r.URL.Query().Get("lang"); qLang != "" {
-			lang = qLang
+	}
+
+	if qEp := r.URL.Query().Get("ep"); qEp != "" {
+		if e, err := strconv.Atoi(qEp); err == nil && e > 0 {
+			ep = e
 		}
+	}
+	if qSeason := r.URL.Query().Get("season"); qSeason != "" {
+		if s, err := strconv.Atoi(qSeason); err == nil && s > 0 {
+			season = s
+		}
+	}
+	if qLang := r.URL.Query().Get("lang"); qLang != "" {
+		lang = qLang
+	}
+	if ep <= 0 {
+		ep = 1
+	}
+	if season <= 0 {
+		season = 1
+	}
+	if lang == "" {
+		lang = "hin"
 	}
 
 	frameAncestors := buildFrameAncestorsCSP(r.Host)
@@ -3120,12 +3273,28 @@ func handleAnimeSaltEmbed(w http.ResponseWriter, r *http.Request) {
 
 	streamFile, tracks, _, err := extractAnimeSaltHLS(r.Context(), slug, season, ep, hash)
 	if err == nil && streamFile != "" {
+		// Backfill subtitles from MegaPlay if Server 1 does not provide .vtt tracks directly
+		if len(tracks) == 0 {
+			var malIDForSub int
+			if malID > 0 {
+				malIDForSub = malID
+			} else if anilistID > 0 {
+				malIDForSub = resolveMalId(anilistID)
+			}
+			if malIDForSub > 0 {
+				_, megaplayTracks, _ := extractMegaplayHLS(r.Context(), fmt.Sprintf("mal/%d/%d/sub", malIDForSub, ep))
+				if len(megaplayTracks) > 0 {
+					tracks = megaplayTracks
+				}
+			}
+		}
+
 		var proxiedTracks []SubtitleTrack
 		for _, t := range tracks {
 			if t.File != "" {
 				subToken, subErr := encryptToken(&TokenPayload{
 					URL: t.File,
-					Ref: "https://animesalt.cx/",
+					Ref: "https://megaplay.buzz/",
 					Exp: time.Now().Add(6 * time.Hour).Unix(),
 				})
 				if subErr == nil {
