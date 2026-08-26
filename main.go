@@ -2684,25 +2684,25 @@ const docsHTMLTemplate = `<!DOCTYPE html>
         }
 
         :root {
-            --bg: #07050d;
-            --bg-elevated: #0e0a17;
-            --bg-card: rgba(18, 14, 28, 0.75);
-            --border: rgba(162, 155, 254, 0.14);
-            --border-glow: rgba(162, 155, 254, 0.32);
-            --text-main: #f8fafc;
-            --text-muted: #94a3b8;
+            --bg: #000000;
+            --bg-elevated: #050508;
+            --bg-card: rgba(8, 8, 12, 0.88);
+            --border: rgba(255, 255, 255, 0.08);
+            --border-glow: rgba(99, 102, 241, 0.35);
+            --text-main: #ffffff;
+            --text-muted: #8e95a5;
             --accent: #6366f1;
             --accent-soft: #a5b4fc;
             --accent-dim: rgba(99, 102, 241, 0.12);
-            --accent-glow: rgba(99, 102, 241, 0.25);
+            --accent-glow: rgba(99, 102, 241, 0.28);
             --emerald: #10b981;
             --emerald-dim: rgba(16, 185, 129, 0.12);
             --mono: "JetBrains Mono", ui-monospace, monospace;
             --sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
             --radius-sm: 8px;
             --radius-md: 14px;
-            --radius-lg: 22px;
-            --shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
+            --radius-lg: 20px;
+            --shadow: 0 24px 60px rgba(0, 0, 0, 0.85);
         }
 
         html {
@@ -2718,9 +2718,9 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             -webkit-font-smoothing: antialiased;
             -moz-osx-font-smoothing: grayscale;
             background-image:
-                radial-gradient(ellipse 900px 500px at 15% -10%, rgba(99, 102, 241, 0.25), transparent 60%),
-                radial-gradient(ellipse 700px 450px at 90% 15%, rgba(168, 85, 247, 0.15), transparent 55%),
-                radial-gradient(ellipse 800px 600px at 50% 120%, rgba(99, 102, 241, 0.08), transparent 50%);
+                radial-gradient(ellipse 850px 450px at 15% -10%, rgba(99, 102, 241, 0.2), transparent 60%),
+                radial-gradient(ellipse 650px 400px at 90% 15%, rgba(139, 92, 246, 0.12), transparent 55%),
+                radial-gradient(ellipse 800px 500px at 50% 120%, rgba(99, 102, 241, 0.06), transparent 50%);
             background-attachment: fixed;
         }
 
@@ -2740,9 +2740,9 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             position: sticky;
             top: 0;
             z-index: 100;
-            background: rgba(7, 5, 13, 0.85);
-            backdrop-filter: blur(16px);
-            -webkit-backdrop-filter: blur(16px);
+            background: rgba(0, 0, 0, 0.88);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
             border-bottom: 1px solid var(--border);
         }
 
@@ -2770,7 +2770,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
         .doc-brand-icon {
             width: 32px;
             height: 32px;
-            border-radius: 10px;
+            border-radius: 9px;
             background: linear-gradient(135deg, var(--accent), #8b5cf6);
             display: flex;
             align-items: center;
@@ -2844,7 +2844,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
 
         .doc-hero-card {
             position: relative;
-            background: linear-gradient(145deg, rgba(20, 16, 32, 0.95), rgba(11, 8, 18, 0.98));
+            background: linear-gradient(155deg, rgba(12, 12, 18, 0.95), rgba(4, 4, 6, 0.98));
             border: 1px solid var(--border);
             border-radius: var(--radius-lg);
             padding: 2.5rem 2.25rem;
@@ -2859,7 +2859,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             left: -20%;
             width: 80%;
             height: 150%;
-            background: radial-gradient(circle, rgba(99, 102, 241, 0.16), transparent 60%);
+            background: radial-gradient(circle, rgba(99, 102, 241, 0.14), transparent 60%);
             pointer-events: none;
         }
 
@@ -2885,7 +2885,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             letter-spacing: -0.03em;
             line-height: 1.18;
             margin-bottom: 0.85rem;
-            background: linear-gradient(110deg, #ffffff 0%, #d8d4ff 45%, var(--accent-soft) 100%);
+            background: linear-gradient(110deg, #ffffff 0%, #e2e8f0 45%, var(--accent-soft) 100%);
             -webkit-background-clip: text;
             background-clip: text;
             -webkit-text-fill-color: transparent;
@@ -2935,7 +2935,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             align-items: center;
             gap: 0.55rem;
             padding: 0.7rem 1.25rem;
-            background: rgba(255, 255, 255, 0.05);
+            background: rgba(255, 255, 255, 0.04);
             color: var(--accent-soft);
             font-weight: 600;
             font-size: 0.875rem;
@@ -2971,8 +2971,8 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             width: 34px;
             height: 34px;
             border-radius: 8px;
-            background: rgba(99, 102, 241, 0.1);
-            border: 1px solid rgba(162, 155, 254, 0.15);
+            background: rgba(99, 102, 241, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.08);
             display: flex;
             align-items: center;
             justify-content: center;
@@ -3027,7 +3027,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             border: 1px solid var(--border);
             border-radius: var(--radius-md);
             padding: 1.6rem;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
             transition: border-color 0.2s ease;
         }
 
@@ -3073,30 +3073,6 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             gap: 0.45rem;
         }
 
-        /* Alerts & Callouts */
-        .doc-alert {
-            display: flex;
-            gap: 0.85rem;
-            align-items: flex-start;
-            padding: 0.85rem 1rem;
-            border-radius: var(--radius-sm);
-            margin: 0.85rem 0;
-            font-size: 0.85rem;
-            line-height: 1.6;
-        }
-
-        .doc-alert i {
-            font-size: 1.05rem;
-            margin-top: 0.12rem;
-            flex-shrink: 0;
-        }
-
-        .doc-alert.info {
-            background: rgba(99, 102, 241, 0.1);
-            border: 1px solid rgba(99, 102, 241, 0.28);
-            color: #e0e7ff;
-        }
-
         /* Endpoint Spec Panel */
         .ep-badge-row {
             display: flex;
@@ -3121,8 +3097,8 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             font-family: var(--mono);
             font-size: 0.825rem;
             font-weight: 600;
-            color: #e2e8f0;
-            background: rgba(0, 0, 0, 0.5);
+            color: #ffffff;
+            background: #000000;
             padding: 0.3rem 0.65rem;
             border-radius: 6px;
             border: 1px solid var(--border);
@@ -3132,7 +3108,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
         /* Code Blocks & Pre */
         .code-box {
             position: relative;
-            background: #08060c;
+            background: #020204;
             border: 1px solid var(--border);
             border-radius: var(--radius-sm);
             padding: 0.85rem 1rem;
@@ -3153,7 +3129,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             position: absolute;
             top: 0.5rem;
             right: 0.5rem;
-            background: rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.06);
             border: 1px solid var(--border);
             color: var(--text-muted);
             border-radius: 6px;
@@ -3185,7 +3161,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
         }
 
         .param-table th {
-            background: rgba(99, 102, 241, 0.15);
+            background: rgba(99, 102, 241, 0.12);
             color: var(--accent-soft);
             font-weight: 700;
             padding: 0.65rem 0.95rem;
@@ -3225,8 +3201,8 @@ const docsHTMLTemplate = `<!DOCTYPE html>
         }
 
         .tester-card {
-            background: linear-gradient(165deg, rgba(22, 17, 36, 0.95), rgba(12, 9, 20, 0.98));
-            border: 1px solid rgba(162, 155, 254, 0.25);
+            background: linear-gradient(165deg, rgba(12, 12, 18, 0.95), rgba(4, 4, 6, 0.98));
+            border: 1px solid var(--border);
             border-radius: var(--radius-lg);
             padding: 1.5rem;
             box-shadow: var(--shadow);
@@ -3265,7 +3241,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
 
         .form-input, .form-select {
             width: 100%;
-            background: rgba(7, 5, 13, 0.75);
+            background: #020204;
             border: 1px solid var(--border);
             color: #ffffff;
             border-radius: 8px;
@@ -3318,7 +3294,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             border: 1px solid var(--border);
             background: #000000;
             aspect-ratio: 16 / 9;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.8);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.9);
         }
 
         .tester-preview-box iframe {
@@ -3331,7 +3307,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
         /* Footer */
         .doc-footer {
             border-top: 1px solid var(--border);
-            background: rgba(7, 5, 13, 0.95);
+            background: #000000;
             padding: 2rem 1.5rem;
             margin-top: 3.5rem;
         }
@@ -3364,7 +3340,6 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             </a>
             <ul class="doc-nav-links">
                 <li><a href="#overview">Overview</a></li>
-                <li><a href="#how-it-works">How It Works</a></li>
                 <li><a href="#endpoints">Endpoints</a></li>
                 <li><a href="#guide">Integration</a></li>
                 <li><a href="#events">Player Events</a></li>
@@ -3428,25 +3403,6 @@ const docsHTMLTemplate = `<!DOCTYPE html>
         <div class="doc-layout">
             <!-- Main Editorial Column -->
             <main class="doc-content">
-                <!-- How It Works Section -->
-                <div class="doc-card" id="how-it-works">
-                    <div class="card-header">
-                        <h2 class="card-title"><i class="fas fa-gears"></i> How This Proxy Works</h2>
-                    </div>
-                    <p>
-                        Direct MegaPlay iframe embeds contain intrusive ad loaders (<code>app.main.js</code>), analytics trackers, and strict sandbox limitations. Additionally, MegaPlay CDN video segments block direct browser requests unless spoofed with <code>Referer: https://megaplay.buzz/</code>.
-                    </p>
-                    <p>This proxy resolves these issues in 3 automated steps:</p>
-                    <div class="doc-alert info">
-                        <i class="fas fa-circle-nodes"></i>
-                        <div>
-                            <strong>1. Extraction:</strong> When you request <code>/embed/megaplay/...</code>, the proxy queries MegaPlay's source resolver (<code>getSources</code>) on the fly to obtain the real HLS stream URL and subtitle tracks.<br><br>
-                            <strong>2. Media Proxying:</strong> Subtitles and M3U8 playlists are proxied through <code>/p/{token}</code> with encrypted tokens, injecting required <code>Referer</code> / <code>Origin</code> headers and permissive CORS headers.<br><br>
-                            <strong>3. Clean Player Delivery:</strong> Returns a custom OLED HTML5 player with multi-subtitles, 60fps scrubbing, and mobile landscape fullscreen.
-                        </div>
-                    </div>
-                </div>
-
                 <!-- Endpoints Specification -->
                 <div class="doc-card" id="endpoints">
                     <div class="card-header">
