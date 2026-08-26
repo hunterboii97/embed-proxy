@@ -2622,40 +2622,6 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write(fmt.Appendf(nil, `{"ok":true,"service":"yumezone-proxy-railway","version":"2.0.0","ts":%d}`, time.Now().UnixMilli()))
 }
 
-type MappingRequestBody struct {
-	IDType     string      `json:"id_type"`
-	ExternalID interface{} `json:"external_id"`
-	Episode    string      `json:"episode"`
-	Message    string      `json:"message"`
-}
-
-func handleMappingRequest(w http.ResponseWriter, r *http.Request) {
-	setCORS(w)
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-
-	if r.Method != http.MethodPost {
-		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req MappingRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"ok":false,"error":"Invalid JSON payload"}`))
-		return
-	}
-
-	log.Printf("[MappingRequest] IDType=%s ExternalID=%v Episode=%s Message=%s", req.IDType, req.ExternalID, req.Episode, req.Message)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"ok":true,"message":"Thanks! We received your mapping request and our team will review the catalog mapping."}`))
-}
-
 func handleDocs(w http.ResponseWriter, r *http.Request) {
 	setCORS(w)
 	if r.Method == http.MethodOptions {
@@ -3595,7 +3561,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
                 <!-- Player Events & Telemetry API -->
                 <div class="doc-card" id="events">
                     <div class="card-header">
-                        <h2 class="card-title"><i class="fas fa-chart-line"></i> Player Events (`postMessage`)</h2>
+                        <h2 class="card-title"><i class="fas fa-chart-line"></i> Player Events (postMessage API)</h2>
                     </div>
                     <p>
                         The embedded player sends real-time events via <code>window.postMessage</code>. You can listen from your parent web app to track watch progress, sync watch history, or trigger automatic next-episode navigation.
