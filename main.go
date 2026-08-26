@@ -2090,22 +2090,92 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             hoverTime.textContent = formatTime(pos * (video.duration || 0));
         });
 
-        // Fullscreen
+        // Mobile Landscape Lock & Fullscreen Controller
+        async function lockLandscape() {
+            try {
+                if (screen.orientation && screen.orientation.lock) {
+                    await screen.orientation.lock('landscape');
+                } else if (screen.lockOrientation) {
+                    screen.lockOrientation('landscape');
+                } else if (screen.mozLockOrientation) {
+                    screen.mozLockOrientation('landscape');
+                } else if (screen.msLockOrientation) {
+                    screen.msLockOrientation('landscape');
+                }
+            } catch(e) {}
+        }
+
+        async function unlockOrientation() {
+            try {
+                if (screen.orientation && screen.orientation.unlock) {
+                    screen.orientation.unlock();
+                } else if (screen.unlockOrientation) {
+                    screen.unlockOrientation();
+                } else if (screen.mozUnlockOrientation) {
+                    screen.mozUnlockOrientation();
+                } else if (screen.msUnlockOrientation) {
+                    screen.msUnlockOrientation();
+                }
+            } catch(e) {}
+        }
+
         async function toggleFullscreen() {
-            const isFs = document.fullscreenElement || document.webkitFullscreenElement;
+            const isFs = Boolean(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
             if (!isFs) {
-                if (container.requestFullscreen) await container.requestFullscreen();
-                else if (container.webkitRequestFullscreen) await container.webkitRequestFullscreen();
+                try {
+                    if (container.requestFullscreen) {
+                        await container.requestFullscreen();
+                    } else if (container.webkitRequestFullscreen) {
+                        await container.webkitRequestFullscreen();
+                    } else if (container.mozRequestFullScreen) {
+                        await container.mozRequestFullScreen();
+                    } else if (container.msRequestFullscreen) {
+                        await container.msRequestFullscreen();
+                    } else if (video.webkitEnterFullscreen) {
+                        video.webkitEnterFullscreen();
+                    }
+                    await lockLandscape();
+                } catch(e) {
+                    if (video.webkitEnterFullscreen) {
+                        try { video.webkitEnterFullscreen(); } catch(err) {}
+                    }
+                }
             } else {
-                if (document.exitFullscreen) await document.exitFullscreen();
-                else if (document.webkitExitFullscreen) await document.webkitExitFullscreen();
+                unlockOrientation();
+                try {
+                    if (document.exitFullscreen) {
+                        await document.exitFullscreen();
+                    } else if (document.webkitExitFullscreen) {
+                        await document.webkitExitFullscreen();
+                    } else if (document.mozCancelFullScreen) {
+                        await document.mozCancelFullScreen();
+                    } else if (document.msExitFullscreen) {
+                        await document.msExitFullscreen();
+                    }
+                } catch(e) {}
             }
         }
-        btnFs.addEventListener('click', toggleFullscreen);
-        document.addEventListener('fullscreenchange', () => {
-            const isFs = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+
+        function onFullscreenChange() {
+            const isFs = Boolean(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
             iconFsEnter.style.display = isFs ? 'none' : 'block';
             iconFsExit.style.display = isFs ? 'block' : 'none';
+            if (isFs) {
+                lockLandscape();
+            } else {
+                unlockOrientation();
+            }
+        }
+
+        btnFs.addEventListener('click', toggleFullscreen);
+        document.addEventListener('fullscreenchange', onFullscreenChange);
+        document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+        document.addEventListener('mozfullscreenchange', onFullscreenChange);
+        document.addEventListener('MSFullscreenChange', onFullscreenChange);
+        video.addEventListener('webkitendfullscreen', () => {
+            unlockOrientation();
+            iconFsEnter.style.display = 'block';
+            iconFsExit.style.display = 'none';
         });
 
         // Auto-Hide Controls
@@ -2275,7 +2345,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             list.innerHTML = '';
 
             const offDiv = document.createElement('div');
-            offDiv.className = 'yume-option' + (rawTracks.length === 0 ? ' active' : '');
+            offDiv.className = 'yume-option active';
             offDiv.textContent = 'Off';
             offDiv.onclick = () => {
                 activeCues = [];
@@ -2288,7 +2358,6 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             };
             list.appendChild(offDiv);
 
-            let autoLoaded = false;
             rawTracks.forEach((t, idx) => {
                 const div = document.createElement('div');
                 div.className = 'yume-option';
@@ -2316,11 +2385,6 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
                     showMenu('main');
                 };
                 list.appendChild(div);
-
-                if (!autoLoaded && (t.default || label.toLowerCase().includes('eng') || rawTracks.length === 1 || idx === 0)) {
-                    activateTrack();
-                    autoLoaded = true;
-                }
             });
 
             if (ccBtn) {
@@ -3514,8 +3578,8 @@ const docsHTMLTemplate = `<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-    <title>MegaPlay Embed & Stream Proxy API — Documentation & Embed Sandbox</title>
-    <meta name="description" content="Dedicated high-performance Go reverse proxy and ad-free embed sanitizer for MegaPlay (megaplay.buzz). Features MyAnimeList & AniList catalog resolution, HLS stream proxying, and custom OLED video player.">
+    <title>YumeZone Embed & Stream Proxy API — MegaPlay & AnimeSalt Server 1</title>
+    <meta name="description" content="Dedicated high-performance Go reverse proxy and ad-free embed sanitizer for MegaPlay and AnimeSalt Server 1. Features Hindi Dub default, MyAnimeList & AniList resolution, multi-audio switching, HLS stream proxying, and custom OLED video player.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -4180,7 +4244,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
         <div class="doc-nav-container">
             <a href="/" class="doc-brand">
                 <div class="doc-brand-icon"><i class="fas fa-play"></i></div>
-                <div>MegaPlay <span>Stream Proxy API</span></div>
+                <div>YumeZone <span>Stream Proxy API</span></div>
             </a>
             <ul class="doc-nav-links">
                 <li><a href="#overview">Overview</a></li>
@@ -4199,10 +4263,10 @@ const docsHTMLTemplate = `<!DOCTYPE html>
     <!-- Hero Section -->
     <section class="doc-hero-section" id="overview">
         <div class="doc-hero-card">
-            <div class="hero-chip"><i class="fas fa-shield-halved"></i> Dedicated MegaPlay Stream Reverse Proxy</div>
-            <h1>MegaPlay Video Embed & HLS Proxy API</h1>
+            <div class="hero-chip"><i class="fas fa-shield-halved"></i> Dedicated MegaPlay & AnimeSalt Server 1 Proxy</div>
+            <h1>YumeZone Video Embed & Stream Proxy API</h1>
             <p class="doc-hero-lead">
-                A dedicated reverse proxy and player sanitizer for <strong>MegaPlay</strong> (<code>megaplay.buzz</code>). Extracts clean streams, proxies M3U8 video chunks with automatic CDN referer spoofing and permissive CORS, and renders a 100% ad-free OLED video player with MyAnimeList & AniList catalog mapping.
+                A high-performance reverse proxy and player sanitizer for <strong>MegaPlay</strong> and <strong>AnimeSalt Server 1 (Hindi Dub Default)</strong>. Extracts clean streams, proxies M3U8 video chunks with automated CDN referer spoofing and permissive CORS, and renders a 100% ad-free OLED video player with MyAnimeList & AniList catalog mapping.
             </p>
             <div class="hero-actions">
                 <a href="#test-embed" class="btn-primary"><i class="fas fa-play-circle"></i> Test In Sandbox</a>
