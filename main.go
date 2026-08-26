@@ -2622,6 +2622,1360 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write(fmt.Appendf(nil, `{"ok":true,"service":"yumezone-proxy-railway","version":"2.0.0","ts":%d}`, time.Now().UnixMilli()))
 }
 
+type MappingRequestBody struct {
+	IDType     string      `json:"id_type"`
+	ExternalID interface{} `json:"external_id"`
+	Episode    string      `json:"episode"`
+	Message    string      `json:"message"`
+}
+
+func handleMappingRequest(w http.ResponseWriter, r *http.Request) {
+	setCORS(w)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req MappingRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"ok":false,"error":"Invalid JSON payload"}`))
+		return
+	}
+
+	log.Printf("[MappingRequest] IDType=%s ExternalID=%v Episode=%s Message=%s", req.IDType, req.ExternalID, req.Episode, req.Message)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"ok":true,"message":"Thanks! We received your mapping request and our team will review the catalog mapping."}`))
+}
+
+func handleDocs(w http.ResponseWriter, r *http.Request) {
+	setCORS(w)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	// Check if client explicitly requests JSON health info (e.g. uptime monitors)
+	accept := strings.ToLower(r.Header.Get("Accept"))
+	if strings.Contains(accept, "application/json") && !strings.Contains(accept, "text/html") && r.URL.Path != "/docs" && r.URL.Path != "/api" {
+		handleHealth(w, r)
+		return
+	}
+
+	host := r.Host
+	if host == "" {
+		host = "yume-proxy-railway-production.up.railway.app"
+	}
+
+	scheme := "https"
+	if strings.HasPrefix(host, "localhost") || strings.HasPrefix(host, "127.0.0.1") {
+		scheme = "http"
+	}
+
+	html := renderEmbedDocsHTML(scheme, host)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
+	w.Header().Set("Content-Security-Policy", "default-src * 'unsafe-inline' 'unsafe-eval' blob: data:; frame-ancestors *;")
+	w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
+	w.Header().Del("X-Frame-Options")
+	w.Header().Del("Cross-Origin-Opener-Policy")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(html))
+}
+
+func renderEmbedDocsHTML(scheme string, host string) string {
+	baseURL := fmt.Sprintf("%s://%s", scheme, host)
+	html := docsHTMLTemplate
+	html = strings.ReplaceAll(html, "{{BASE_URL}}", baseURL)
+	html = strings.ReplaceAll(html, "{{HOST}}", host)
+	return html
+}
+
+const docsHTMLTemplate = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <title>YumeZone Stream & Video Embed API — Documentation & Sandbox</title>
+    <meta name="description" content="High-performance, zero-ad anime embed player and HLS reverse proxy API with MyAnimeList & AniList catalog resolution, subtitle streaming, and bi-directional player event hooks.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        *, *::before, *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        :root {
+            --bg: #07050d;
+            --bg-elevated: #0e0a17;
+            --bg-card: rgba(18, 14, 28, 0.72);
+            --bg-card-hover: rgba(26, 20, 42, 0.85);
+            --border: rgba(162, 155, 254, 0.12);
+            --border-glow: rgba(162, 155, 254, 0.3);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent: #6366f1;
+            --accent-soft: #a5b4fc;
+            --accent-dim: rgba(99, 102, 241, 0.12);
+            --accent-glow: rgba(99, 102, 241, 0.25);
+            --emerald: #10b981;
+            --emerald-dim: rgba(16, 185, 129, 0.12);
+            --amber: #f59e0b;
+            --rose: #f43f5e;
+            --mono: "JetBrains Mono", ui-monospace, monospace;
+            --sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+            --radius-sm: 8px;
+            --radius-md: 14px;
+            --radius-lg: 22px;
+            --shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: var(--sans);
+            background: var(--bg);
+            color: var(--text-main);
+            min-height: 100vh;
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            background-image:
+                radial-gradient(ellipse 900px 500px at 15% -10%, rgba(99, 102, 241, 0.28), transparent 60%),
+                radial-gradient(ellipse 700px 450px at 90% 15%, rgba(168, 85, 247, 0.16), transparent 55%),
+                radial-gradient(ellipse 800px 600px at 50% 120%, rgba(99, 102, 241, 0.1), transparent 50%);
+            background-attachment: fixed;
+        }
+
+        a {
+            color: var(--accent-soft);
+            text-decoration: none;
+            transition: color 0.15s ease;
+        }
+
+        a:hover {
+            color: #ffffff;
+            text-decoration: underline;
+        }
+
+        /* Top Navigation Strip */
+        .doc-navbar {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: rgba(7, 5, 13, 0.82);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .doc-nav-container {
+            max-width: 1240px;
+            margin: 0 auto;
+            padding: 0.85rem 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1.5rem;
+        }
+
+        .doc-brand {
+            display: flex;
+            align-items: center;
+            gap: 0.65rem;
+            font-size: 1.125rem;
+            font-weight: 800;
+            color: #ffffff;
+            letter-spacing: -0.02em;
+            text-decoration: none;
+        }
+
+        .doc-brand-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 10px;
+            background: linear-gradient(135deg, var(--accent), #a855f7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #ffffff;
+            font-size: 0.95rem;
+            box-shadow: 0 0 16px var(--accent-glow);
+        }
+
+        .doc-brand span {
+            background: linear-gradient(135deg, #ffffff 30%, var(--accent-soft) 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .doc-nav-links {
+            display: flex;
+            align-items: center;
+            gap: 1.25rem;
+            list-style: none;
+        }
+
+        .doc-nav-links a {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            transition: all 0.15s ease;
+        }
+
+        .doc-nav-links a:hover {
+            color: #ffffff;
+            text-decoration: none;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.35rem 0.85rem;
+            background: var(--emerald-dim);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 999px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: var(--emerald);
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .status-dot {
+            width: 7px;
+            height: 7px;
+            background: var(--emerald);
+            border-radius: 50%;
+            box-shadow: 0 0 10px var(--emerald);
+            animation: pulse-dot 2s infinite;
+        }
+
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.8); }
+        }
+
+        /* Hero Section */
+        .doc-hero-section {
+            max-width: 1240px;
+            margin: 0 auto;
+            padding: 2.75rem 1.5rem 1.5rem;
+        }
+
+        .doc-hero-card {
+            position: relative;
+            background: linear-gradient(145deg, rgba(20, 16, 32, 0.95), rgba(11, 8, 18, 0.98));
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 2.75rem 2.5rem;
+            box-shadow: var(--shadow);
+            overflow: hidden;
+        }
+
+        .doc-hero-card::before {
+            content: "";
+            position: absolute;
+            top: -50%;
+            left: -20%;
+            width: 80%;
+            height: 150%;
+            background: radial-gradient(circle, rgba(99, 102, 241, 0.18), transparent 60%);
+            pointer-events: none;
+        }
+
+        .hero-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.75rem;
+            font-weight: 800;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--accent-soft);
+            background: var(--accent-dim);
+            border: 1px solid rgba(162, 155, 254, 0.25);
+            padding: 0.35rem 0.85rem;
+            border-radius: 999px;
+            margin-bottom: 1.25rem;
+        }
+
+        .doc-hero-card h1 {
+            font-size: clamp(2.1rem, 4.5vw, 3rem);
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            line-height: 1.15;
+            margin-bottom: 1rem;
+            background: linear-gradient(110deg, #ffffff 0%, #d8d4ff 45%, var(--accent-soft) 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .doc-hero-lead {
+            font-size: 1.05rem;
+            color: var(--text-muted);
+            max-width: 44rem;
+            line-height: 1.68;
+            margin-bottom: 1.75rem;
+        }
+
+        .hero-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.85rem;
+            margin-bottom: 2rem;
+        }
+
+        .btn-primary {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.55rem;
+            padding: 0.75rem 1.4rem;
+            background: linear-gradient(135deg, var(--accent), #7c3aed);
+            color: #ffffff;
+            font-weight: 700;
+            font-size: 0.9rem;
+            border-radius: var(--radius-sm);
+            border: none;
+            cursor: pointer;
+            box-shadow: 0 4px 18px var(--accent-glow);
+            transition: all 0.2s ease;
+            text-decoration: none;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(99, 102, 241, 0.45);
+            color: #ffffff;
+            text-decoration: none;
+        }
+
+        .btn-secondary {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.55rem;
+            padding: 0.75rem 1.3rem;
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--accent-soft);
+            font-weight: 600;
+            font-size: 0.9rem;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-decoration: none;
+        }
+
+        .btn-secondary:hover {
+            background: var(--accent-dim);
+            border-color: var(--border-glow);
+            color: #ffffff;
+            text-decoration: none;
+        }
+
+        .hero-metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .metric-box {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .metric-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            background: rgba(99, 102, 241, 0.1);
+            border: 1px solid rgba(162, 155, 254, 0.15);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--accent-soft);
+            font-size: 0.95rem;
+            flex-shrink: 0;
+        }
+
+        .metric-info h4 {
+            font-size: 0.875rem;
+            font-weight: 700;
+            color: var(--text-main);
+        }
+
+        .metric-info p {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        /* Shell & Grid Layout */
+        .doc-shell {
+            max-width: 1240px;
+            margin: 0 auto;
+            padding: 1.5rem 1.5rem 4rem;
+        }
+
+        .doc-layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 420px;
+            gap: 2rem;
+            align-items: start;
+        }
+
+        @media (max-width: 1080px) {
+            .doc-layout {
+                grid-template-columns: 1fr;
+            }
+            .doc-nav-links {
+                display: none;
+            }
+        }
+
+        /* Editorial Main Content */
+        .doc-content {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .doc-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 1.75rem;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+            transition: border-color 0.2s ease, transform 0.2s ease;
+        }
+
+        .doc-card:hover {
+            border-color: var(--border-glow);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1rem;
+        }
+
+        .card-title {
+            font-size: 1.15rem;
+            font-weight: 800;
+            color: var(--accent-soft);
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            letter-spacing: -0.015em;
+        }
+
+        .card-title i {
+            color: var(--accent);
+        }
+
+        .doc-card p {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            margin-bottom: 0.85rem;
+            line-height: 1.65;
+        }
+
+        .doc-card h3 {
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: var(--text-main);
+            margin: 1.25rem 0 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.45rem;
+        }
+
+        /* Alerts & Callouts */
+        .doc-alert {
+            display: flex;
+            gap: 0.85rem;
+            align-items: flex-start;
+            padding: 0.95rem 1.1rem;
+            border-radius: var(--radius-sm);
+            margin: 1rem 0;
+            font-size: 0.85rem;
+            line-height: 1.6;
+        }
+
+        .doc-alert i {
+            font-size: 1.05rem;
+            margin-top: 0.12rem;
+            flex-shrink: 0;
+        }
+
+        .doc-alert.info {
+            background: rgba(99, 102, 241, 0.1);
+            border: 1px solid rgba(99, 102, 241, 0.28);
+            color: #e0e7ff;
+        }
+
+        .doc-alert.warn {
+            background: rgba(245, 158, 11, 0.1);
+            border: 1px solid rgba(245, 158, 11, 0.28);
+            color: #fef3c7;
+        }
+
+        .doc-alert.success {
+            background: var(--emerald-dim);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            color: #d1fae5;
+        }
+
+        /* Endpoint Spec Panel */
+        .ep-badge-row {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .method-badge {
+            font-family: var(--mono);
+            font-size: 0.7rem;
+            font-weight: 800;
+            padding: 0.2rem 0.5rem;
+            border-radius: 6px;
+            background: var(--emerald-dim);
+            border: 1px solid rgba(16, 185, 129, 0.35);
+            color: var(--emerald);
+            text-transform: uppercase;
+        }
+
+        .ep-path {
+            font-family: var(--mono);
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: #e2e8f0;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 0.3rem 0.65rem;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            word-break: break-all;
+        }
+
+        /* Code Blocks & Pre */
+        .code-box {
+            position: relative;
+            background: #08060c;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 0.85rem 1rem;
+            margin: 0.75rem 0;
+            overflow-x: auto;
+        }
+
+        .code-box pre {
+            font-family: var(--mono);
+            font-size: 0.8rem;
+            color: #c4b5fd;
+            line-height: 1.55;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .btn-copy-code {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            border-radius: 6px;
+            padding: 0.25rem 0.5rem;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .btn-copy-code:hover {
+            color: #ffffff;
+            background: var(--accent-dim);
+            border-color: var(--border-glow);
+        }
+
+        /* Parameter Tables */
+        .param-table-wrap {
+            overflow-x: auto;
+            margin: 1rem 0;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+        }
+
+        .param-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.825rem;
+            text-align: left;
+        }
+
+        .param-table th {
+            background: rgba(99, 102, 241, 0.15);
+            color: var(--accent-soft);
+            font-weight: 700;
+            padding: 0.65rem 0.95rem;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+
+        .param-table td {
+            padding: 0.65rem 0.95rem;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-muted);
+        }
+
+        .param-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .param-table td:first-child {
+            font-family: var(--mono);
+            color: #c084fc;
+            font-weight: 600;
+        }
+
+        .req-tag {
+            font-size: 0.7rem;
+            font-weight: 700;
+            color: var(--emerald);
+            text-transform: uppercase;
+        }
+
+        .opt-tag {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+
+        /* Sticky Interactive Tester Rail */
+        .doc-rail {
+            position: sticky;
+            top: 76px;
+        }
+
+        .tester-card {
+            background: linear-gradient(165deg, rgba(22, 17, 36, 0.95), rgba(12, 9, 20, 0.98));
+            border: 1px solid rgba(162, 155, 254, 0.25);
+            border-radius: var(--radius-lg);
+            padding: 1.5rem;
+            box-shadow: var(--shadow);
+        }
+
+        .tester-title {
+            font-size: 1.125rem;
+            font-weight: 800;
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.35rem;
+        }
+
+        .tester-sub {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-bottom: 1.25rem;
+            line-height: 1.5;
+        }
+
+        .form-group {
+            margin-bottom: 0.9rem;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.7rem;
+            font-weight: 800;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 0.35rem;
+        }
+
+        .form-input, .form-select, .form-textarea {
+            width: 100%;
+            background: rgba(7, 5, 13, 0.75);
+            border: 1px solid var(--border);
+            color: #ffffff;
+            border-radius: 8px;
+            padding: 0.65rem 0.85rem;
+            font-family: var(--sans);
+            font-size: 0.85rem;
+            font-weight: 500;
+            outline: none;
+            transition: all 0.15s ease;
+        }
+
+        .form-input:focus, .form-select:focus, .form-textarea:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px var(--accent-dim);
+        }
+
+        .form-select {
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23a5b4fc' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 0.85rem center;
+            padding-right: 2.2rem;
+            cursor: pointer;
+        }
+
+        .form-textarea {
+            min-height: 80px;
+            resize: vertical;
+        }
+
+        .tester-btn-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.65rem;
+            margin-top: 1rem;
+        }
+
+        .tester-out {
+            display: none;
+            margin-top: 1.25rem;
+            padding-top: 1.25rem;
+            border-top: 1px solid var(--border);
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .tester-preview-box {
+            margin-top: 0.85rem;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            background: #000000;
+            aspect-ratio: 16 / 9;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.8);
+        }
+
+        .tester-preview-box iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+            display: block;
+        }
+
+        /* Footer */
+        .doc-footer {
+            border-top: 1px solid var(--border);
+            background: rgba(7, 5, 13, 0.95);
+            padding: 2.5rem 1.5rem;
+            margin-top: 4rem;
+        }
+
+        .footer-inner {
+            max-width: 1240px;
+            margin: 0 auto;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1.5rem;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 1.25rem;
+        }
+    </style>
+</head>
+<body>
+    <!-- Top Navigation Strip -->
+    <header class="doc-navbar">
+        <div class="doc-nav-container">
+            <a href="/" class="doc-brand">
+                <div class="doc-brand-icon"><i class="fas fa-play"></i></div>
+                <div>YumeZone <span>Stream API</span></div>
+            </a>
+            <ul class="doc-nav-links">
+                <li><a href="#overview">Overview</a></li>
+                <li><a href="#endpoints">Endpoints</a></li>
+                <li><a href="#guide">Integration</a></li>
+                <li><a href="#events">Player Events</a></li>
+                <li><a href="#test-embed">Live Tester</a></li>
+                <li><a href="#contact">Request ID</a></li>
+            </ul>
+            <div class="status-badge">
+                <span class="status-dot"></span>
+                API Operational
+            </div>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="doc-hero-section" id="overview">
+        <div class="doc-hero-card">
+            <div class="hero-chip"><i class="fas fa-bolt"></i> High-Performance Video Embed & Stream Engine</div>
+            <h1>Zero-Ad Anime Embed & HLS Streaming API</h1>
+            <p class="doc-hero-lead">
+                A seamless, plug-and-play streaming solution for webmasters and anime websites. Built with Go 1.22 and Alpine Linux, featuring automatic MyAnimeList & AniList catalog resolution, high-throughput HLS reverse proxying, multi-track subtitle delivery, and bi-directional postMessage player telemetry.
+            </p>
+            <div class="hero-actions">
+                <a href="#test-embed" class="btn-primary"><i class="fas fa-play-circle"></i> Test Your Embed</a>
+                <a href="#endpoints" class="btn-secondary"><i class="fas fa-code"></i> View Endpoints</a>
+                <a href="#guide" class="btn-secondary"><i class="fas fa-book-open"></i> Integration Guide</a>
+            </div>
+            <div class="hero-metrics">
+                <div class="metric-box">
+                    <div class="metric-icon"><i class="fas fa-shield-halved"></i></div>
+                    <div class="metric-info">
+                        <h4>Zero Popup Ads</h4>
+                        <p>100% clean video player</p>
+                    </div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-icon"><i class="fas fa-gauge-high"></i></div>
+                    <div class="metric-info">
+                        <h4>Sub-2ms Cache</h4>
+                        <p>Instant playlist response</p>
+                    </div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-icon"><i class="fas fa-lock"></i></div>
+                    <div class="metric-info">
+                        <h4>AES-GCM Proxy</h4>
+                        <p>Encrypted token security</p>
+                    </div>
+                </div>
+                <div class="metric-box">
+                    <div class="metric-icon"><i class="fas fa-globe"></i></div>
+                    <div class="metric-info">
+                        <h4>30+ CDN Whitelists</h4>
+                        <p>Global multi-mirror streaming</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Main Content & Live Tester Layout -->
+    <div class="doc-shell">
+        <div class="doc-layout">
+            <!-- Main Editorial Column -->
+            <main class="doc-content">
+                <!-- Why Choose Section -->
+                <div class="doc-card">
+                    <div class="card-header">
+                        <h2 class="card-title"><i class="fas fa-layer-group"></i> Architecture & Features</h2>
+                    </div>
+                    <p>
+                        YumeZone Stream & Proxy provides a unified embed layer and proxy pipeline designed to eliminate ad injections, bypass CDN hotlink protections, and simplify anime catalog integration.
+                    </p>
+                    <div class="doc-alert info">
+                        <i class="fas fa-info-circle"></i>
+                        <div>
+                            <strong>Universal Catalog Compatibility:</strong> Embed episodes using <strong>MyAnimeList ID</strong> (<code>mal/{id}</code>), <strong>AniList ID</strong> (<code>ani/{id}</code>), or <strong>Catalog Episode ID</strong> (<code>s-2/{ep_id}</code>).
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Endpoints Specification -->
+                <div class="doc-card" id="endpoints">
+                    <div class="card-header">
+                        <h2 class="card-title"><i class="fas fa-server"></i> API Endpoints</h2>
+                    </div>
+                    <p>Use the endpoints below to embed clean video players or stream HLS chunks directly into your web applications.</p>
+
+                    <!-- Endpoint 1: MAL Embed -->
+                    <h3><i class="fas fa-play"></i> 1. MyAnimeList Embed Player</h3>
+                    <div class="ep-badge-row">
+                        <span class="method-badge">GET</span>
+                        <span class="ep-path">{{BASE_URL}}/embed/megaplay/mal/{mal_id}/{ep_num}/{language}</span>
+                    </div>
+                    <p>Streams the episode using a MyAnimeList ID with our custom OLED HTML5 player.</p>
+                    <div class="param-table-wrap">
+                        <table class="param-table">
+                            <thead>
+                                <tr>
+                                    <th>Parameter</th>
+                                    <th>Type</th>
+                                    <th>Required</th>
+                                    <th>Description</th>
+                                    <th>Example</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>mal_id</td>
+                                    <td>Integer</td>
+                                    <td><span class="req-tag">Yes</span></td>
+                                    <td>MyAnimeList anime ID</td>
+                                    <td><code>5114</code> (FMA:B), <code>21</code> (One Piece)</td>
+                                </tr>
+                                <tr>
+                                    <td>ep_num</td>
+                                    <td>Integer</td>
+                                    <td><span class="req-tag">Yes</span></td>
+                                    <td>Episode number</td>
+                                    <td><code>1</code>, <code>2</code>, <code>24</code></td>
+                                </tr>
+                                <tr>
+                                    <td>language</td>
+                                    <td>String</td>
+                                    <td><span class="req-tag">Yes</span></td>
+                                    <td>Audio track (sub or dub)</td>
+                                    <td><code>sub</code> / <code>dub</code></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Endpoint 2: AniList Embed -->
+                    <h3><i class="fas fa-shuffle"></i> 2. AniList Embed Player (Auto-Mapped)</h3>
+                    <div class="ep-badge-row">
+                        <span class="method-badge">GET</span>
+                        <span class="ep-path">{{BASE_URL}}/embed/megaplay/ani/{anilist_id}/{ep_num}/{language}</span>
+                    </div>
+                    <p>Automatically resolves AniList IDs to MyAnimeList IDs via multi-tier lookups (AniZip & AniList GraphQL) with 100% catalog coverage.</p>
+                    <div class="code-box">
+                        <button class="btn-copy-code" onclick="copySnippet(this)"><i class="far fa-copy"></i></button>
+                        <pre>&lt;iframe src="{{BASE_URL}}/embed/megaplay/ani/154587/1/sub" width="100%" height="100%" frameborder="0" scrolling="no" allowfullscreen&gt;&lt;/iframe&gt;</pre>
+                    </div>
+
+                    <!-- Endpoint 3: Catalog Stream ID -->
+                    <h3><i class="fas fa-hashtag"></i> 3. Direct Catalog Episode ID</h3>
+                    <div class="ep-badge-row">
+                        <span class="method-badge">GET</span>
+                        <span class="ep-path">{{BASE_URL}}/embed/megaplay/s-2/{episode_id}/{language}</span>
+                    </div>
+                    <p>Compatible with Anikoto and legacy HiAnime server episode IDs.</p>
+
+                    <!-- Endpoint 4: Encrypted Stream Proxy -->
+                    <h3><i class="fas fa-lock"></i> 4. Encrypted Media & HLS Chunk Proxy</h3>
+                    <div class="ep-badge-row">
+                        <span class="method-badge">GET</span>
+                        <span class="ep-path">{{BASE_URL}}/p/{encrypted_token}</span>
+                    </div>
+                    <p>High-throughput media proxy for <code>.m3u8</code> manifests, <code>.ts</code> video segments, and <code>.vtt</code> subtitle tracks with zero-copy buffer pooling and automated CDN header spoofing.</p>
+
+                    <!-- Endpoint 5: Health Check -->
+                    <h3><i class="fas fa-heart-pulse"></i> 5. Service Health</h3>
+                    <div class="ep-badge-row">
+                        <span class="method-badge">GET</span>
+                        <span class="ep-path">{{BASE_URL}}/health</span>
+                    </div>
+                    <p>Returns service status, version, and server timestamp.</p>
+                </div>
+
+                <!-- Integration Guide -->
+                <div class="doc-card" id="guide">
+                    <div class="card-header">
+                        <h2 class="card-title"><i class="fas fa-code"></i> Integration Guide</h2>
+                    </div>
+                    <p>Follow these best practices to embed the player seamlessly on your website with full responsive aspect ratio and smooth mobile playback.</p>
+
+                    <h3><i class="fas fa-display"></i> Responsive 16:9 CSS Container</h3>
+                    <div class="code-box">
+                        <button class="btn-copy-code" onclick="copySnippet(this)"><i class="far fa-copy"></i></button>
+                        <pre>&lt;!-- Responsive 16:9 Video Wrapper --&gt;
+&lt;div style="position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 12px; overflow: hidden;"&gt;
+  &lt;iframe 
+    src="{{BASE_URL}}/embed/megaplay/mal/5114/1/sub"
+    style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: none;"
+    scrolling="no"
+    allowfullscreen
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"&gt;
+  &lt;/iframe&gt;
+&lt;/div&gt;</pre>
+                    </div>
+                </div>
+
+                <!-- Player Events & Telemetry API -->
+                <div class="doc-card" id="events">
+                    <div class="card-header">
+                        <h2 class="card-title"><i class="fas fa-chart-line"></i> Player Events & Telemetry API</h2>
+                    </div>
+                    <p>
+                        The embedded player emits real-time bi-directional telemetry events via <code>window.postMessage</code>. You can listen from your parent web app to track watch progress, sync watch history, or trigger automatic next-episode navigation.
+                    </p>
+
+                    <div class="param-table-wrap">
+                        <table class="param-table">
+                            <thead>
+                                <tr>
+                                    <th>Event Name</th>
+                                    <th>Payload Keys</th>
+                                    <th>Description</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td><code>time</code></td>
+                                    <td><code>time</code>, <code>duration</code>, <code>percent</code></td>
+                                    <td>Emitted during playback with current seconds, total duration, and percentage.</td>
+                                </tr>
+                                <tr>
+                                    <td><code>complete</code></td>
+                                    <td><code>event: "complete"</code></td>
+                                    <td>Emitted when the episode reaches the end (ideal for Auto-Next).</td>
+                                </tr>
+                                <tr>
+                                    <td><code>watching-log</code></td>
+                                    <td><code>currentTime</code>, <code>duration</code></td>
+                                    <td>Periodic watch-time logging event for backend progress sync.</td>
+                                </tr>
+                                <tr>
+                                    <td><code>YUME_SWITCH_SERVER</code></td>
+                                    <td><code>server: string</code></td>
+                                    <td>Emitted when the user chooses an alternate server from the fallback UI.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <h3><i class="fas fa-terminal"></i> JavaScript Event Listener Example</h3>
+                    <div class="code-box">
+                        <button class="btn-copy-code" onclick="copySnippet(this)"><i class="far fa-copy"></i></button>
+                        <pre>window.addEventListener("message", function (event) {
+  let data = event.data;
+  if (typeof data === "string") {
+    try { data = JSON.parse(data); } catch (e) { return; }
+  }
+  if (!data) return;
+
+  // 1. Handle playback progress
+  if (data.event === "time") {
+    console.log("Current time:", data.time, "Duration:", data.duration, "Percent:", data.percent + "%");
+  }
+
+  // 2. Handle episode completion (Auto-Next Episode)
+  if (data.event === "complete") {
+    console.log("Episode finished! Playing next episode...");
+    // playNextEpisode();
+  }
+
+  // 3. Handle server switch requests
+  if (data.type === "YUME_SWITCH_SERVER") {
+    console.log("User requested fallback server:", data.server);
+  }
+});</pre>
+                    </div>
+                </div>
+
+                <!-- Missing Title / ID Request Form -->
+                <div class="doc-card" id="contact">
+                    <div class="card-header">
+                        <h2 class="card-title"><i class="fas fa-envelope"></i> Request ID Mapping / Missing Title</h2>
+                    </div>
+                    <p>If a specific MyAnimeList or AniList ID does not resolve, submit the ID below and our catalog mapping index will update it promptly.</p>
+                    <form id="req-mapping-form">
+                        <div class="form-group">
+                            <label for="req-type">ID Type</label>
+                            <select class="form-select" id="req-type">
+                                <option value="MAL">MyAnimeList (MAL ID)</option>
+                                <option value="AniList">AniList (AniList ID)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="req-id">Numeric Anime ID</label>
+                            <input type="text" class="form-input" id="req-id" placeholder="e.g. 5114" required inputmode="numeric" />
+                        </div>
+                        <div class="form-group">
+                            <label for="req-ep">Episode Number (optional)</label>
+                            <input type="text" class="form-input" id="req-ep" placeholder="e.g. 1" inputmode="numeric" />
+                        </div>
+                        <div class="form-group">
+                            <label for="req-msg">Notes / Details</label>
+                            <textarea class="form-textarea" id="req-msg" placeholder="Describe the title, language (Sub/Dub), or issue..." required></textarea>
+                        </div>
+                        <button type="submit" class="btn-primary" id="req-submit-btn" style="width: 100%; justify-content: center;">
+                            <i class="fas fa-paper-plane"></i> Send Mapping Request
+                        </button>
+                        <p id="req-status-msg" style="display:none; margin-top:0.75rem; font-size:0.85rem; font-weight:600;"></p>
+                    </form>
+                </div>
+            </main>
+
+            <!-- Sticky Interactive Embed Sandbox Rail -->
+            <aside class="doc-rail" id="test-embed">
+                <div class="tester-card">
+                    <h3 class="tester-title"><i class="fas fa-vial"></i> Test Your Embed</h3>
+                    <p class="tester-sub">Configure your anime ID, generate iframe code, and preview the live video player in real-time.</p>
+
+                    <form id="embed-sandbox-form">
+                        <div class="form-group">
+                            <label for="sb-mode">ID Source</label>
+                            <select class="form-select" id="sb-mode">
+                                <option value="mal">MyAnimeList (MAL ID + Episode)</option>
+                                <option value="ani">AniList (AniList ID + Episode)</option>
+                                <option value="s-2">Catalog Episode ID (s-2 / HiAnime)</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" id="group-series-id">
+                            <label for="sb-series-id">Anime ID</label>
+                            <input type="text" class="form-input" id="sb-series-id" value="5114" placeholder="e.g. 5114 (FMA:B)" required inputmode="numeric" />
+                        </div>
+
+                        <div class="form-group" id="group-ep-num">
+                            <label for="sb-ep-num">Episode Number</label>
+                            <input type="text" class="form-input" id="sb-ep-num" value="1" placeholder="e.g. 1" required inputmode="numeric" />
+                        </div>
+
+                        <div class="form-group">
+                            <label for="sb-lang">Language</label>
+                            <select class="form-select" id="sb-lang">
+                                <option value="sub">Sub (Japanese + Multi-Subtitles)</option>
+                                <option value="dub">Dub (English Audio)</option>
+                            </select>
+                        </div>
+
+                        <div class="tester-btn-row">
+                            <button type="submit" class="btn-primary" style="justify-content: center;">
+                                <i class="fas fa-play"></i> Generate Embed
+                            </button>
+                            <button type="button" class="btn-secondary" id="btn-gen-both" style="justify-content: center;">
+                                <i class="fas fa-layer-group"></i> Sub + Dub
+                            </button>
+                        </div>
+                    </form>
+
+                    <!-- Generated Outputs -->
+                    <div class="tester-out" id="sb-output">
+                        <div id="sb-boxes-container"></div>
+                        <div class="tester-preview-box">
+                            <iframe id="preview-frame" src="" allowfullscreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"></iframe>
+                        </div>
+                        <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.65rem; text-align: center;">
+                            <i class="fas fa-circle-info"></i> Click the copy button on any block to grab the iframe code.
+                        </p>
+                    </div>
+                </div>
+            </aside>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="doc-footer">
+        <div class="footer-inner">
+            <div>
+                <strong>YumeZone Stream & Proxy Engine</strong> — Zero-Ad Multi-Mirror Anime Streaming Infrastructure.
+            </div>
+            <div class="footer-links">
+                <a href="#overview">Overview</a>
+                <a href="#endpoints">Endpoints</a>
+                <a href="#events">Events</a>
+                <a href="#test-embed">Tester</a>
+                <a href="/health">Health</a>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        const BASE_ORIGIN = "{{BASE_URL}}";
+
+        const $ = (id) => document.getElementById(id);
+
+        function buildUrl(mode, id, ep, lang) {
+            id = encodeURIComponent(String(id).trim());
+            ep = encodeURIComponent(String(ep).trim());
+            lang = encodeURIComponent(String(lang).trim().toLowerCase());
+            if (mode === "mal") return BASE_ORIGIN + "/embed/megaplay/mal/" + id + "/" + ep + "/" + lang;
+            if (mode === "ani") return BASE_ORIGIN + "/embed/megaplay/ani/" + id + "/" + ep + "/" + lang;
+            if (mode === "s-2") return BASE_ORIGIN + "/embed/megaplay/s-2/" + id + "/" + lang;
+            return BASE_ORIGIN + "/embed/megaplay/mal/" + id + "/" + ep + "/" + lang;
+        }
+
+        function buildIframe(url) {
+            return '<iframe src="' + url + '" width="100%" height="100%" frameborder="0" scrolling="no" allowfullscreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"></iframe>';
+        }
+
+        async function copySnippet(btn) {
+            const pre = btn.parentElement.querySelector('pre');
+            if (!pre) return;
+            const text = pre.innerText || pre.textContent;
+            try {
+                await navigator.clipboard.writeText(text);
+                const originalHtml = btn.innerHTML;
+                btn.innerHTML = '<i class="fas fa-check" style="color: var(--emerald);"></i> Copied';
+                setTimeout(() => { btn.innerHTML = originalHtml; }, 1600);
+            } catch (err) {
+                // Fallback select
+                const r = document.createRange();
+                r.selectNodeContents(pre);
+                const s = window.getSelection();
+                s.removeAllRanges();
+                s.addRange(r);
+            }
+        }
+
+        function renderOutputBoxes(items) {
+            const container = $("sb-boxes-container");
+            container.innerHTML = "";
+
+            items.forEach(item => {
+                const box = document.createElement("div");
+                box.className = "code-box";
+                box.style.marginBottom = "0.75rem";
+
+                const label = document.createElement("div");
+                label.style.fontSize = "0.7rem";
+                label.style.fontWeight = "700";
+                label.style.color = "var(--accent-soft)";
+                label.style.textTransform = "uppercase";
+                label.style.marginBottom = "0.4rem";
+                label.textContent = item.label;
+
+                const pre = document.createElement("pre");
+                pre.textContent = item.code;
+
+                const copyBtn = document.createElement("button");
+                copyBtn.className = "btn-copy-code";
+                copyBtn.type = "button";
+                copyBtn.innerHTML = '<i class="far fa-copy"></i> Copy';
+                copyBtn.onclick = function() { copySnippet(this); };
+
+                box.appendChild(label);
+                box.appendChild(copyBtn);
+                box.appendChild(pre);
+                container.appendChild(box);
+            });
+
+            $("sb-output").style.display = "block";
+        }
+
+        // Mode switch UI adjustments
+        $("sb-mode").addEventListener("change", (e) => {
+            const mode = e.target.value;
+            if (mode === "s-2") {
+                $("group-series-id").querySelector("label").textContent = "Episode ID (s-2)";
+                $("sb-series-id").placeholder = "e.g. 136197";
+                $("sb-series-id").value = "136197";
+                $("group-ep-num").style.display = "none";
+            } else {
+                $("group-series-id").querySelector("label").textContent = mode === "mal" ? "MyAnimeList (MAL ID)" : "AniList ID";
+                $("sb-series-id").placeholder = mode === "mal" ? "e.g. 5114 (FMA:B)" : "e.g. 154587 (Frieren)";
+                $("sb-series-id").value = mode === "mal" ? "5114" : "154587";
+                $("group-ep-num").style.display = "block";
+            }
+        });
+
+        // Form Submit handler
+        $("embed-sandbox-form").addEventListener("submit", (e) => {
+            e.preventDefault();
+            const mode = $("sb-mode").value;
+            const id = $("sb-series-id").value.trim();
+            const ep = $("sb-ep-num").value.trim() || "1";
+            const lang = $("sb-lang").value;
+
+            if (!id) return alert("Please enter an anime ID.");
+
+            const url = buildUrl(mode, id, ep, lang);
+            renderOutputBoxes([
+                { label: "Embed Iframe (" + lang.toUpperCase() + ")", code: buildIframe(url) },
+                { label: "Direct Embed Player URL", code: url }
+            ]);
+
+            $("preview-frame").src = url;
+            $("sb-output").scrollIntoView({ behavior: "smooth", block: "nearest" });
+        });
+
+        // Generate Both Sub + Dub handler
+        $("btn-gen-both").addEventListener("click", () => {
+            const mode = $("sb-mode").value;
+            const id = $("sb-series-id").value.trim();
+            const ep = $("sb-ep-num").value.trim() || "1";
+
+            if (!id) return alert("Please enter an anime ID.");
+
+            const subUrl = buildUrl(mode, id, ep, "sub");
+            const dubUrl = buildUrl(mode, id, ep, "dub");
+
+            renderOutputBoxes([
+                { label: "Sub Iframe (Japanese Audio)", code: buildIframe(subUrl) },
+                { label: "Dub Iframe (English Audio)", code: buildIframe(dubUrl) },
+            ]);
+
+            $("preview-frame").src = subUrl;
+            $("sb-output").scrollIntoView({ behavior: "smooth", block: "nearest" });
+        });
+
+        // Mapping Request Form handler
+        $("req-mapping-form").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const btn = $("req-submit-btn");
+            const status = $("req-status-msg");
+            const idType = $("req-type").value;
+            const extId = $("req-id").value.trim();
+            const ep = $("req-ep").value.trim();
+            const msg = $("req-msg").value.trim();
+
+            if (!extId || !msg) return alert("Please fill in the ID and description.");
+
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Submitting...';
+            status.style.display = "none";
+
+            try {
+                const res = await fetch("/api/mapping-request", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        id_type: idType,
+                        external_id: parseInt(extId, 10) || extId,
+                        episode: ep,
+                        message: msg
+                    })
+                });
+                const data = await res.json();
+                status.style.display = "block";
+                if (res.ok && data.ok) {
+                    status.style.color = "var(--emerald)";
+                    status.textContent = data.message || "Thank you! Request received.";
+                    $("req-mapping-form").reset();
+                } else {
+                    status.style.color = "var(--rose)";
+                    status.textContent = data.error || "Submission error. Please try again.";
+                }
+            } catch (err) {
+                status.style.display = "block";
+                status.style.color = "var(--rose)";
+                status.textContent = "Network error. Please try again later.";
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-paper-plane"></i> Send Mapping Request';
+            }
+        });
+    </script>
+</body>
+</html>`
+
 func main() {
 	initConfig()
 
@@ -2636,6 +3990,9 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", handleHealth)
+	mux.HandleFunc("/docs", handleDocs)
+	mux.HandleFunc("/api", handleDocs)
+	mux.HandleFunc("/api/mapping-request", handleMappingRequest)
 	mux.HandleFunc("/embed/megaplay/", handleMegaplayEmbed)
 	mux.HandleFunc("/embed/megaplay", handleMegaplayEmbed)
 	mux.HandleFunc("/stream/getSources", handleMegaplaySources)
@@ -2644,8 +4001,12 @@ func main() {
 	mux.HandleFunc("/images/", handleMegaplayLib)
 	mux.HandleFunc("/p/", handleProxy)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" || r.URL.Path == "" {
-			handleHealth(w, r)
+		if r.URL.Path == "/" || r.URL.Path == "" || r.URL.Path == "/docs" || r.URL.Path == "/api" {
+			handleDocs(w, r)
+			return
+		}
+		if r.URL.Path == "/api/mapping-request" {
+			handleMappingRequest(w, r)
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/embed/megaplay") {
@@ -2675,10 +4036,11 @@ func main() {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	log.Printf("ðŸš€ YumeZone Go Stream & Clean Embed Proxy running on 0.0.0.0:%d", port)
+	log.Printf("🚀 YumeZone Go Stream & Clean Embed Proxy running on 0.0.0.0:%d", port)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Proxy server failed: %v", err)
 	}
 }
+
 
 
