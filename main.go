@@ -1184,7 +1184,9 @@ func extractMegaplayHLS(ctx context.Context, targetPath string) (string, []Subti
 
 	if res.Sources.File == "" {
 		return "", nil, fmt.Errorf("no video file in getSources response")
-return res.Sources.File, res.Tracks, nil
+	}
+
+	return res.Sources.File, res.Tracks, nil
 }
 
 func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, preferredLang string) string {
