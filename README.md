@@ -1,16 +1,17 @@
-# MegaPlay Stream & Clean Embed Proxy API
+# YumeZone Stream & Clean Embed Proxy API (MegaPlay & AnimeSalt Server 1)
 
-Dedicated high-performance Go reverse proxy, embed sanitizer, and security layer for **MegaPlay** (`megaplay.buzz`). Extracts clean HLS streams, proxies M3U8 video chunks with automatic CDN referer spoofing and permissive CORS, and renders a 100% ad-free OLED video player with MyAnimeList & AniList catalog mapping.
+Dedicated high-performance Go reverse proxy, embed sanitizer, and multi-server video scraper for **MegaPlay** (`megaplay.buzz`) and **AnimeSalt Server 1** (`as-cdn26.top` / `animesalt.cx`). Extracts clean HLS streams, proxies M3U8 video chunks with automatic CDN referer spoofing and permissive CORS, and renders a 100% ad-free OLED video player with automatic **Hindi Dub** audio track selection, multi-audio switcher, and MyAnimeList/AniList catalog mapping.
 
 ## 🚀 Key Features
 
-- **Allowed Site / Domain Embedding Security**: Enforces strict `ALLOWED_EMBED_DOMAINS` environment configuration. Only whitelisted sites can embed the player in an `<iframe>` (unauthorized domains get rejected at the HTTP/CSP level in advance without loading). Anyone with the direct link in a browser tab can watch freely.
-- **Ad & Popup Stripping**: Sanitizes MegaPlay stream sources by bypassing ad scripts (`app.main.js`), tracker beacons, and anti-sandbox blockers.
-- **MyAnimeList & AniList Catalog Resolution**: Embed directly via MAL ID (`/embed/megaplay/mal/{id}/{ep}/{lang}`) or AniList ID (`/embed/megaplay/ani/{id}/{ep}/{lang}`) with automated 3-tier fallback resolution (AniZip -> AniList GraphQL -> Kitsu).
-- **Clean OLED Bespoke Video Player**: High-resolution streaming with 60fps scrub bar, 10s skip, landscape fullscreen, mobile touch volume, and multi-track subtitle switching.
+- **AnimeSalt Server 1 (Hindi Dub Extractor)**: Scrapes `as-cdn26.top` Server 1 multi-audio HLS master playlists directly from AnimeSalt series slugs or AniList/MAL IDs, pre-selecting Hindi Dub by default while providing an in-player audio track switcher for Japanese, English, Tamil, and Telugu.
+- **Allowed Site / Domain Embedding Security**: Enforces strict `ALLOWED_EMBED_DOMAINS` environment configuration. Only whitelisted sites can embed the player in an `<iframe>` (unauthorized domains get rejected at the HTTP/CSP level in advance without loading). Direct browser tab access remains unrestricted.
+- **Ad & Popup Stripping**: Sanitizes upstream stream sources by bypassing ad scripts, popups, and anti-sandbox blockers.
+- **MyAnimeList & AniList Catalog Resolution**: Embed directly via MAL ID or AniList ID with automated fallback resolution (AniZip -> AniList GraphQL -> Jikan).
+- **Clean OLED Bespoke Video Player**: High-resolution streaming with 60fps scrub bar, 10s skip, landscape fullscreen, mobile touch volume, subtitle switching, and multi-track audio switching.
 - **Bi-Directional `postMessage` Telemetry**: Emits `time`, `complete`, `watching-log`, and `YUME_SWITCH_SERVER` events to the parent website for progress tracking and auto-next episode triggers.
 - **HLS / TS Stream Proxying**: High-throughput zero-copy M3U8 playlist rewriting and chunk streaming with AES-GCM token verification.
-- **Upstream CDN Whitelists**: Injects required `Referer: https://megaplay.buzz/` and permissive CORS headers for all MegaPlay streaming CDNs.
+- **Upstream CDN Whitelists**: Injects required `Referer` headers (`as-cdn26.top`, `megaplay.buzz`, `animesalt.cx`, etc.) and permissive CORS headers for all streaming CDNs.
 
 ---
 
@@ -19,19 +20,39 @@ Dedicated high-performance Go reverse proxy, embed sanitizer, and security layer
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
 | `GET` | `/` or `/docs` or `/api` | Interactive Web Documentation & Live Embed Sandbox |
-| `GET` | `/embed/megaplay/mal/{mal_id}/{ep_num}/{language}` | Clean OLED embed player for MyAnimeList ID |
-| `GET` | `/embed/megaplay/ani/{anilist_id}/{ep_num}/{language}` | Clean OLED embed player for AniList ID (auto-resolved to MAL) |
+| `GET` | `/embed/animesalt/{slug}-{season}x{ep}?lang={hin\|sub\|dub}` | Clean OLED embed player for AnimeSalt Server 1 (Hindi Dub default) |
+| `GET` | `/embed/animesalt/ani/{anilist_id}/{ep}/{lang}` | AnimeSalt Server 1 embed by AniList ID |
+| `GET` | `/embed/animesalt/mal/{mal_id}/{ep}/{lang}` | AnimeSalt Server 1 embed by MyAnimeList ID |
+| `GET` | `/embed/as-cdn/{hash}?lang={hin\|sub\|dub}` | AnimeSalt Server 1 direct video hash embed |
+| `GET` | `/player/salt?slug={slug}&ep={ep}&lang={lang}` | Query-param format player for AnimeSalt |
+| `GET` | `/api/animesalt/source?slug={slug}&season={s}&ep={e}` | Direct JSON stream extractor for AnimeSalt Server 1 |
+| `GET` | `/embed/megaplay/mal/{mal_id}/{ep_num}/{language}` | Clean OLED embed player for MegaPlay (MAL ID) |
+| `GET` | `/embed/megaplay/ani/{anilist_id}/{ep_num}/{language}` | Clean OLED embed player for MegaPlay (AniList ID) |
 | `GET` | `/embed/megaplay/s-2/{episode_id}/{language}` | Direct embed player for catalog episode ID |
 | `GET` | `/p/{encrypted_token}` | Secure HLS playlist / TS video segment stream proxy |
-| `GET` | `/stream/getSources` | Direct upstream JSON stream sources extractor |
+| `GET` | `/stream/getSources` | Direct upstream JSON stream sources extractor for MegaPlay |
 | `GET` | `/health` | Service healthcheck & timestamp information |
 
 ---
 
 ## 💻 Webmaster Quick Integration
 
+### AnimeSalt Server 1 (Hindi Dub / Multi-Audio)
 ```html
 <!-- Responsive 16:9 Video Embed Container -->
+<div style="position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 12px; overflow: hidden;">
+  <iframe 
+    src="https://yume-proxy-railway-production.up.railway.app/embed/animesalt/dan-da-dan-1x1?lang=hin"
+    style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: none;"
+    scrolling="no"
+    allowfullscreen
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture">
+  </iframe>
+</div>
+```
+
+### MegaPlay (Sub / Dub)
+```html
 <div style="position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 12px; overflow: hidden;">
   <iframe 
     src="https://yume-proxy-railway-production.up.railway.app/embed/megaplay/mal/5114/1/sub"

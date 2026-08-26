@@ -133,8 +133,18 @@ var cdnRules = []CDNRule{
 		Referer: "https://megaplay.buzz/", Origin: "https://megaplay.buzz", SecSite: "cross-site",
 	},
 	{
-		Matches: func(h string) bool { return h == "anidb.app" || strings.HasSuffix(h, ".anidb.app") },
+		Matches: func(h string) bool { return strings.HasSuffix(h, ".anidb.app") || h == "anidb.app" },
 		Referer: "https://anidb.app/", Origin: "https://anidb.app", SecSite: "cross-site",
+	},
+	{
+		Matches: func(h string) bool {
+			return strings.HasSuffix(h, ".as-cdn26.top") || h == "as-cdn26.top" ||
+				strings.HasSuffix(h, ".as-cdn28.top") || h == "as-cdn28.top" ||
+				strings.HasSuffix(h, ".as-cdn.top") || h == "as-cdn.top" ||
+				strings.Contains(h, "as-cdn") ||
+				strings.HasSuffix(h, ".animesalt.cx") || h == "animesalt.cx"
+		},
+		Referer: "https://animesalt.cx/", Origin: "https://as-cdn26.top", SecSite: "cross-site",
 	},
 	{
 		Matches: func(h string) bool { return strings.HasSuffix(h, ".vid-cdn.xyz") || h == "vid-cdn.xyz" },
@@ -1174,13 +1184,14 @@ func extractMegaplayHLS(ctx context.Context, targetPath string) (string, []Subti
 
 	if res.Sources.File == "" {
 		return "", nil, fmt.Errorf("no video file in getSources response")
-	}
-
-	return res.Sources.File, res.Tracks, nil
+return res.Sources.File, res.Tracks, nil
 }
 
-func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) string {
+func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, preferredLang string) string {
 	tracksJSON, _ := json.Marshal(subtitleTracks)
+	if preferredLang == "" {
+		preferredLang = "hin"
+	}
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1351,89 +1362,89 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             bottom: 0;
             left: 0;
             right: 0;
-            background: linear-gradient(to top, rgba(0, 0, 0, 0.95) 0%%, rgba(0, 0, 0, 0.6) 60%%, rgba(0, 0, 0, 0) 100%%);
-            padding: 10px 16px 14px 16px;
+            background: linear-gradient(to top, rgba(0, 0, 0, 0.94) 0%%, rgba(0, 0, 0, 0.6) 60%%, transparent 100%%);
+            padding: 24px 16px 12px;
             display: flex;
             flex-direction: column;
-            gap: 6px;
+            gap: 8px;
             z-index: 50;
-            transition: opacity 0.3s ease, transform 0.3s ease;
+            transition: opacity 0.25s ease, transform 0.25s ease;
         }
         #yume-player-container.controls-hidden #yume-controls-bar {
             opacity: 0;
             pointer-events: none;
-            transform: translateY(8px);
+            transform: translateY(10px);
         }
 
-        /* Buttery Smooth Progress Bar Timeline */
+        /* Progress Timeline Bar */
         .yume-progress-container {
             position: relative;
             width: 100%%;
-            height: 20px;
+            height: 16px;
             display: flex;
             align-items: center;
             cursor: pointer;
             touch-action: none;
         }
         .yume-progress-bg {
-            position: absolute;
-            left: 0;
-            right: 0;
+            position: relative;
+            width: 100%%;
             height: 4px;
-            background: rgba(255, 255, 255, 0.25);
-            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 2px;
+            overflow: hidden;
             transition: height 0.15s ease;
         }
         .yume-progress-container:hover .yume-progress-bg,
         .yume-progress-container.scrubbing .yume-progress-bg {
-            height: 7px;
+            height: 6px;
         }
         .yume-progress-buffered {
             position: absolute;
-            left: 0;
             top: 0;
-            bottom: 0;
-            background: rgba(255, 255, 255, 0.4);
-            border-radius: 4px;
+            left: 0;
+            height: 100%%;
             width: 0%%;
+            background: rgba(255, 255, 255, 0.4);
+            border-radius: 2px;
             pointer-events: none;
         }
         .yume-progress-played {
             position: absolute;
-            left: 0;
             top: 0;
-            bottom: 0;
-            background: #ffffff;
-            box-shadow: 0 0 10px rgba(255, 255, 255, 0.8);
-            border-radius: 4px;
+            left: 0;
+            height: 100%%;
             width: 0%%;
+            background: #ffffff;
+            border-radius: 2px;
             pointer-events: none;
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.8);
         }
         .yume-progress-thumb {
             position: absolute;
-            top: 50%%;
-            transform: translate(-50%%, -50%%) scale(0);
+            left: 0%%;
             width: 14px;
             height: 14px;
-            background: #ffffff;
-            border: 2px solid #000000;
             border-radius: 50%%;
-            box-shadow: 0 0 8px rgba(255, 255, 255, 0.9);
-            transition: transform 0.15s ease;
+            background: #ffffff;
+            transform: translate(-50%%, 0) scale(0);
+            transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
             pointer-events: none;
+            box-shadow: 0 0 8px rgba(0, 0, 0, 0.8);
         }
         .yume-progress-container:hover .yume-progress-thumb,
         .yume-progress-container.scrubbing .yume-progress-thumb {
-            transform: translate(-50%%, -50%%) scale(1);
+            transform: translate(-50%%, 0) scale(1);
         }
 
         /* Hover Time Tooltip */
         #yume-hover-time {
             position: absolute;
-            bottom: 24px;
+            bottom: 22px;
+            left: 0%%;
             transform: translateX(-50%%);
             background: rgba(13, 13, 16, 0.9);
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.18);
             border-radius: 6px;
             padding: 3px 8px;
             font-size: 11px;
@@ -1444,8 +1455,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             transition: opacity 0.15s ease;
             white-space: nowrap;
         }
-        .yume-progress-container:hover #yume-hover-time,
-        .yume-progress-container.scrubbing #yume-hover-time {
+        .yume-progress-container:hover #yume-hover-time {
             opacity: 1;
         }
 
@@ -1454,44 +1464,41 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             display: flex;
             align-items: center;
             justify-content: space-between;
-            height: 38px;
+            gap: 12px;
         }
-        .yume-controls-left,
-        .yume-controls-right {
+        .yume-controls-left, .yume-controls-right {
             display: flex;
             align-items: center;
-            gap: 12px;
-            height: 100%%;
+            gap: 10px;
         }
 
         /* Control Buttons */
         .yume-btn {
-            background: none;
+            background: transparent;
             border: none;
-            color: #ffffff;
+            color: #e4e4e7;
             cursor: pointer;
-            padding: 6px;
             display: flex;
             align-items: center;
             justify-content: center;
+            padding: 6px;
+            border-radius: 8px;
             outline: none;
-            opacity: 0.92;
-            transition: transform 0.15s ease, opacity 0.15s ease;
+            transition: color 0.15s ease, transform 0.15s ease, background 0.15s ease;
         }
         .yume-btn:hover {
-            opacity: 1;
-            transform: scale(1.12);
+            color: #ffffff;
+            background: rgba(255, 255, 255, 0.1);
+            transform: scale(1.08);
         }
-        .yume-btn svg {
-            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6));
+        .yume-btn:active {
+            transform: scale(0.94);
         }
 
         /* Modern Touch-Friendly Volume Slider */
         .yume-vol-wrap {
             display: flex;
             align-items: center;
-            gap: 6px;
-            height: 100%%;
             position: relative;
         }
         .yume-vol-slider-wrap {
@@ -1676,16 +1683,23 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
 </head>
 <body>
     <div id="yume-player-container">
+        <!-- Main HTML5 Video Element -->
+        <video id="yume-video" playsinline preload="auto"></video>
+
+        <!-- Flash Effect for Screenshot -->
         <div id="yume-flash"></div>
-        <video id="yume-video" playsinline preload="auto" crossorigin="anonymous"></video>
-        
-        <!-- Subtitle Render Layer -->
-        <div id="yume-subtitle-display"><span class="yume-sub-text" id="yume-sub-content"></span></div>
 
-        <!-- Top Bar Mobile Time -->
-        <div id="yume-top-bar"><span class="yume-time-badge" id="yume-top-time">00:00 / 00:00</span></div>
+        <!-- Floating Top Time for Mobile -->
+        <div id="yume-top-bar">
+            <span class="yume-time-badge" id="yume-top-time">00:00 / 00:00</span>
+        </div>
 
-        <!-- Initial Start Screen Overlay -->
+        <!-- Bespoke Anime Subtitles Display -->
+        <div id="yume-subtitle-display">
+            <span class="yume-sub-text" id="yume-sub-content"></span>
+        </div>
+
+        <!-- Initial Start Screen (Clean OLED click to unmute & play) -->
         <div id="yume-start-screen" class="yume-center-overlay">
             <div class="yume-big-play-btn">
                 <svg viewBox="0 0 24 24"><path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86a1 1 0 0 0-1.5.86z"/></svg>
@@ -1702,6 +1716,10 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
         <!-- Floating Settings Popover Elevated Above Timeline -->
         <div id="yume-settings-popover" class="hidden">
             <div id="yume-menu-main" class="yume-menu-view">
+                <div class="yume-menu-item" id="yume-row-audio">
+                    <span>Audio Track</span>
+                    <span class="yume-item-val" id="yume-val-audio">Default <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg></span>
+                </div>
                 <div class="yume-menu-item" id="yume-row-quality">
                     <span>Quality</span>
                     <span class="yume-item-val" id="yume-val-quality">Auto <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg></span>
@@ -1714,6 +1732,14 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                     <span>Speed</span>
                     <span class="yume-item-val" id="yume-val-speed">Normal <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg></span>
                 </div>
+            </div>
+
+            <div id="yume-menu-audio" class="yume-menu-view hidden">
+                <div class="yume-menu-header" id="yume-back-audio">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                    <span>Audio Track</span>
+                </div>
+                <div id="yume-audio-list"></div>
             </div>
 
             <div id="yume-menu-quality" class="yume-menu-view hidden">
@@ -1762,7 +1788,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                         <svg id="yume-icon-pause" width="22" height="22" viewBox="0 0 24 24" fill="currentColor" style="display:none;"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
                     </button>
 
-                    <!-- Circular 10s Rewind Icon with '10' -->
+                    <!-- Rewind -->
                     <button class="yume-btn" id="yume-btn-rewind" title="Rewind 10s">
                         <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
                             <path d="M12.5 3a9 9 0 1 0 7.8 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -1771,7 +1797,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                         </svg>
                     </button>
 
-                    <!-- Circular 10s Forward Icon with '10' -->
+                    <!-- Forward -->
                     <button class="yume-btn" id="yume-btn-forward" title="Forward 10s">
                         <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
                             <path d="M11.5 3a9 9 0 1 1-7.8 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -1807,7 +1833,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                     </button>
 
                     <!-- Fullscreen -->
-                    <button class="yume-btn" id="yume-btn-fs" title="Fullscreen (F)">
+                    <button class="yume-btn" id="yume-btn-fs" title="Fullscreen">
                         <svg id="yume-icon-fs-enter" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg>
                         <svg id="yume-icon-fs-exit" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"></path></svg>
                     </button>
@@ -1819,55 +1845,42 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
     <script>
         const streamURL = '%s';
         const rawTracks = %s || [];
+        const preferredLang = '%s';
 
         const container = document.getElementById('yume-player-container');
         const video = document.getElementById('yume-video');
         const startScreen = document.getElementById('yume-start-screen');
         const pauseOverlay = document.getElementById('yume-pause-overlay');
-        const controlsBar = document.getElementById('yume-controls-bar');
-        const flashOverlay = document.getElementById('yume-flash');
-        
-        const btnPlay = document.getElementById('yume-btn-play');
-        const iconPlay = document.getElementById('yume-icon-play');
-        const iconPause = document.getElementById('yume-icon-pause');
-        
-        const btnRewind = document.getElementById('yume-btn-rewind');
-        const btnForward = document.getElementById('yume-btn-forward');
-        const btnSnap = document.getElementById('yume-btn-snap');
-        
-        const volWrapBox = document.getElementById('yume-vol-wrap-box');
-        const btnVol = document.getElementById('yume-btn-vol');
-        const iconVolHigh = document.getElementById('yume-icon-vol-high');
-        const iconVolMute = document.getElementById('yume-icon-vol-mute');
-        const volRange = document.getElementById('yume-vol-range');
-        
-        const timeDisplay = document.getElementById('yume-time-display');
-        const topTime = document.getElementById('yume-top-time');
-        
         const progWrap = document.getElementById('yume-progress-wrap');
         const progBuf = document.getElementById('yume-prog-buf');
         const progPlay = document.getElementById('yume-prog-play');
         const progThumb = document.getElementById('yume-prog-thumb');
         const hoverTime = document.getElementById('yume-hover-time');
-        
+
         const btnSettings = document.getElementById('yume-btn-settings');
         const settingsPopover = document.getElementById('yume-settings-popover');
-        
         const btnFs = document.getElementById('yume-btn-fs');
         const iconFsEnter = document.getElementById('yume-icon-fs-enter');
         const iconFsExit = document.getElementById('yume-icon-fs-exit');
 
+        const subDisplay = document.getElementById('yume-subtitle-display');
         const subContent = document.getElementById('yume-sub-content');
 
         let hlsInstance = null;
-        let activeCues = [];
         let isScrubbing = false;
         let hideControlsTimeout = null;
+        let activeCues = [];
 
-        function formatTime(sec) {
-            sec = Math.floor(sec || 0);
-            const m = Math.floor(sec / 60);
+        // Time Formatter (HH:MM:SS or MM:SS)
+        function formatTime(seconds) {
+            if (isNaN(seconds) || seconds < 0) return '00:00';
+            const sec = Math.floor(seconds);
+            const h = Math.floor(sec / 3600);
+            const m = Math.floor((sec %% 3600) / 60);
             const s = sec %% 60;
+            if (h > 0) {
+                return (h < 10 ? '0' + h : h) + ':' + (m < 10 ? '0' + m : m) + ':' + (s < 10 ? '0' + s : s);
+            }
             return (m < 10 ? '0' + m : m) + ':' + (s < 10 ? '0' + s : s);
         }
 
@@ -1886,6 +1899,11 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                     hlsInstance.currentLevel = hlsInstance.levels.length - 1;
                 }
                 initQualityMenu(hlsInstance);
+                initAudioMenu(hlsInstance, preferredLang);
+            });
+
+            hlsInstance.on(Hls.Events.AUDIO_TRACKS_UPDATED, function () {
+                initAudioMenu(hlsInstance, preferredLang);
             });
 
             hlsInstance.on(Hls.ErrorTypes.NETWORK_ERROR, () => hlsInstance.startLoad());
@@ -1904,15 +1922,15 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
         }
 
         video.addEventListener('play', () => {
-            iconPlay.style.display = 'none';
-            iconPause.style.display = 'block';
+            document.getElementById('yume-icon-play').style.display = 'none';
+            document.getElementById('yume-icon-pause').style.display = 'block';
             pauseOverlay.classList.add('hidden');
             resetHideControlsTimer();
         });
 
         video.addEventListener('pause', () => {
-            iconPlay.style.display = 'block';
-            iconPause.style.display = 'none';
+            document.getElementById('yume-icon-play').style.display = 'block';
+            document.getElementById('yume-icon-pause').style.display = 'none';
             if (!startScreen || startScreen.classList.contains('hidden')) {
                 pauseOverlay.classList.remove('hidden');
             }
@@ -1920,7 +1938,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             if (hideControlsTimeout) clearTimeout(hideControlsTimeout);
         });
 
-        btnPlay.addEventListener('click', togglePlay);
+        document.getElementById('yume-btn-play').addEventListener('click', togglePlay);
         pauseOverlay.addEventListener('click', togglePlay);
         video.addEventListener('click', (e) => {
             if (!settingsPopover.contains(e.target) && !e.target.closest('#yume-btn-settings')) {
@@ -1934,105 +1952,81 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             video.volume = 1.0;
             video.muted = false;
             video.play();
-            setTimeout(() => {
-                if (startScreen.parentNode) startScreen.parentNode.removeChild(startScreen);
-            }, 350);
+            setTimeout(() => { if (startScreen.parentNode) startScreen.parentNode.removeChild(startScreen); }, 350);
         });
 
-        // 10s Rewind & Forward
-        btnRewind.addEventListener('click', () => {
-            video.currentTime = Math.max(0, video.currentTime - 10);
-            resetHideControlsTimer();
-        });
-        btnForward.addEventListener('click', () => {
-            video.currentTime = Math.min(video.duration || 9999, video.currentTime + 10);
-            resetHideControlsTimer();
-        });
+        // Rewind & Forward
+        document.getElementById('yume-btn-rewind').addEventListener('click', () => { video.currentTime = Math.max(0, video.currentTime - 10); resetHideControlsTimer(); });
+        document.getElementById('yume-btn-forward').addEventListener('click', () => { video.currentTime = Math.min(video.duration || 9999, video.currentTime + 10); resetHideControlsTimer(); });
 
-        // Screenshot Feature
-        btnSnap.addEventListener('click', () => {
+        // Screenshot
+        document.getElementById('yume-btn-snap').addEventListener('click', () => {
             try {
-                if (!video.videoWidth || !video.videoHeight) return;
+                if (!video.videoWidth) return;
                 const canvas = document.createElement('canvas');
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                
-                // Visual Flash Animation
-                flashOverlay.classList.add('flash');
-                setTimeout(() => { flashOverlay.classList.remove('flash'); }, 150);
-
-                const dataURL = canvas.toDataURL('image/png');
-                const a = document.createElement('a');
-                a.href = dataURL;
-                a.download = 'YumeZone_Snapshot_' + Math.floor(video.currentTime) + 's.png';
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-            } catch (err) {
-                console.error('Screenshot error:', err);
-            }
+                canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+                canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+                document.getElementById('yume-flash').classList.add('flash');
+                setTimeout(() => document.getElementById('yume-flash').classList.remove('flash'), 150);
+                const a = document.createElement('a'); a.href = canvas.toDataURL('image/png'); a.download = 'YumeZone_Snapshot.png';
+                document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            } catch(e) {}
             resetHideControlsTimer();
         });
 
-        // Volume Controller with Instant Touch / Tap
+        // Volume Controller
+        const volWrapBox = document.getElementById('yume-vol-wrap-box');
+        const volRange = document.getElementById('yume-vol-range');
         function updateVolumeUI(val, isMuted) {
             volRange.value = isMuted ? 0 : val;
-            const pct = Math.round((isMuted ? 0 : val) * 100);
-            volRange.style.setProperty('--vol-pct', pct + '%%');
-            if (isMuted || val === 0) {
-                iconVolHigh.style.display = 'none';
-                iconVolMute.style.display = 'block';
-            } else {
-                iconVolHigh.style.display = 'block';
-                iconVolMute.style.display = 'none';
-            }
+            volRange.style.setProperty('--vol-pct', (isMuted ? 0 : val) * 100 + '%%');
+            document.getElementById('yume-icon-vol-high').style.display = (isMuted || val == 0) ? 'none' : 'block';
+            document.getElementById('yume-icon-vol-mute').style.display = (isMuted || val == 0) ? 'block' : 'none';
         }
-
-        volRange.addEventListener('input', (e) => {
-            const val = parseFloat(e.target.value);
-            video.volume = val;
-            video.muted = (val === 0);
-            updateVolumeUI(val, video.muted);
-        });
-
-        btnVol.addEventListener('click', (e) => {
+        volRange.addEventListener('input', (e) => { video.volume = parseFloat(e.target.value); video.muted = (video.volume === 0); updateVolumeUI(video.volume, video.muted); });
+        document.getElementById('yume-btn-vol').addEventListener('click', (e) => {
             e.stopPropagation();
-            volWrapBox.classList.toggle('active');
             video.muted = !video.muted;
             updateVolumeUI(video.volume, video.muted);
         });
 
-        // Buttery Smooth Timeline Scrubbing
+        // Timeline Progress Tracking & Time Code Updates
+        video.addEventListener('timeupdate', () => {
+            if (!isScrubbing && video.duration) {
+                const pct = (video.currentTime / video.duration) * 100;
+                updateTimelineUI(pct);
+            }
+            const cur = formatTime(video.currentTime);
+            const dur = formatTime(video.duration || 0);
+            document.getElementById('yume-time-display').textContent = cur + ' / ' + dur;
+            document.getElementById('yume-top-time').textContent = cur + ' / ' + dur;
+            updateSubtitles();
+            try {
+                window.parent.postMessage({ type: 'time', currentTime: video.currentTime, duration: video.duration || 0 }, '*');
+            } catch(e) {}
+        });
+
+        video.addEventListener('ended', () => { try { window.parent.postMessage({ type: 'complete' }, '*'); } catch(e) {} });
+
+        video.addEventListener('progress', () => {
+            if (video.duration && video.buffered.length > 0) {
+                const bufEnd = video.buffered.end(video.buffered.length - 1);
+                const pct = (bufEnd / video.duration) * 100;
+                progBuf.style.width = pct + '%%';
+            }
+        });
+
         function updateTimelineUI(pct) {
             progPlay.style.width = pct + '%%';
             progThumb.style.left = pct + '%%';
         }
 
-        video.addEventListener('timeupdate', () => {
-            if (!isScrubbing && video.duration) {
-                const pct = (video.currentTime / video.duration) * 100;
-                updateTimelineUI(pct);
-                
-                const timeStr = formatTime(video.currentTime) + ' / ' + formatTime(video.duration);
-                timeDisplay.textContent = timeStr;
-                topTime.textContent = timeStr;
-            }
-            updateSubtitles();
-        });
-
-        video.addEventListener('progress', () => {
-            if (video.buffered.length > 0 && video.duration) {
-                const bufEnd = video.buffered.end(video.buffered.length - 1);
-                progBuf.style.width = (bufEnd / video.duration) * 100 + '%%';
-            }
-        });
-
+        // Seeking & Scrubbing Gestures
         function getScrubPos(e) {
             const rect = progWrap.getBoundingClientRect();
             const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-            return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+            const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
+            return x / rect.width;
         }
 
         function onScrubStart(e) {
@@ -2040,10 +2034,8 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             progWrap.classList.add('scrubbing');
             const pos = getScrubPos(e);
             updateTimelineUI(pos * 100);
-            if (video.duration) {
-                hoverTime.textContent = formatTime(pos * video.duration);
-                hoverTime.style.left = (pos * 100) + '%%';
-            }
+            hoverTime.textContent = formatTime(pos * (video.duration || 0));
+            hoverTime.style.left = (pos * 100) + '%%';
             window.addEventListener('mousemove', onScrubMove);
             window.addEventListener('touchmove', onScrubMove);
             window.addEventListener('mouseup', onScrubEnd);
@@ -2055,10 +2047,8 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             const pos = getScrubPos(e);
             requestAnimationFrame(() => {
                 updateTimelineUI(pos * 100);
-                if (video.duration) {
-                    hoverTime.textContent = formatTime(pos * video.duration);
-                    hoverTime.style.left = (pos * 100) + '%%';
-                }
+                hoverTime.textContent = formatTime(pos * (video.duration || 0));
+                hoverTime.style.left = (pos * 100) + '%%';
             });
         }
 
@@ -2067,9 +2057,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             isScrubbing = false;
             progWrap.classList.remove('scrubbing');
             const pos = getScrubPos(e);
-            if (video.duration) {
-                video.currentTime = pos * video.duration;
-            }
+            if (video.duration) video.currentTime = pos * video.duration;
             window.removeEventListener('mousemove', onScrubMove);
             window.removeEventListener('touchmove', onScrubMove);
             window.removeEventListener('mouseup', onScrubEnd);
@@ -2082,52 +2070,28 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             if (isScrubbing) return;
             const pos = getScrubPos(e);
             hoverTime.style.left = (pos * 100) + '%%';
-            if (video.duration) {
-                hoverTime.textContent = formatTime(pos * video.duration);
-            }
+            hoverTime.textContent = formatTime(pos * (video.duration || 0));
         });
 
-        // Landscape Mobile Fullscreen Controller
+        // Fullscreen
         async function toggleFullscreen() {
-            if (!document.fullscreenElement && !document.webkitFullscreenElement) {
-                if (container.requestFullscreen) {
-                    await container.requestFullscreen();
-                } else if (container.webkitRequestFullscreen) {
-                    await container.webkitRequestFullscreen();
-                } else if (video.webkitEnterFullscreen) {
-                    video.webkitEnterFullscreen();
-                    return;
-                }
-
-                // Lock orientation to landscape for mobile
-                if (screen.orientation && screen.orientation.lock) {
-                    try {
-                        await screen.orientation.lock('landscape');
-                    } catch (e) {}
-                }
+            const isFs = document.fullscreenElement || document.webkitFullscreenElement;
+            if (!isFs) {
+                if (container.requestFullscreen) await container.requestFullscreen();
+                else if (container.webkitRequestFullscreen) await container.webkitRequestFullscreen();
             } else {
-                if (screen.orientation && screen.orientation.unlock) {
-                    try { screen.orientation.unlock(); } catch (e) {}
-                }
-                if (document.exitFullscreen) {
-                    await document.exitFullscreen();
-                } else if (document.webkitExitFullscreen) {
-                    await document.webkitExitFullscreen();
-                }
+                if (document.exitFullscreen) await document.exitFullscreen();
+                else if (document.webkitExitFullscreen) await document.webkitExitFullscreen();
             }
         }
-
         btnFs.addEventListener('click', toggleFullscreen);
-
-        function onFsChange() {
+        document.addEventListener('fullscreenchange', () => {
             const isFs = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
             iconFsEnter.style.display = isFs ? 'none' : 'block';
             iconFsExit.style.display = isFs ? 'block' : 'none';
-        }
-        document.addEventListener('fullscreenchange', onFsChange);
-        document.addEventListener('webkitfullscreenchange', onFsChange);
+        });
 
-        // Auto-Hide Controls on Inactivity
+        // Auto-Hide Controls
         function resetHideControlsTimer() {
             container.classList.remove('controls-hidden');
             if (hideControlsTimeout) clearTimeout(hideControlsTimeout);
@@ -2138,12 +2102,12 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                 }, 2500);
             }
         }
-
         container.addEventListener('mousemove', resetHideControlsTimer);
         container.addEventListener('touchstart', resetHideControlsTimer);
 
         // Settings Popover Controller
         const menuMain = document.getElementById('yume-menu-main');
+        const menuAudio = document.getElementById('yume-menu-audio');
         const menuQuality = document.getElementById('yume-menu-quality');
         const menuSubtitles = document.getElementById('yume-menu-subtitles');
         const menuSpeed = document.getElementById('yume-menu-speed');
@@ -2158,50 +2122,96 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
         }
 
         function showMenu(name) {
-            [menuMain, menuQuality, menuSubtitles, menuSpeed].forEach(m => m && m.classList.add('hidden'));
+            [menuMain, menuAudio, menuQuality, menuSubtitles, menuSpeed].forEach(m => m && m.classList.add('hidden'));
             if (name === 'main' && menuMain) menuMain.classList.remove('hidden');
+            if (name === 'audio' && menuAudio) menuAudio.classList.remove('hidden');
             if (name === 'quality' && menuQuality) menuQuality.classList.remove('hidden');
             if (name === 'subtitles' && menuSubtitles) menuSubtitles.classList.remove('hidden');
             if (name === 'speed' && menuSpeed) menuSpeed.classList.remove('hidden');
         }
 
-        btnSettings.addEventListener('click', (e) => {
-            e.stopPropagation();
-            toggleSettings();
-        });
+        btnSettings.addEventListener('click', (e) => { e.stopPropagation(); toggleSettings(); });
 
+        document.getElementById('yume-row-audio').addEventListener('click', () => showMenu('audio'));
         document.getElementById('yume-row-quality').addEventListener('click', () => showMenu('quality'));
         document.getElementById('yume-row-subtitles').addEventListener('click', () => showMenu('subtitles'));
         document.getElementById('yume-row-speed').addEventListener('click', () => showMenu('speed'));
 
+        document.getElementById('yume-back-audio').addEventListener('click', () => showMenu('main'));
         document.getElementById('yume-back-quality').addEventListener('click', () => showMenu('main'));
         document.getElementById('yume-back-subtitles').addEventListener('click', () => showMenu('main'));
         document.getElementById('yume-back-speed').addEventListener('click', () => showMenu('main'));
 
         document.addEventListener('click', (e) => {
-            if (!settingsPopover.contains(e.target) && !e.target.closest('#yume-btn-settings')) {
-                settingsPopover.classList.add('hidden');
-            }
-            if (!volWrapBox.contains(e.target)) {
-                volWrapBox.classList.remove('active');
-            }
+            if (!settingsPopover.contains(e.target) && !e.target.closest('#yume-btn-settings')) settingsPopover.classList.add('hidden');
+            if (!volWrapBox.contains(e.target)) volWrapBox.classList.remove('active');
         });
+
+        // Audio Track Menu Setup with Preferred Language (e.g. Hindi Dub) Auto-Selection
+        function initAudioMenu(hls, pref) {
+            const list = document.getElementById('yume-audio-list');
+            const rowAudio = document.getElementById('yume-row-audio');
+            if (!list || !hls || !hls.audioTracks) return;
+            list.innerHTML = '';
+
+            const tracks = hls.audioTracks;
+            if (tracks.length <= 1) {
+                if (rowAudio) rowAudio.style.display = 'none';
+                return;
+            }
+            if (rowAudio) rowAudio.style.display = 'flex';
+
+            let selectedIdx = hls.audioTrack >= 0 ? hls.audioTrack : 0;
+            const targetLang = (pref || 'hin').toLowerCase();
+
+            // Auto-select preferred language on manifest load if not already manually set
+            if (!window.__userSelectedAudio) {
+                for (let i = 0; i < tracks.length; i++) {
+                    const tName = (tracks[i].name || '').toLowerCase();
+                    const tLang = (tracks[i].lang || '').toLowerCase();
+                    if (targetLang === 'hin' && (tName.includes('hin') || tLang.includes('hin') || tName.includes('hindi'))) {
+                        selectedIdx = i;
+                        break;
+                    } else if (targetLang === 'eng' && (tName.includes('eng') || tLang.includes('eng') || tName.includes('english'))) {
+                        selectedIdx = i;
+                        break;
+                    } else if (targetLang === 'jpn' && (tName.includes('jpn') || tLang.includes('jpn') || tName.includes('jap'))) {
+                        selectedIdx = i;
+                        break;
+                    }
+                }
+                try { hls.audioTrack = selectedIdx; } catch(e) {}
+            }
+
+            const currentLabel = tracks[selectedIdx]?.name || ('Audio ' + (selectedIdx + 1));
+            document.getElementById('yume-val-audio').innerHTML = currentLabel + ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+
+            tracks.forEach((t, idx) => {
+                const div = document.createElement('div');
+                div.className = 'yume-option' + (idx === selectedIdx ? ' active' : '');
+                div.textContent = t.name || ('Track ' + (idx + 1));
+                div.onclick = () => {
+                    window.__userSelectedAudio = true;
+                    hls.audioTrack = idx;
+                    list.querySelectorAll('.yume-option').forEach(el => el.classList.remove('active'));
+                    div.classList.add('active');
+                    document.getElementById('yume-val-audio').innerHTML = (t.name || ('Track ' + (idx + 1))) + ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+                    showMenu('main');
+                };
+                list.appendChild(div);
+            });
+        }
 
         // Quality Menu Setup
         function initQualityMenu(hls) {
             const list = document.getElementById('yume-quality-list');
             if (!list || !hls || !hls.levels) return;
             list.innerHTML = '';
-            
             const levels = hls.levels;
             const highestLabel = (levels[levels.length - 1]?.height || '1080') + 'P';
             document.getElementById('yume-val-quality').innerHTML = highestLabel + ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
-
             const options = [{ label: 'Auto (' + highestLabel + ')', level: -1 }];
-            for (let i = levels.length - 1; i >= 0; i--) {
-                options.push({ label: (levels[i].height || 'Quality ' + (i+1)) + 'P', level: i });
-            }
-
+            for (let i = levels.length - 1; i >= 0; i--) options.push({ label: (levels[i].height || 'Quality ' + (i+1)) + 'P', level: i });
             options.forEach((opt, idx) => {
                 const div = document.createElement('div');
                 div.className = 'yume-option' + (idx === 1 ? ' active' : '');
@@ -2217,96 +2227,50 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
             });
         }
 
-        // Subtitles Parser & Menu Setup
+        // Subtitles Parser
         function parseVTT(text) {
-            const cues = [];
-            const lines = text.split(/\r?\n/);
-            let i = 0;
-            while (i < lines.length) {
-                const line = lines[i].trim();
-                if (line.includes('-->')) {
-                    const parts = line.split('-->');
+            const cues = []; const lines = text.split(/\r?\n/);
+            for (let i = 0; i < lines.length; i++) {
+                if (lines[i].includes('-->')) {
+                    const parts = lines[i].split('-->');
                     const start = parseVTTTime(parts[0].trim());
                     const end = parseVTTTime(parts[1].trim().split(' ')[0]);
-                    let content = '';
-                    i++;
-                    while (i < lines.length && lines[i].trim() !== '') {
-                        content += (content ? '<br>' : '') + lines[i].trim();
-                        i++;
-                    }
+                    let content = ''; i++;
+                    while (i < lines.length && lines[i].trim() !== '') { content += (content ? '<br>' : '') + lines[i].trim(); i++; }
                     cues.push({ start, end, text: content });
                 }
-                i++;
             }
             return cues;
         }
-
         function parseVTTTime(str) {
             const parts = str.split(':');
-            let s = 0;
-            if (parts.length === 3) {
-                s = parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
-            } else if (parts.length === 2) {
-                s = parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
-            }
-            return s;
+            return parts.length === 3 ? parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]) : parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
         }
-
-        function loadSubtitleTrack(url) {
-            if (!url) {
-                activeCues = [];
-                subContent.innerHTML = '';
-                return;
-            }
-            fetch(url)
-                .then(r => r.text())
-                .then(vtt => {
-                    activeCues = parseVTT(vtt);
-                })
-                .catch(() => { activeCues = []; });
-        }
-
         function updateSubtitles() {
-            if (!activeCues.length) {
-                subContent.innerHTML = '';
-                return;
-            }
-            const t = video.currentTime;
-            const currentCue = activeCues.find(c => t >= c.start && t <= c.end);
+            if (!activeCues.length) { subContent.innerHTML = ''; return; }
+            const currentCue = activeCues.find(c => video.currentTime >= c.start && video.currentTime <= c.end);
             subContent.innerHTML = currentCue ? currentCue.text : '';
         }
-
         function initSubtitlesMenu() {
             const list = document.getElementById('yume-subtitles-list');
             if (!list) return;
-            list.innerHTML = '';
-
-            // 1. Off option (Active by default as requested)
             const offDiv = document.createElement('div');
             offDiv.className = 'yume-option active';
             offDiv.textContent = 'Off';
             offDiv.onclick = () => {
-                loadSubtitleTrack('');
+                activeCues = [];
                 list.querySelectorAll('.yume-option').forEach(el => el.classList.remove('active'));
                 offDiv.classList.add('active');
                 document.getElementById('yume-val-subtitles').innerHTML = 'Off <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
                 showMenu('main');
             };
             list.appendChild(offDiv);
-
-            // 2. Tracks options (English prioritized as default candidate when enabled)
-            const sortedTracks = [...rawTracks].sort((a, b) => {
-                const aEng = (a.label || '').toLowerCase().includes('eng') ? -1 : 1;
-                const bEng = (b.label || '').toLowerCase().includes('eng') ? -1 : 1;
-                return aEng - bEng;
-            });
-
-            sortedTracks.forEach((t) => {
+            rawTracks.forEach(t => {
                 const div = document.createElement('div');
                 div.className = 'yume-option';
                 div.textContent = t.label || 'English';
                 div.onclick = () => {
-                    loadSubtitleTrack(t.file);
+                    fetch(t.file).then(r => r.text()).then(vtt => activeCues = parseVTT(vtt)).catch(() => activeCues = []);
                     list.querySelectorAll('.yume-option').forEach(el => el.classList.remove('active'));
                     div.classList.add('active');
                     document.getElementById('yume-val-subtitles').innerHTML = (t.label || 'English') + ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
@@ -2314,68 +2278,29 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack) stri
                 };
                 list.appendChild(div);
             });
-
-            // By default, subtitles are OFF on start
-            loadSubtitleTrack('');
         }
-
-        // Speed Menu Setup
         function initSpeedMenu() {
             const list = document.getElementById('yume-speed-list');
             if (!list) return;
-            list.innerHTML = '';
-            const speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
-            speeds.forEach(s => {
+            [0.5, 0.75, 1.0, 1.25, 1.5, 2.0].forEach(s => {
                 const div = document.createElement('div');
                 div.className = 'yume-option' + (s === 1.0 ? ' active' : '');
-                div.textContent = s === 1.0 ? 'Normal (1.0x)' : s + 'x';
+                div.textContent = s === 1.0 ? 'Normal' : s + 'x';
                 div.onclick = () => {
                     video.playbackRate = s;
                     list.querySelectorAll('.yume-option').forEach(el => el.classList.remove('active'));
                     div.classList.add('active');
-                    document.getElementById('yume-val-speed').innerHTML = (s === 1.0 ? 'Normal' : s + 'x') + ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+                    document.getElementById('yume-val-speed').innerHTML = div.textContent + ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
                     showMenu('main');
                 };
                 list.appendChild(div);
             });
         }
-
-        // Keyboard Shortcuts
-        document.addEventListener('keydown', (e) => {
-            if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
-            if (e.key === ' ' || e.key.toLowerCase() === 'k') {
-                e.preventDefault();
-                togglePlay();
-            } else if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'j') {
-                e.preventDefault();
-                video.currentTime = Math.max(0, video.currentTime - 10);
-            } else if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'l') {
-                e.preventDefault();
-                video.currentTime = Math.min(video.duration || 9999, video.currentTime + 10);
-            } else if (e.key === 'ArrowUp') {
-                e.preventDefault();
-                video.volume = Math.min(1, video.volume + 0.1);
-                video.muted = false;
-                updateVolumeUI(video.volume, video.muted);
-            } else if (e.key === 'ArrowDown') {
-                e.preventDefault();
-                video.volume = Math.max(0, video.volume - 0.1);
-                updateVolumeUI(video.volume, video.muted);
-            } else if (e.key.toLowerCase() === 'm') {
-                video.muted = !video.muted;
-                updateVolumeUI(video.volume, video.muted);
-            } else if (e.key.toLowerCase() === 'f') {
-                toggleFullscreen();
-            }
-            resetHideControlsTimer();
-        });
-
-        // Initialize
         initSubtitlesMenu();
         initSpeedMenu();
     </script>
 </body>
-</html>`, streamURL, string(tracksJSON))
+</html>`, streamURL, string(tracksJSON), preferredLang)
 }
 
 
@@ -2664,7 +2589,11 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 		})
 		if err == nil {
 			proxiedStreamURL := "/p/" + streamToken
-			html := renderCleanArtplayer(proxiedStreamURL, proxiedTracks)
+			prefLang := "sub"
+			if strings.HasSuffix(targetPath, "/dub") {
+				prefLang = "dub"
+			}
+			html := renderCleanArtplayer(proxiedStreamURL, proxiedTracks, prefLang)
 
 			embedCache.Store(cacheKey, EmbedCacheEntry{
 				HTML:      html,
@@ -2768,6 +2697,592 @@ func handleMegaplayLib(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AnimeSalt Server 1 (as-cdn26) Scraping, Hindi Dub Extraction & Custom Player
+// ─────────────────────────────────────────────────────────────────────────────
+
+type AnimeSaltSourcesResponse struct {
+	Hls          bool            `json:"hls"`
+	VideoSource  string          `json:"videoSource"`
+	VideoSources []struct {
+		File  string `json:"file"`
+		Label string `json:"label"`
+		Type  string `json:"type"`
+	} `json:"videoSources"`
+	VideoImage string          `json:"videoImage"`
+	Tracks     []SubtitleTrack `json:"tracks"`
+}
+
+var (
+	animeSaltSlugCache sync.Map
+	animeTitleCache    sync.Map
+	animeSaltCache     sync.Map
+)
+
+func resolveAnimeTitle(idNum int) string {
+	if idNum <= 0 {
+		return ""
+	}
+	if cached, ok := animeTitleCache.Load(idNum); ok {
+		return cached.(string)
+	}
+
+	// 1. AniZip API
+	reqURL := fmt.Sprintf("https://api.ani.zip/mappings?anilist_id=%d", idNum)
+	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+	if err == nil {
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+		client := &http.Client{Timeout: 3 * time.Second}
+		resp, err := client.Do(req)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			var data struct {
+				Titles struct {
+					En        string `json:"en"`
+					Rj        string `json:"rj"`
+					Canonical string `json:"canonical"`
+				} `json:"titles"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&data); err == nil {
+				title := data.Titles.En
+				if title == "" {
+					title = data.Titles.Rj
+				}
+				if title == "" {
+					title = data.Titles.Canonical
+				}
+				if title != "" {
+					resp.Body.Close()
+					animeTitleCache.Store(idNum, title)
+					return title
+				}
+			}
+			resp.Body.Close()
+		}
+	}
+
+	// 2. AniList GraphQL API
+	graphqlQuery := `query ($id: Int) { Media (id: $id, type: ANIME) { title { english romaji userPreferred } } }`
+	bodyBytes, _ := json.Marshal(map[string]interface{}{
+		"query": graphqlQuery,
+		"variables": map[string]interface{}{
+			"id": idNum,
+		},
+	})
+	gqlReq, err := http.NewRequest(http.MethodPost, "https://graphql.anilist.co", bytes.NewBuffer(bodyBytes))
+	if err == nil {
+		gqlReq.Header.Set("Content-Type", "application/json")
+		gqlReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+		client := &http.Client{Timeout: 3 * time.Second}
+		resp, err := client.Do(gqlReq)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			var gqlRes struct {
+				Data struct {
+					Media struct {
+						Title struct {
+							English       string `json:"english"`
+							Romaji        string `json:"romaji"`
+							UserPreferred string `json:"userPreferred"`
+						} `json:"title"`
+					} `json:"Media"`
+				} `json:"data"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&gqlRes); err == nil {
+				t := gqlRes.Data.Media.Title.English
+				if t == "" {
+					t = gqlRes.Data.Media.Title.Romaji
+				}
+				if t == "" {
+					t = gqlRes.Data.Media.Title.UserPreferred
+				}
+				if t != "" {
+					resp.Body.Close()
+					animeTitleCache.Store(idNum, t)
+					return t
+				}
+			}
+			resp.Body.Close()
+		}
+	}
+
+	return ""
+}
+
+func resolveAnimeSaltSlug(ctx context.Context, anilistID int, malID int, manualSlug string) (string, error) {
+	if manualSlug != "" {
+		return manualSlug, nil
+	}
+	cacheKey := fmt.Sprintf("ani:%d_mal:%d", anilistID, malID)
+	if cached, ok := animeSaltSlugCache.Load(cacheKey); ok {
+		return cached.(string), nil
+	}
+
+	title := ""
+	if anilistID > 0 {
+		title = resolveAnimeTitle(anilistID)
+	}
+	if title == "" && malID > 0 {
+		reqURL := fmt.Sprintf("https://api.jikan.moe/v4/anime/%d", malID)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+		if err == nil {
+			req.Header.Set("User-Agent", "Mozilla/5.0")
+			client := &http.Client{Timeout: 3 * time.Second}
+			resp, err := client.Do(req)
+			if err == nil && resp.StatusCode == http.StatusOK {
+				var jikanData struct {
+					Data struct {
+						Title        string `json:"title"`
+						TitleEnglish string `json:"title_english"`
+					} `json:"data"`
+				}
+				if err := json.NewDecoder(resp.Body).Decode(&jikanData); err == nil {
+					title = jikanData.Data.TitleEnglish
+					if title == "" {
+						title = jikanData.Data.Title
+					}
+				}
+				resp.Body.Close()
+			}
+		}
+	}
+
+	if title == "" {
+		return "", fmt.Errorf("could not resolve anime title")
+	}
+
+	cleanQuery := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == ' ' {
+			return r
+		}
+		return ' '
+	}, title)
+	cleanQuery = strings.Join(strings.Fields(cleanQuery), "+")
+
+	searchURL := "https://animesalt.cx/?s=" + cleanQuery
+	searchReq, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
+	if err != nil {
+		return "", err
+	}
+	searchReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	searchReq.Header.Set("Referer", "https://animesalt.cx/")
+
+	resp, err := httpClient.Do(searchReq)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	html := string(bodyBytes)
+	slugRegex := regexp.MustCompile(`https?://animesalt\.cx/series/([a-zA-Z0-9\-]+)/`)
+	matches := slugRegex.FindStringSubmatch(html)
+	if len(matches) > 1 {
+		slug := matches[1]
+		animeSaltSlugCache.Store(cacheKey, slug)
+		return slug, nil
+	}
+
+	return "", fmt.Errorf("no matching series found on AnimeSalt for: %s", title)
+}
+
+func extractAnimeSaltHLS(ctx context.Context, slug string, season int, ep int, hashDirect string) (string, []SubtitleTrack, string, error) {
+	domain := "as-cdn26.top"
+	hash := hashDirect
+	episodeReferer := ""
+
+	if slug != "" {
+		if season <= 0 {
+			season = 1
+		}
+		if ep <= 0 {
+			ep = 1
+		}
+		episodeReferer = fmt.Sprintf("https://animesalt.cx/episode/%s-%dx%d/", slug, season, ep)
+	}
+
+	if hash == "" {
+		if slug == "" {
+			return "", nil, "", fmt.Errorf("missing slug or hash")
+		}
+
+		epReq, err := http.NewRequestWithContext(ctx, http.MethodGet, episodeReferer, nil)
+		if err != nil {
+			return "", nil, "", err
+		}
+		epReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+		epReq.Header.Set("Referer", fmt.Sprintf("https://animesalt.cx/series/%s/", slug))
+
+		epResp, err := httpClient.Do(epReq)
+		if err != nil {
+			return "", nil, "", err
+		}
+		defer epResp.Body.Close()
+
+		if epResp.StatusCode != http.StatusOK {
+			return "", nil, "", fmt.Errorf("animesalt episode page returned %d", epResp.StatusCode)
+		}
+
+		bodyBytes, err := io.ReadAll(epResp.Body)
+		if err != nil {
+			return "", nil, "", err
+		}
+		html := string(bodyBytes)
+
+		frameRegex := regexp.MustCompile(`https?://(as-cdn\d*\.top)/video/([a-zA-Z0-9]+)`)
+		match := frameRegex.FindStringSubmatch(html)
+		if len(match) > 2 {
+			domain = match[1]
+			hash = match[2]
+		} else {
+			simpleHashRegex := regexp.MustCompile(`/video/([a-f0-9]{24,64})`)
+			simpleMatch := simpleHashRegex.FindStringSubmatch(html)
+			if len(simpleMatch) > 1 {
+				hash = simpleMatch[1]
+			} else {
+				return "", nil, "", fmt.Errorf("could not locate Server 1 iframe on episode page")
+			}
+		}
+	}
+
+	if episodeReferer == "" {
+		episodeReferer = fmt.Sprintf("https://%s/video/%s", domain, hash)
+	}
+
+	apiURL := fmt.Sprintf("https://%s/player/index.php?data=%s&do=getVideo", domain, hash)
+	formData := url.Values{}
+	formData.Set("hash", hash)
+	formData.Set("r", episodeReferer)
+
+	apiReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, strings.NewReader(formData.Encode()))
+	if err != nil {
+		return "", nil, "", err
+	}
+	apiReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	apiReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	apiReq.Header.Set("Referer", fmt.Sprintf("https://%s/video/%s", domain, hash))
+	apiReq.Header.Set("Origin", fmt.Sprintf("https://%s", domain))
+	apiReq.Header.Set("X-Requested-With", "XMLHttpRequest")
+
+	apiResp, err := httpClient.Do(apiReq)
+	if err != nil {
+		return "", nil, "", err
+	}
+	defer apiResp.Body.Close()
+
+	if apiResp.StatusCode != http.StatusOK {
+		return "", nil, "", fmt.Errorf("getVideo API returned %d", apiResp.StatusCode)
+	}
+
+	bodyBytes, err := io.ReadAll(apiResp.Body)
+	if err != nil {
+		return "", nil, "", err
+	}
+
+	var res AnimeSaltSourcesResponse
+	if err := json.Unmarshal(bodyBytes, &res); err != nil {
+		videoPageURL := fmt.Sprintf("https://%s/video/%s", domain, hash)
+		vReq, vErr := http.NewRequestWithContext(ctx, http.MethodGet, videoPageURL, nil)
+		if vErr == nil {
+			vReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+			vReq.Header.Set("Referer", episodeReferer)
+			vResp, vErr := httpClient.Do(vReq)
+			if vErr == nil && vResp.StatusCode == http.StatusOK {
+				vBytes, _ := io.ReadAll(vResp.Body)
+				vResp.Body.Close()
+				m3u8Regex := regexp.MustCompile(`https?://[^\s"'<>]+\.m3u8[^\s"'<>]*`)
+				m3u8Match := m3u8Regex.FindString(string(vBytes))
+				if m3u8Match != "" {
+					return m3u8Match, nil, hash, nil
+				}
+			}
+		}
+		return "", nil, "", fmt.Errorf("invalid json from getVideo API: %s", string(bodyBytes))
+	}
+
+	streamFile := res.VideoSource
+	if streamFile == "" && len(res.VideoSources) > 0 {
+		streamFile = res.VideoSources[0].File
+	}
+
+	if streamFile == "" {
+		return "", nil, "", fmt.Errorf("empty video stream from AnimeSalt Server 1")
+	}
+
+	return streamFile, res.Tracks, hash, nil
+}
+
+func handleAnimeSaltEmbed(w http.ResponseWriter, r *http.Request) {
+	setCORS(w)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	if !isEmbedAllowed(r) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Security-Policy", "frame-ancestors 'none';")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte("Embedding not allowed: domain is not authorized to embed this player."))
+		return
+	}
+
+	rawPath := r.URL.Path
+	rawPath = strings.TrimPrefix(rawPath, "/embed/animesalt/")
+	rawPath = strings.TrimPrefix(rawPath, "/embed/animesalt")
+	rawPath = strings.TrimPrefix(rawPath, "/embed/as-cdn/")
+	rawPath = strings.TrimPrefix(rawPath, "/embed/as-cdn")
+	rawPath = strings.TrimPrefix(rawPath, "/")
+
+	parts := strings.Split(rawPath, "/")
+	slug := ""
+	season := 1
+	ep := 1
+	lang := "hin"
+	hash := ""
+
+	if len(parts) >= 3 && parts[0] == "ani" {
+		idNum, _ := strconv.Atoi(parts[1])
+		ep, _ = strconv.Atoi(parts[2])
+		if len(parts) > 3 && parts[3] != "" {
+			lang = parts[3]
+		}
+		var err error
+		slug, err = resolveAnimeSaltSlug(r.Context(), idNum, 0, "")
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"Failed to resolve AnimeSalt slug: %s"}`, err.Error()), http.StatusNotFound)
+			return
+		}
+	} else if len(parts) >= 3 && parts[0] == "mal" {
+		idNum, _ := strconv.Atoi(parts[1])
+		ep, _ = strconv.Atoi(parts[2])
+		if len(parts) > 3 && parts[3] != "" {
+			lang = parts[3]
+		}
+		var err error
+		slug, err = resolveAnimeSaltSlug(r.Context(), 0, idNum, "")
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"Failed to resolve AnimeSalt slug: %s"}`, err.Error()), http.StatusNotFound)
+			return
+		}
+	} else if len(parts) >= 1 && (parts[0] == "video" || len(parts[0]) >= 24) {
+		if parts[0] == "video" && len(parts) > 1 {
+			hash = parts[1]
+		} else {
+			hash = parts[0]
+		}
+		if qLang := r.URL.Query().Get("lang"); qLang != "" {
+			lang = qLang
+		}
+	} else if len(parts) >= 1 {
+		epPart := parts[0]
+		if parts[0] == "episode" && len(parts) > 1 {
+			epPart = parts[1]
+		}
+		epRegex := regexp.MustCompile(`^(.*?)-(\d+)x(\d+)$`)
+		if m := epRegex.FindStringSubmatch(epPart); len(m) > 3 {
+			slug = m[1]
+			season, _ = strconv.Atoi(m[2])
+			ep, _ = strconv.Atoi(m[3])
+		} else {
+			slug = epPart
+		}
+		if qLang := r.URL.Query().Get("lang"); qLang != "" {
+			lang = qLang
+		}
+	}
+
+	frameAncestors := buildFrameAncestorsCSP(r.Host)
+	cspHeader := fmt.Sprintf("default-src * 'unsafe-inline' 'unsafe-eval' blob: data:; frame-ancestors %s;", frameAncestors)
+
+	cacheKey := fmt.Sprintf("animesalt:clean:%s:%d:%d:%s:%s", slug, season, ep, hash, lang)
+	if val, ok := animeSaltCache.Load(cacheKey); ok {
+		entry := val.(EmbedCacheEntry)
+		if time.Now().Before(entry.ExpiresAt) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
+			w.Header().Set("Content-Security-Policy", cspHeader)
+			w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
+			w.Header().Del("X-Frame-Options")
+			w.Header().Del("Cross-Origin-Opener-Policy")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(entry.HTML))
+			return
+		}
+	}
+
+	streamFile, tracks, _, err := extractAnimeSaltHLS(r.Context(), slug, season, ep, hash)
+	if err == nil && streamFile != "" {
+		var proxiedTracks []SubtitleTrack
+		for _, t := range tracks {
+			if t.File != "" {
+				subToken, subErr := encryptToken(&TokenPayload{
+					URL: t.File,
+					Ref: "https://animesalt.cx/",
+					Exp: time.Now().Add(6 * time.Hour).Unix(),
+				})
+				if subErr == nil {
+					t.File = "/p/" + subToken
+				}
+			}
+			proxiedTracks = append(proxiedTracks, t)
+		}
+
+		streamToken, err := encryptToken(&TokenPayload{
+			URL: streamFile,
+			Ref: "https://animesalt.cx/",
+			Exp: time.Now().Add(6 * time.Hour).Unix(),
+		})
+		if err == nil {
+			proxiedStreamURL := "/p/" + streamToken
+			html := renderCleanArtplayer(proxiedStreamURL, proxiedTracks, lang)
+
+			animeSaltCache.Store(cacheKey, EmbedCacheEntry{
+				HTML:      html,
+				ExpiresAt: time.Now().Add(2 * time.Hour),
+			})
+
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
+			w.Header().Set("Content-Security-Policy", cspHeader)
+			w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
+			w.Header().Del("X-Frame-Options")
+			w.Header().Del("Cross-Origin-Opener-Policy")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(html))
+			return
+		}
+	}
+
+	errorHTML := renderCustomProxy404(rawPath, "This episode stream is currently unavailable on AnimeSalt Server 1. Please retry or check another episode.")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Content-Security-Policy", cspHeader)
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(errorHTML))
+}
+
+func handleCustomSaltPlayer(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	slug := q.Get("slug")
+	season := q.Get("season")
+	if season == "" {
+		season = "1"
+	}
+	ep := q.Get("ep")
+	if ep == "" {
+		ep = "1"
+	}
+	lang := q.Get("lang")
+	if lang == "" {
+		lang = "hin"
+	}
+	anilist := q.Get("anilist")
+	mal := q.Get("mal")
+	hash := q.Get("hash")
+
+	if anilist != "" {
+		r.URL.Path = fmt.Sprintf("/embed/animesalt/ani/%s/%s/%s", anilist, ep, lang)
+	} else if mal != "" {
+		r.URL.Path = fmt.Sprintf("/embed/animesalt/mal/%s/%s/%s", mal, ep, lang)
+	} else if hash != "" {
+		r.URL.Path = fmt.Sprintf("/embed/as-cdn/%s", hash)
+	} else if slug != "" {
+		r.URL.Path = fmt.Sprintf("/embed/animesalt/%s-%sx%s", slug, season, ep)
+	}
+	handleAnimeSaltEmbed(w, r)
+}
+
+func handleAnimeSaltSourceAPI(w http.ResponseWriter, r *http.Request) {
+	setCORS(w)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	q := r.URL.Query()
+	slug := q.Get("slug")
+	seasonStr := q.Get("season")
+	epStr := q.Get("ep")
+	hash := q.Get("hash")
+	anilistStr := q.Get("anilist")
+	malStr := q.Get("mal")
+
+	season := 1
+	if s, err := strconv.Atoi(seasonStr); err == nil && s > 0 {
+		season = s
+	}
+	ep := 1
+	if e, err := strconv.Atoi(epStr); err == nil && e > 0 {
+		ep = e
+	}
+
+	if slug == "" && anilistStr != "" {
+		if aId, err := strconv.Atoi(anilistStr); err == nil && aId > 0 {
+			slug, _ = resolveAnimeSaltSlug(r.Context(), aId, 0, "")
+		}
+	}
+	if slug == "" && malStr != "" {
+		if mId, err := strconv.Atoi(malStr); err == nil && mId > 0 {
+			slug, _ = resolveAnimeSaltSlug(r.Context(), 0, mId, "")
+		}
+	}
+
+	streamFile, tracks, resolvedHash, err := extractAnimeSaltHLS(r.Context(), slug, season, ep, hash)
+	if err != nil || streamFile == "" {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":   true,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	streamToken, _ := encryptToken(&TokenPayload{
+		URL: streamFile,
+		Ref: "https://animesalt.cx/",
+		Exp: time.Now().Add(6 * time.Hour).Unix(),
+	})
+
+	var proxiedTracks []SubtitleTrack
+	for _, t := range tracks {
+		if t.File != "" {
+			subToken, subErr := encryptToken(&TokenPayload{
+				URL: t.File,
+				Ref: "https://animesalt.cx/",
+				Exp: time.Now().Add(6 * time.Hour).Unix(),
+			})
+			if subErr == nil {
+				t.File = "/p/" + subToken
+			}
+		}
+		proxiedTracks = append(proxiedTracks, t)
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Cache-Control", "public, max-age=1800")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":       true,
+		"server":        "AnimeSalt Server 1 (as-cdn26)",
+		"hash":          resolvedHash,
+		"slug":          slug,
+		"season":        season,
+		"episode":       ep,
+		"stream_url":    streamFile,
+		"proxied_m3u8":  "/p/" + streamToken,
+		"subtitles":     proxiedTracks,
+		"default_audio": "hin",
+		"audio_renditions": []string{
+			"Hindi (Default Dub)", "Japanese (Original Audio)", "English", "Tamil", "Telugu",
+		},
+	})
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -3569,7 +4084,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
                     <p>All proxy and embed routes available on this service:</p>
 
                     <!-- Endpoint 1: MAL Embed -->
-                    <h3><i class="fas fa-play"></i> 1. MyAnimeList (MAL) Embed Player</h3>
+                    <h3><i class="fas fa-play"></i> 1. MyAnimeList (MAL) Embed Player (MegaPlay)</h3>
                     <div class="ep-badge-row">
                         <span class="method-badge">GET</span>
                         <span class="ep-path">{{BASE_URL}}/embed/megaplay/mal/{mal_id}/{ep_num}/{language}</span>
@@ -3612,8 +4127,32 @@ const docsHTMLTemplate = `<!DOCTYPE html>
                         </table>
                     </div>
 
-                    <!-- Endpoint 2: AniList Embed -->
-                    <h3><i class="fas fa-shuffle"></i> 2. AniList Embed Player (Auto-Mapped to MAL)</h3>
+                    <!-- Endpoint 2: AnimeSalt Server 1 Embed (Hindi Dub Default) -->
+                    <h3><i class="fas fa-language"></i> 2. AnimeSalt Server 1 Embed (Hindi Dub / Multi-Audio)</h3>
+                    <div class="ep-badge-row">
+                        <span class="method-badge">GET</span>
+                        <span class="ep-path">{{BASE_URL}}/embed/animesalt/{slug}-{season}x{ep}?lang={hin|sub|dub}</span>
+                    </div>
+                    <div class="ep-badge-row" style="margin-top: 0.35rem;">
+                        <span class="method-badge">GET</span>
+                        <span class="ep-path">{{BASE_URL}}/embed/animesalt/ani/{anilist_id}/{ep}/{lang}</span>
+                    </div>
+                    <p>Scrapes Server 1 (<code>as-cdn26.top</code>), extracts the multi-audio HLS master playlist, and plays <strong>Hindi Dub</strong> by default (with an in-player audio switcher for Japanese/English/Tamil/Telugu).</p>
+                    <div class="code-box">
+                        <button class="btn-copy-code" onclick="copySnippet(this)"><i class="far fa-copy"></i></button>
+                        <pre>&lt;iframe src="{{BASE_URL}}/embed/animesalt/dan-da-dan-1x1?lang=hin" width="100%" height="100%" frameborder="0" scrolling="no" allowfullscreen&gt;&lt;/iframe&gt;</pre>
+                    </div>
+
+                    <!-- Endpoint 3: AnimeSalt JSON Stream API -->
+                    <h3><i class="fas fa-bolt"></i> 3. AnimeSalt Direct Stream Source API (JSON)</h3>
+                    <div class="ep-badge-row">
+                        <span class="method-badge">GET</span>
+                        <span class="ep-path">{{BASE_URL}}/api/animesalt/source?slug={slug}&season={s}&ep={e}</span>
+                    </div>
+                    <p>Returns raw decrypted stream URL, proxied M3U8 endpoint, audio renditions, and subtitle tracks formatted as clean JSON.</p>
+
+                    <!-- Endpoint 4: AniList Embed -->
+                    <h3><i class="fas fa-shuffle"></i> 4. AniList Embed Player (MegaPlay Auto-Mapped to MAL)</h3>
                     <div class="ep-badge-row">
                         <span class="method-badge">GET</span>
                         <span class="ep-path">{{BASE_URL}}/embed/megaplay/ani/{anilist_id}/{ep_num}/{language}</span>
@@ -3624,24 +4163,24 @@ const docsHTMLTemplate = `<!DOCTYPE html>
                         <pre>&lt;iframe src="{{BASE_URL}}/embed/megaplay/ani/154587/1/sub" width="100%" height="100%" frameborder="0" scrolling="no" allowfullscreen&gt;&lt;/iframe&gt;</pre>
                     </div>
 
-                    <!-- Endpoint 3: Catalog Stream ID -->
-                    <h3><i class="fas fa-hashtag"></i> 3. Direct Catalog Episode ID (s-2)</h3>
+                    <!-- Endpoint 5: Catalog Stream ID -->
+                    <h3><i class="fas fa-hashtag"></i> 5. Direct Catalog Episode ID (s-2)</h3>
                     <div class="ep-badge-row">
                         <span class="method-badge">GET</span>
                         <span class="ep-path">{{BASE_URL}}/embed/megaplay/s-2/{episode_id}/{language}</span>
                     </div>
                     <p>Directly loads stream using Anikoto / MegaPlay catalog episode ID (e.g. <code>136197</code>).</p>
 
-                    <!-- Endpoint 4: Encrypted Stream Proxy -->
-                    <h3><i class="fas fa-lock"></i> 4. Encrypted Media & HLS Chunk Proxy</h3>
+                    <!-- Endpoint 6: Encrypted Stream Proxy -->
+                    <h3><i class="fas fa-lock"></i> 6. Encrypted Media & HLS Chunk Proxy</h3>
                     <div class="ep-badge-row">
                         <span class="method-badge">GET</span>
                         <span class="ep-path">{{BASE_URL}}/p/{encrypted_token}</span>
                     </div>
                     <p>Internal high-throughput proxy for <code>.m3u8</code> manifests, <code>.ts</code> video segments, and <code>.vtt</code> subtitle tracks with 64KB memory pool and automated CDN header spoofing.</p>
 
-                    <!-- Endpoint 5: Health Check -->
-                    <h3><i class="fas fa-heart-pulse"></i> 5. Health Check</h3>
+                    <!-- Endpoint 7: Health Check -->
+                    <h3><i class="fas fa-heart-pulse"></i> 7. Health Check</h3>
                     <div class="ep-badge-row">
                         <span class="method-badge">GET</span>
                         <span class="ep-path">{{BASE_URL}}/health</span>
@@ -3752,17 +4291,21 @@ const docsHTMLTemplate = `<!DOCTYPE html>
 
                     <form id="embed-sandbox-form">
                         <div class="form-group">
-                            <label for="sb-mode">ID Source</label>
+                            <label for="sb-mode">Provider & ID Source</label>
                             <select class="form-select" id="sb-mode">
-                                <option value="mal">MyAnimeList (MAL ID + Episode)</option>
-                                <option value="ani">AniList (AniList ID + Episode)</option>
-                                <option value="s-2">Catalog Episode ID (s-2 / HiAnime)</option>
+                                <option value="salt-slug">AnimeSalt Server 1 (Series Slug, e.g. dan-da-dan)</option>
+                                <option value="salt-ani">AnimeSalt Server 1 (AniList ID, Auto-Resolve Slug)</option>
+                                <option value="salt-mal">AnimeSalt Server 1 (MAL ID, Auto-Resolve Slug)</option>
+                                <option value="salt-hash">AnimeSalt Server 1 (Direct Video Hash)</option>
+                                <option value="mal">MegaPlay (MAL ID + Episode)</option>
+                                <option value="ani">MegaPlay (AniList ID + Episode)</option>
+                                <option value="s-2">MegaPlay (Catalog Episode ID s-2)</option>
                             </select>
                         </div>
 
                         <div class="form-group" id="group-series-id">
-                            <label for="sb-series-id">Anime ID</label>
-                            <input type="text" class="form-input" id="sb-series-id" value="5114" placeholder="e.g. 5114 (FMA:B), 21 (One Piece)" required inputmode="numeric" />
+                            <label for="sb-series-id">Series Slug / ID</label>
+                            <input type="text" class="form-input" id="sb-series-id" value="dan-da-dan" placeholder="e.g. dan-da-dan, solo-leveling" required />
                         </div>
 
                         <div class="form-group" id="group-ep-num">
@@ -3771,10 +4314,11 @@ const docsHTMLTemplate = `<!DOCTYPE html>
                         </div>
 
                         <div class="form-group">
-                            <label for="sb-lang">Language</label>
+                            <label for="sb-lang">Audio Preference</label>
                             <select class="form-select" id="sb-lang">
-                                <option value="sub">Sub (Japanese Audio + Multi-Subtitles)</option>
-                                <option value="dub">Dub (English Audio)</option>
+                                <option value="hin">Hindi (Default Dub Audio Track)</option>
+                                <option value="sub">Sub (Japanese Original Audio)</option>
+                                <option value="dub">Dub (English Audio Track)</option>
                             </select>
                         </div>
 
@@ -3783,7 +4327,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
                                 <i class="fas fa-play"></i> Generate & Test
                             </button>
                             <button type="button" class="btn-secondary" id="btn-gen-both" style="justify-content: center;">
-                                <i class="fas fa-layer-group"></i> Sub + Dub
+                                <i class="fas fa-layer-group"></i> Multi-Track Snippets
                             </button>
                         </div>
                     </form>
@@ -3807,7 +4351,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
     <footer class="doc-footer">
         <div class="footer-inner">
             <div>
-                <strong>MegaPlay Stream Reverse Proxy</strong> — Ad-Free Anime Embed & HLS Streaming Engine.
+                <strong>YumeZone Stream Reverse Proxy</strong> — MegaPlay & AnimeSalt Server 1 HLS Streaming Engine.
             </div>
             <div class="footer-links">
                 <a href="#overview">Overview</a>
@@ -3828,10 +4372,14 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             id = encodeURIComponent(String(id).trim());
             ep = encodeURIComponent(String(ep).trim());
             lang = encodeURIComponent(String(lang).trim().toLowerCase());
+            if (mode === "salt-slug") return BASE_ORIGIN + "/embed/animesalt/" + id + "-1x" + ep + "?lang=" + lang;
+            if (mode === "salt-ani") return BASE_ORIGIN + "/embed/animesalt/ani/" + id + "/" + ep + "/" + lang;
+            if (mode === "salt-mal") return BASE_ORIGIN + "/embed/animesalt/mal/" + id + "/" + ep + "/" + lang;
+            if (mode === "salt-hash") return BASE_ORIGIN + "/embed/as-cdn/" + id + "?lang=" + lang;
             if (mode === "mal") return BASE_ORIGIN + "/embed/megaplay/mal/" + id + "/" + ep + "/" + lang;
             if (mode === "ani") return BASE_ORIGIN + "/embed/megaplay/ani/" + id + "/" + ep + "/" + lang;
             if (mode === "s-2") return BASE_ORIGIN + "/embed/megaplay/s-2/" + id + "/" + lang;
-            return BASE_ORIGIN + "/embed/megaplay/mal/" + id + "/" + ep + "/" + lang;
+            return BASE_ORIGIN + "/embed/animesalt/" + id + "-1x" + ep + "?lang=" + lang;
         }
 
         function buildIframe(url) {
@@ -3848,7 +4396,6 @@ const docsHTMLTemplate = `<!DOCTYPE html>
                 btn.innerHTML = '<i class="fas fa-check" style="color: var(--emerald);"></i> Copied';
                 setTimeout(() => { btn.innerHTML = originalHtml; }, 1600);
             } catch (err) {
-                // Fallback select
                 const r = document.createRange();
                 r.selectNodeContents(pre);
                 const s = window.getSelection();
@@ -3900,10 +4447,35 @@ const docsHTMLTemplate = `<!DOCTYPE html>
                 $("sb-series-id").placeholder = "e.g. 136197";
                 $("sb-series-id").value = "136197";
                 $("group-ep-num").style.display = "none";
-            } else {
-                $("group-series-id").querySelector("label").textContent = mode === "mal" ? "MyAnimeList (MAL ID)" : "AniList ID";
-                $("sb-series-id").placeholder = mode === "mal" ? "e.g. 5114 (FMA:B), 21 (One Piece)" : "e.g. 154587 (Frieren), 16498 (AOT)";
-                $("sb-series-id").value = mode === "mal" ? "5114" : "154587";
+            } else if (mode === "salt-slug") {
+                $("group-series-id").querySelector("label").textContent = "AnimeSalt Series Slug";
+                $("sb-series-id").placeholder = "e.g. dan-da-dan, solo-leveling";
+                $("sb-series-id").value = "dan-da-dan";
+                $("group-ep-num").style.display = "block";
+            } else if (mode === "salt-hash") {
+                $("group-series-id").querySelector("label").textContent = "Server 1 Hash (as-cdn26)";
+                $("sb-series-id").placeholder = "e.g. d645920e395fedad7bbbed0eca3fe2e0";
+                $("sb-series-id").value = "d645920e395fedad7bbbed0eca3fe2e0";
+                $("group-ep-num").style.display = "none";
+            } else if (mode === "salt-ani") {
+                $("group-series-id").querySelector("label").textContent = "AniList ID (AnimeSalt Server 1)";
+                $("sb-series-id").placeholder = "e.g. 171018 (Dan Da Dan), 154587 (Frieren)";
+                $("sb-series-id").value = "171018";
+                $("group-ep-num").style.display = "block";
+            } else if (mode === "salt-mal") {
+                $("group-series-id").querySelector("label").textContent = "MyAnimeList ID (AnimeSalt Server 1)";
+                $("sb-series-id").placeholder = "e.g. 52991 (Dan Da Dan), 5114";
+                $("sb-series-id").value = "52991";
+                $("group-ep-num").style.display = "block";
+            } else if (mode === "mal") {
+                $("group-series-id").querySelector("label").textContent = "MyAnimeList (MAL ID)";
+                $("sb-series-id").placeholder = "e.g. 5114 (FMA:B), 21 (One Piece)";
+                $("sb-series-id").value = "5114";
+                $("group-ep-num").style.display = "block";
+            } else if (mode === "ani") {
+                $("group-series-id").querySelector("label").textContent = "AniList ID";
+                $("sb-series-id").placeholder = "e.g. 154587 (Frieren), 16498 (AOT)";
+                $("sb-series-id").value = "154587";
                 $("group-ep-num").style.display = "block";
             }
         });
@@ -3916,7 +4488,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             const ep = $("sb-ep-num").value.trim() || "1";
             const lang = $("sb-lang").value;
 
-            if (!id) return alert("Please enter an anime ID.");
+            if (!id) return alert("Please enter a slug or ID.");
 
             const url = buildUrl(mode, id, ep, lang);
             renderOutputBoxes([
@@ -3934,17 +4506,19 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             const id = $("sb-series-id").value.trim();
             const ep = $("sb-ep-num").value.trim() || "1";
 
-            if (!id) return alert("Please enter an anime ID.");
+            if (!id) return alert("Please enter a slug or ID.");
 
+            const hinUrl = buildUrl(mode, id, ep, "hin");
             const subUrl = buildUrl(mode, id, ep, "sub");
             const dubUrl = buildUrl(mode, id, ep, "dub");
 
             renderOutputBoxes([
-                { label: "Sub Iframe (Japanese Audio)", code: buildIframe(subUrl) },
-                { label: "Dub Iframe (English Audio)", code: buildIframe(dubUrl) },
+                { label: "Hindi Dub Iframe (Hindi Default Track)", code: buildIframe(hinUrl) },
+                { label: "Japanese Sub Iframe", code: buildIframe(subUrl) },
+                { label: "English Dub Iframe", code: buildIframe(dubUrl) },
             ]);
 
-            $("preview-frame").src = subUrl;
+            $("preview-frame").src = hinUrl;
             $("sb-output").scrollIntoView({ behavior: "smooth", block: "nearest" });
         });
     </script>
@@ -3969,6 +4543,14 @@ func main() {
 	mux.HandleFunc("/api", handleDocs)
 	mux.HandleFunc("/embed/megaplay/", handleMegaplayEmbed)
 	mux.HandleFunc("/embed/megaplay", handleMegaplayEmbed)
+	mux.HandleFunc("/embed/animesalt/", handleAnimeSaltEmbed)
+	mux.HandleFunc("/embed/animesalt", handleAnimeSaltEmbed)
+	mux.HandleFunc("/embed/as-cdn/", handleAnimeSaltEmbed)
+	mux.HandleFunc("/embed/as-cdn", handleAnimeSaltEmbed)
+	mux.HandleFunc("/player/salt", handleCustomSaltPlayer)
+	mux.HandleFunc("/player/as-cdn/", handleCustomSaltPlayer)
+	mux.HandleFunc("/api/animesalt/source", handleAnimeSaltSourceAPI)
+	mux.HandleFunc("/api/as-cdn/", handleAnimeSaltSourceAPI)
 	mux.HandleFunc("/stream/getSources", handleMegaplaySources)
 	mux.HandleFunc("/stream/getSourcesNew", handleMegaplaySources)
 	mux.HandleFunc("/lib/", handleMegaplayLib)
@@ -3981,6 +4563,18 @@ func main() {
 		}
 		if strings.HasPrefix(r.URL.Path, "/embed/megaplay") {
 			handleMegaplayEmbed(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/embed/animesalt") || strings.HasPrefix(r.URL.Path, "/embed/as-cdn") {
+			handleAnimeSaltEmbed(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/player/salt") || strings.HasPrefix(r.URL.Path, "/player/as-cdn") {
+			handleCustomSaltPlayer(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/animesalt") || strings.HasPrefix(r.URL.Path, "/api/as-cdn") {
+			handleAnimeSaltSourceAPI(w, r)
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/stream/getSources") {
@@ -4006,7 +4600,7 @@ func main() {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	log.Printf("🚀 MegaPlay Stream & Clean Embed Proxy running on 0.0.0.0:%d", port)
+	log.Printf("🚀 MegaPlay & AnimeSalt (Server 1) Stream & Clean Embed Proxy running on 0.0.0.0:%d", port)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Proxy server failed: %v", err)
 	}
