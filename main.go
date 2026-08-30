@@ -2435,185 +2435,102 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
 
 
 func renderCustomProxy404(path string, message string) string {
-	if message == "" {
-		message = "This episode is currently unavailable on Megaplay server. Please switch to an alternative server below."
-	}
-	return fmt.Sprintf(`<!DOCTYPE html>
+	return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stream Unavailable - YumeZone</title>
+    <title>404</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         html, body {
-            width: 100%%;
-            height: 100%%;
+            width: 100%;
+            height: 100%;
             background-color: #000000;
-            color: #f4f4f5;
-            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+            color: #ffffff;
+            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             display: flex;
             align-items: center;
             justify-content: center;
             overflow: hidden;
             text-align: center;
-            padding: 20px;
+            padding: 24px;
             -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
         }
-        .error-card {
-            max-width: 480px;
-            width: 100%%;
-            background: #0d0d11;
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            border-radius: 20px;
-            padding: 36px 28px;
-            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.9);
-            position: relative;
-            animation: fadeIn 0.3s ease-out;
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
         }
         @keyframes fadeIn {
-            from { opacity: 0; transform: scale(0.96); }
+            from { opacity: 0; transform: scale(0.98); }
             to { opacity: 1; transform: scale(1); }
         }
-        .badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 5px 14px;
-            background: rgba(255, 255, 255, 0.08);
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            border-radius: 999px;
-            font-size: 11px;
-            font-weight: 700;
-            color: #e4e4e7;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            margin-bottom: 18px;
-        }
-        .badge-dot {
-            width: 6px;
-            height: 6px;
-            background: #ffffff;
-            border-radius: 50%%;
-            box-shadow: 0 0 8px #ffffff;
-        }
-        h1 {
-            font-size: 22px;
-            font-weight: 700;
+        .code {
+            font-size: clamp(72px, 15vw, 120px);
+            font-weight: 800;
+            letter-spacing: -0.05em;
+            line-height: 1;
             color: #ffffff;
-            margin-bottom: 10px;
-            letter-spacing: -0.02em;
+            user-select: none;
         }
-        p {
-            font-size: 14px;
-            color: #a1a1aa;
-            line-height: 1.55;
-            margin-bottom: 24px;
-        }
-        .server-switcher {
-            margin-bottom: 24px;
-        }
-        .server-title {
-            font-size: 11px;
-            font-weight: 700;
+        .desc {
+            margin-top: 12px;
+            font-size: 13px;
+            font-weight: 500;
             color: #71717a;
+            letter-spacing: 0.16em;
             text-transform: uppercase;
-            letter-spacing: 0.06em;
-            margin-bottom: 10px;
+            user-select: none;
         }
-        .pills {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            justify-content: center;
-        }
-        .pill-btn {
-            padding: 7px 14px;
-            background: rgba(255, 255, 255, 0.06);
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            border-radius: 10px;
-            font-size: 12px;
-            font-weight: 600;
-            color: #e4e4e7;
-            cursor: pointer;
-            transition: all 0.2s ease;
+        .btn-reload {
+            margin-top: 28px;
             display: inline-flex;
             align-items: center;
-            gap: 6px;
+            gap: 8px;
+            padding: 9px 18px;
+            background: #000000;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 999px;
+            color: #a1a1aa;
+            font-size: 12px;
+            font-weight: 500;
+            font-family: inherit;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
         }
-        .pill-btn:hover {
-            background: #ffffff;
-            border-color: #ffffff;
-            color: #000000;
+        .btn-reload:hover {
+            border-color: rgba(255, 255, 255, 0.3);
+            color: #ffffff;
+            background: #0d0d11;
             transform: translateY(-1px);
         }
-        .actions {
-            display: flex;
-            gap: 12px;
-            justify-content: center;
+        .btn-reload svg {
+            transition: transform 0.3s ease;
         }
-        .btn-retry {
-            padding: 11px 24px;
-            background: #ffffff;
-            border: none;
-            border-radius: 12px;
-            font-size: 13px;
-            font-weight: 700;
-            color: #000000;
-            cursor: pointer;
-            box-shadow: 0 4px 18px rgba(255, 255, 255, 0.25);
-            transition: all 0.2s ease;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .btn-retry:hover {
-            transform: translateY(-2px);
-            background: #f4f4f5;
-            box-shadow: 0 6px 24px rgba(255, 255, 255, 0.4);
+        .btn-reload:hover svg {
+            transform: rotate(90deg);
         }
     </style>
 </head>
 <body>
-    <div class="error-card">
-        <div class="badge">
-            <span class="badge-dot"></span>
-            Megaplay Stream Offline
-        </div>
-        <h1>Stream Temporarily Unavailable</h1>
-        <p>%s</p>
-        
-        <div class="server-switcher">
-            <div class="server-title">Switch Server</div>
-            <div class="pills">
-                <button class="pill-btn" onclick="switchServer('cosmic')">✨ Cosmic</button>
-                <button class="pill-btn" onclick="switchServer('zoko')">⚡ Zoko</button>
-                <button class="pill-btn" onclick="switchServer('animo')">🌀 Animo</button>
-                <button class="pill-btn" onclick="switchServer('link')">🔗 Link</button>
-                <button class="pill-btn" onclick="switchServer('nest')">🪹 Nest</button>
-            </div>
-        </div>
-
-        <div class="actions">
-            <button class="btn-retry" onclick="window.location.reload()">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
-                Retry Stream
-            </button>
-        </div>
+    <div class="container">
+        <div class="code">404</div>
+        <div class="desc">Not Found</div>
+        <button class="btn-reload" onclick="window.location.reload()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+            <span>Reload</span>
+        </button>
     </div>
-
-    <script>
-        function switchServer(serverName) {
-            try {
-                window.parent.postMessage({ type: 'YUME_SWITCH_SERVER', server: serverName }, '*');
-            } catch(e) {}
-        }
-    </script>
 </body>
-</html>`, message)
+</html>`
 }
 
 func extractMegaplayHLSWithFallback(ctx context.Context, originalPath string) (string, []SubtitleTrack, error) {
@@ -2742,8 +2659,8 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 2. Custom YumeZone Error UI fallback when stream is unavailable across all mirrors
-	errorHTML := renderCustomProxy404(targetPath, "This episode stream is currently unavailable on Megaplay server. Please switch to Cosmic, Zoko, or Animo server below.")
+	// 2. Custom 404 UI fallback when stream is unavailable
+	errorHTML := renderCustomProxy404(targetPath, "")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Header().Set("Content-Security-Policy", cspHeader)
@@ -3394,7 +3311,7 @@ func handleAnimeSaltEmbed(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	errorHTML := renderCustomProxy404(rawPath, "This episode stream is currently unavailable on AnimeSalt Server 1. Please retry or check another episode.")
+	errorHTML := renderCustomProxy404(rawPath, "")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Header().Set("Content-Security-Policy", cspHeader)
@@ -4824,7 +4741,9 @@ func main() {
 			handleProxy(w, r)
 			return
 		}
-		http.NotFound(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(renderCustomProxy404(r.URL.Path, "")))
 	})
 
 	server := &http.Server{
