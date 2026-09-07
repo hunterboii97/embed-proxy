@@ -60,6 +60,13 @@ var (
 
 var cdnRules = []CDNRule{
 	{
+		Matches: func(h string) bool {
+			return strings.HasSuffix(h, ".aniwatchtv.uk") || h == "aniwatchtv.uk" ||
+				strings.HasSuffix(h, ".zokoanime.video") || h == "zokoanime.video"
+		},
+		Referer: "https://zokoanime.video/", Origin: "https://zokoanime.video", SecSite: "cross-site",
+	},
+	{
 		Matches: func(h string) bool { return strings.HasSuffix(h, ".otakuu.se") || h == "otakuu.se" },
 		Referer: "https://animex.one/", Origin: "https://animex.one", SecSite: "cross-site",
 	},
@@ -91,7 +98,7 @@ var cdnRules = []CDNRule{
 		Matches: func(h string) bool { return strings.HasSuffix(h, ".cinewave2.site") || h == "cinewave2.site" },
 		Referer: "https://megaplay.buzz/", Origin: "https://megaplay.buzz", SecSite: "cross-site",
 	},
-		{
+	{
 		Matches: func(h string) bool { return strings.HasSuffix(h, ".watching.onl") || h == "watching.onl" },
 		Referer: "https://megaplay.buzz/", Origin: "https://megaplay.buzz", SecSite: "cross-site",
 	},
@@ -2433,7 +2440,6 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
 </html>`, streamURL, string(tracksJSON), preferredLang)
 }
 
-
 func renderCustomProxy404(path string, message string) string {
 	return `<!DOCTYPE html>
 <html lang="en">
@@ -2535,7 +2541,7 @@ func renderCustomProxy404(path string, message string) string {
 
 func extractMegaplayHLSWithFallback(ctx context.Context, originalPath string) (string, []SubtitleTrack, error) {
 	normPath := normalizeMegaplayPath(originalPath)
-	
+
 	// Candidate 1: Normalized MAL path on megaplay.buzz
 	hlsFile, tracks, err := extractMegaplayHLS(ctx, normPath)
 	if err == nil && hlsFile != "" {
@@ -2751,8 +2757,8 @@ func handleMegaplayLib(w http.ResponseWriter, r *http.Request) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 type AnimeSaltSourcesResponse struct {
-	Hls          bool            `json:"hls"`
-	VideoSource  string          `json:"videoSource"`
+	Hls          bool   `json:"hls"`
+	VideoSource  string `json:"videoSource"`
 	VideoSources []struct {
 		File  string `json:"file"`
 		Label string `json:"label"`
@@ -3437,6 +3443,396 @@ func handleAnimeSaltSourceAPI(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// --- Zoko Server (zokoanime.video) Scraper & Clean Embed Handlers ---
+
+type ZokoSubtitle struct {
+	Lang    string `json:"lang"`
+	Label   string `json:"label"`
+	Default bool   `json:"default"`
+	Src     string `json:"src"`
+}
+
+type ZokoSkipTime struct {
+	Start float64 `json:"start"`
+	End   float64 `json:"end"`
+}
+
+type ZokoSkip struct {
+	Intro *ZokoSkipTime `json:"intro,omitempty"`
+	Outro *ZokoSkipTime `json:"outro,omitempty"`
+}
+
+type ZokoData struct {
+	Src         string         `json:"src"`
+	Subtitles   []ZokoSubtitle `json:"subtitles"`
+	Skip        *ZokoSkip      `json:"skip,omitempty"`
+	DownloadURL string         `json:"download_url,omitempty"`
+}
+
+const zokoObfKey = "otaku-embed-v1"
+
+var (
+	zokoCache  sync.Map
+	zokoPRegex = regexp.MustCompile(`window\.__P\s*=\s*"([^"]+)"`)
+)
+
+func deobfuscateZokoPayload(blob string) (*ZokoData, error) {
+	raw, err := base64.StdEncoding.DecodeString(blob)
+	if err != nil {
+		return nil, fmt.Errorf("base64 decode error: %w", err)
+	}
+
+	for i := 0; i < len(raw); i++ {
+		raw[i] ^= zokoObfKey[i%len(zokoObfKey)]
+	}
+
+	unescaped, err := url.QueryUnescape(string(raw))
+	if err != nil {
+		return nil, fmt.Errorf("url unescape error: %w", err)
+	}
+
+	var data ZokoData
+	if err := json.Unmarshal([]byte(unescaped), &data); err != nil {
+		return nil, fmt.Errorf("json unmarshal error: %w", err)
+	}
+
+	return &data, nil
+}
+
+func extractZokoHLS(ctx context.Context, malID int, ep int, track string) (string, []SubtitleTrack, *ZokoSkip, error) {
+	if track != "dub" && track != "sub" {
+		track = "sub"
+	}
+	if ep <= 0 {
+		ep = 1
+	}
+	if malID <= 0 {
+		return "", nil, nil, fmt.Errorf("invalid mal_id: %d", malID)
+	}
+
+	targetURL := fmt.Sprintf("https://zokoanime.video/stream/mal/%d/%d/%s", malID, ep, track)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	req.Header.Set("Referer", "https://zokoanime.video/")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", nil, nil, fmt.Errorf("zoko upstream returned status: %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", nil, nil, err
+	}
+
+	m := zokoPRegex.FindSubmatch(body)
+	if len(m) < 2 {
+		return "", nil, nil, fmt.Errorf("zoko __P payload not found in upstream HTML")
+	}
+
+	data, err := deobfuscateZokoPayload(string(m[1]))
+	if err != nil {
+		return "", nil, nil, err
+	}
+
+	if data.Src == "" {
+		return "", nil, nil, fmt.Errorf("zoko returned empty stream src")
+	}
+
+	var tracks []SubtitleTrack
+	for _, sub := range data.Subtitles {
+		if sub.Src != "" {
+			label := sub.Label
+			if label == "" {
+				label = strings.ToUpper(sub.Lang)
+			}
+			tracks = append(tracks, SubtitleTrack{
+				File:    sub.Src,
+				Label:   label,
+				Kind:    "captions",
+				Default: sub.Default,
+			})
+		}
+	}
+
+	return data.Src, tracks, data.Skip, nil
+}
+
+func handleZokoEmbed(w http.ResponseWriter, r *http.Request) {
+	setCORS(w)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	if !isEmbedAllowed(r) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Security-Policy", "frame-ancestors 'none';")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte("Embedding not allowed: domain is not authorized to embed this player."))
+		return
+	}
+
+	rawPath := r.URL.Path
+	rawPath = strings.TrimPrefix(rawPath, "/embed/zoko/")
+	rawPath = strings.TrimPrefix(rawPath, "/embed/zoko")
+	rawPath = strings.TrimPrefix(rawPath, "/player/zoko/")
+	rawPath = strings.TrimPrefix(rawPath, "/player/zoko")
+	rawPath = strings.TrimPrefix(rawPath, "/")
+
+	parts := strings.Split(rawPath, "/")
+	malID := 0
+	anilistID := 0
+	ep := 1
+	lang := "sub"
+
+	// 1. Check query parameters
+	q := r.URL.Query()
+	if m := q.Get("mal"); m != "" {
+		malID, _ = strconv.Atoi(m)
+	}
+	if a := q.Get("ani"); a != "" {
+		anilistID, _ = strconv.Atoi(a)
+	}
+	if e := q.Get("ep"); e != "" {
+		if epVal, err := strconv.Atoi(e); err == nil && epVal > 0 {
+			ep = epVal
+		}
+	}
+	if l := q.Get("lang"); l != "" {
+		lang = strings.ToLower(l)
+	}
+
+	// 2. Parse URL path if not fully provided via query
+	if malID == 0 && anilistID == 0 {
+		if len(parts) >= 2 && parts[0] == "ani" {
+			anilistID, _ = strconv.Atoi(parts[1])
+			if len(parts) > 2 && parts[2] != "" {
+				ep, _ = strconv.Atoi(parts[2])
+			}
+			if len(parts) > 3 && parts[3] != "" {
+				lang = parts[3]
+			}
+		} else if len(parts) >= 2 && parts[0] == "mal" {
+			malID, _ = strconv.Atoi(parts[1])
+			if len(parts) > 2 && parts[2] != "" {
+				ep, _ = strconv.Atoi(parts[2])
+			}
+			if len(parts) > 3 && parts[3] != "" {
+				lang = parts[3]
+			}
+		} else if len(parts) >= 1 && parts[0] != "" {
+			if id, err := strconv.Atoi(parts[0]); err == nil && id > 0 {
+				malID = id
+				if len(parts) > 1 && parts[1] != "" {
+					ep, _ = strconv.Atoi(parts[1])
+				}
+				if len(parts) > 2 && parts[2] != "" {
+					lang = parts[2]
+				}
+			}
+		}
+	}
+
+	if lang != "dub" && lang != "sub" {
+		lang = "sub"
+	}
+	if ep <= 0 {
+		ep = 1
+	}
+
+	// Resolve AniList ID to MAL ID if necessary
+	if malID == 0 && anilistID > 0 {
+		malID = resolveMalId(anilistID)
+	}
+
+	host := r.Host
+	if host == "" {
+		host = "yume-proxy-railway-production.up.railway.app"
+	}
+	frameAncestors := buildFrameAncestorsCSP(host)
+	cspHeader := fmt.Sprintf("default-src * 'unsafe-inline' 'unsafe-eval' blob: data:; frame-ancestors %s;", frameAncestors)
+
+	if malID <= 0 {
+		errorHTML := renderCustomProxy404(r.URL.Path, "Invalid Anime ID. Please specify a valid MyAnimeList or AniList ID.")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(errorHTML))
+		return
+	}
+
+	cacheKey := fmt.Sprintf("zoko_%d_%d_%s", malID, ep, lang)
+	if val, ok := zokoCache.Load(cacheKey); ok {
+		entry := val.(EmbedCacheEntry)
+		if time.Now().Before(entry.ExpiresAt) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
+			w.Header().Set("Content-Security-Policy", cspHeader)
+			w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
+			w.Header().Del("X-Frame-Options")
+			w.Header().Del("Cross-Origin-Opener-Policy")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(entry.HTML))
+			return
+		}
+	}
+
+	streamFile, tracks, _, err := extractZokoHLS(r.Context(), malID, ep, lang)
+	if err == nil && streamFile != "" {
+		var proxiedTracks []SubtitleTrack
+		for _, t := range tracks {
+			if t.File != "" {
+				subToken, subErr := encryptToken(&TokenPayload{
+					URL: t.File,
+					Ref: "https://zokoanime.video/",
+					Exp: time.Now().Add(6 * time.Hour).Unix(),
+				})
+				if subErr == nil {
+					t.File = "/p/" + subToken
+				}
+			}
+			proxiedTracks = append(proxiedTracks, t)
+		}
+
+		streamToken, err := encryptToken(&TokenPayload{
+			URL: streamFile,
+			Ref: "https://zokoanime.video/",
+			Exp: time.Now().Add(6 * time.Hour).Unix(),
+		})
+		if err == nil {
+			proxiedStreamURL := "/p/" + streamToken
+			html := renderCleanArtplayer(proxiedStreamURL, proxiedTracks, lang)
+
+			zokoCache.Store(cacheKey, EmbedCacheEntry{
+				HTML:      html,
+				ExpiresAt: time.Now().Add(2 * time.Hour),
+			})
+
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
+			w.Header().Set("Content-Security-Policy", cspHeader)
+			w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
+			w.Header().Del("X-Frame-Options")
+			w.Header().Del("Cross-Origin-Opener-Policy")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(html))
+			return
+		}
+	}
+
+	errorHTML := renderCustomProxy404(r.URL.Path, "")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Content-Security-Policy", cspHeader)
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(errorHTML))
+}
+
+func handleZokoSourceAPI(w http.ResponseWriter, r *http.Request) {
+	setCORS(w)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	q := r.URL.Query()
+	malID := 0
+	anilistID := 0
+	ep := 1
+	lang := "sub"
+
+	if m := q.Get("mal"); m != "" {
+		malID, _ = strconv.Atoi(m)
+	}
+	if a := q.Get("ani"); a != "" {
+		anilistID, _ = strconv.Atoi(a)
+	}
+	if e := q.Get("ep"); e != "" {
+		if epVal, err := strconv.Atoi(e); err == nil && epVal > 0 {
+			ep = epVal
+		}
+	}
+	if l := q.Get("lang"); l != "" {
+		lang = strings.ToLower(l)
+	}
+
+	if malID == 0 && anilistID > 0 {
+		malID = resolveMalId(anilistID)
+	}
+
+	if malID <= 0 {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":   true,
+			"message": "Invalid mal or ani parameter",
+		})
+		return
+	}
+
+	streamFile, tracks, skip, err := extractZokoHLS(r.Context(), malID, ep, lang)
+	if err != nil || streamFile == "" {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusNotFound)
+		msg := "Stream not found"
+		if err != nil {
+			msg = err.Error()
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":   true,
+			"message": msg,
+		})
+		return
+	}
+
+	streamToken, _ := encryptToken(&TokenPayload{
+		URL: streamFile,
+		Ref: "https://zokoanime.video/",
+		Exp: time.Now().Add(6 * time.Hour).Unix(),
+	})
+
+	var proxiedTracks []SubtitleTrack
+	for _, t := range tracks {
+		if t.File != "" {
+			subToken, subErr := encryptToken(&TokenPayload{
+				URL: t.File,
+				Ref: "https://zokoanime.video/",
+				Exp: time.Now().Add(6 * time.Hour).Unix(),
+			})
+			if subErr == nil {
+				t.File = "/p/" + subToken
+			}
+		}
+		proxiedTracks = append(proxiedTracks, t)
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Cache-Control", "public, max-age=1800")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":      true,
+		"server":       "Zoko (zokoanime.video)",
+		"mal_id":       malID,
+		"anilist_id":   anilistID,
+		"episode":      ep,
+		"language":     lang,
+		"stream_url":   streamFile,
+		"proxied_m3u8": "/p/" + streamToken,
+		"subtitles":    proxiedTracks,
+		"skip":         skip,
+	})
+}
+
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	setCORS(w)
 	w.Header().Set("Content-Type", "application/json")
@@ -3495,8 +3891,8 @@ const docsHTMLTemplate = `<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-    <title>YumeZone Embed & Stream Proxy API — MegaPlay & AnimeSalt Server 1</title>
-    <meta name="description" content="Dedicated high-performance Go reverse proxy and ad-free embed sanitizer for MegaPlay and AnimeSalt Server 1. Features Hindi Dub default, MyAnimeList & AniList resolution, multi-audio switching, HLS stream proxying, and custom OLED video player.">
+    <title>YumeZone Embed & Stream Proxy API — MegaPlay, AnimeSalt & Zoko</title>
+    <meta name="description" content="Dedicated high-performance Go reverse proxy and ad-free embed sanitizer for MegaPlay, AnimeSalt Server 1, and Zoko (zokoanime.video). Features multi-audio switching, MyAnimeList & AniList resolution, HLS stream proxying, and custom OLED video player.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -4180,10 +4576,10 @@ const docsHTMLTemplate = `<!DOCTYPE html>
     <!-- Hero Section -->
     <section class="doc-hero-section" id="overview">
         <div class="doc-hero-card">
-            <div class="hero-chip"><i class="fas fa-shield-halved"></i> Dedicated MegaPlay & AnimeSalt Server 1 Proxy</div>
+            <div class="hero-chip"><i class="fas fa-shield-halved"></i> Dedicated MegaPlay, AnimeSalt & Zoko Proxy</div>
             <h1>YumeZone Video Embed & Stream Proxy API</h1>
             <p class="doc-hero-lead">
-                A high-performance reverse proxy and player sanitizer for <strong>MegaPlay</strong> and <strong>AnimeSalt Server 1 (Hindi Dub Default)</strong>. Extracts clean streams, proxies M3U8 video chunks with automated CDN referer spoofing and permissive CORS, and renders a 100% ad-free OLED video player with MyAnimeList & AniList catalog mapping.
+                A high-performance reverse proxy and player sanitizer for <strong>MegaPlay</strong>, <strong>AnimeSalt Server 1</strong>, and <strong>Zoko (zokoanime.video)</strong>. Extracts clean streams, proxies M3U8 video chunks with automated CDN referer spoofing and permissive CORS, and renders a 100% ad-free OLED video player with MyAnimeList & AniList catalog mapping.
             </p>
             <div class="hero-actions">
                 <a href="#test-embed" class="btn-primary"><i class="fas fa-play-circle"></i> Test In Sandbox</a>
@@ -4302,6 +4698,30 @@ const docsHTMLTemplate = `<!DOCTYPE html>
                         <span class="ep-path">{{BASE_URL}}/api/animesalt/source?slug={slug}&season={s}&ep={e}</span>
                     </div>
                     <p>Returns raw decrypted stream URL, proxied M3U8 endpoint, audio renditions, and subtitle tracks formatted as clean JSON.</p>
+
+                    <!-- Endpoint 4: Zoko Server Embed -->
+                    <h3><i class="fas fa-shield-halved"></i> 4. Zoko Server Embed Player (zokoanime.video)</h3>
+                    <div class="ep-badge-row">
+                        <span class="method-badge">GET</span>
+                        <span class="ep-path">{{BASE_URL}}/embed/zoko/mal/{mal_id}/{ep}/{lang}</span>
+                    </div>
+                    <div class="ep-badge-row" style="margin-top: 0.35rem;">
+                        <span class="method-badge">GET</span>
+                        <span class="ep-path">{{BASE_URL}}/embed/zoko/ani/{anilist_id}/{ep}/{lang}</span>
+                    </div>
+                    <p>Scrapes and decrypts <code>zokoanime.video</code> HLS streams, proxies M3U8 manifests and video segments with automatic referer spoofing, and renders in our clean OLED player with VTT subtitles.</p>
+                    <div class="code-box">
+                        <button class="btn-copy-code" onclick="copySnippet(this)"><i class="far fa-copy"></i></button>
+                        <pre>&lt;iframe src="{{BASE_URL}}/embed/zoko/mal/21/1/sub" width="100%" height="100%" frameborder="0" scrolling="no" allowfullscreen&gt;&lt;/iframe&gt;</pre>
+                    </div>
+
+                    <!-- Endpoint 5: Zoko JSON Stream API -->
+                    <h3><i class="fas fa-code-merge"></i> 5. Zoko Direct Stream Source API (JSON)</h3>
+                    <div class="ep-badge-row">
+                        <span class="method-badge">GET</span>
+                        <span class="ep-path">{{BASE_URL}}/api/zoko/source?mal={mal_id}&ani={anilist_id}&ep={ep}&lang={sub|dub}</span>
+                    </div>
+                    <p>Returns decrypted stream URL, proxied M3U8 link, VTT subtitles, and intro/outro skip timestamps as JSON for external players or mobile apps.</p>
 
                     <!-- Endpoint 4: AniList Embed -->
                     <h3><i class="fas fa-shuffle"></i> 4. AniList Embed Player (MegaPlay Auto-Mapped to MAL)</h3>
@@ -4445,6 +4865,8 @@ const docsHTMLTemplate = `<!DOCTYPE html>
                         <div class="form-group">
                             <label for="sb-mode">Provider & ID Source</label>
                             <select class="form-select" id="sb-mode">
+                                <option value="zoko-mal">Zoko Server (MAL ID + Episode)</option>
+                                <option value="zoko-ani">Zoko Server (AniList ID + Episode)</option>
                                 <option value="salt-slug">AnimeSalt Server 1 (Series Slug, e.g. dan-da-dan)</option>
                                 <option value="salt-ani">AnimeSalt Server 1 (AniList ID, Auto-Resolve Slug)</option>
                                 <option value="salt-mal">AnimeSalt Server 1 (MAL ID, Auto-Resolve Slug)</option>
@@ -4524,6 +4946,8 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             id = encodeURIComponent(String(id).trim());
             ep = encodeURIComponent(String(ep).trim());
             lang = encodeURIComponent(String(lang).trim().toLowerCase());
+            if (mode === "zoko-mal") return BASE_ORIGIN + "/embed/zoko/mal/" + id + "/" + ep + "/" + lang;
+            if (mode === "zoko-ani") return BASE_ORIGIN + "/embed/zoko/ani/" + id + "/" + ep + "/" + lang;
             if (mode === "salt-slug") return BASE_ORIGIN + "/embed/animesalt/" + id + "-1x" + ep + "?lang=" + lang;
             if (mode === "salt-ani") return BASE_ORIGIN + "/embed/animesalt/ani/" + id + "/" + ep + "/" + lang;
             if (mode === "salt-mal") return BASE_ORIGIN + "/embed/animesalt/mal/" + id + "/" + ep + "/" + lang;
@@ -4531,7 +4955,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             if (mode === "mal") return BASE_ORIGIN + "/embed/megaplay/mal/" + id + "/" + ep + "/" + lang;
             if (mode === "ani") return BASE_ORIGIN + "/embed/megaplay/ani/" + id + "/" + ep + "/" + lang;
             if (mode === "s-2") return BASE_ORIGIN + "/embed/megaplay/s-2/" + id + "/" + lang;
-            return BASE_ORIGIN + "/embed/animesalt/" + id + "-1x" + ep + "?lang=" + lang;
+            return BASE_ORIGIN + "/embed/zoko/mal/" + id + "/" + ep + "/" + lang;
         }
 
         function buildIframe(url) {
@@ -4594,7 +5018,17 @@ const docsHTMLTemplate = `<!DOCTYPE html>
         // Mode switch UI adjustments
         $("sb-mode").addEventListener("change", (e) => {
             const mode = e.target.value;
-            if (mode === "s-2") {
+            if (mode === "zoko-mal") {
+                $("group-series-id").querySelector("label").textContent = "Zoko (MyAnimeList MAL ID)";
+                $("sb-series-id").placeholder = "e.g. 21 (One Piece), 5114 (FMA:B)";
+                $("sb-series-id").value = "21";
+                $("group-ep-num").style.display = "block";
+            } else if (mode === "zoko-ani") {
+                $("group-series-id").querySelector("label").textContent = "Zoko (AniList ID)";
+                $("sb-series-id").placeholder = "e.g. 21 (One Piece), 16498 (AOT)";
+                $("sb-series-id").value = "21";
+                $("group-ep-num").style.display = "block";
+            } else if (mode === "s-2") {
                 $("group-series-id").querySelector("label").textContent = "Episode ID (s-2)";
                 $("sb-series-id").placeholder = "e.g. 136197";
                 $("sb-series-id").value = "136197";
@@ -4699,6 +5133,13 @@ func main() {
 	mux.HandleFunc("/embed/animesalt", handleAnimeSaltEmbed)
 	mux.HandleFunc("/embed/as-cdn/", handleAnimeSaltEmbed)
 	mux.HandleFunc("/embed/as-cdn", handleAnimeSaltEmbed)
+	mux.HandleFunc("/embed/zoko/", handleZokoEmbed)
+	mux.HandleFunc("/embed/zoko", handleZokoEmbed)
+	mux.HandleFunc("/player/zoko", handleZokoEmbed)
+	mux.HandleFunc("/player/zoko/", handleZokoEmbed)
+	mux.HandleFunc("/api/zoko/source", handleZokoSourceAPI)
+	mux.HandleFunc("/api/zoko/", handleZokoSourceAPI)
+	mux.HandleFunc("/api/zoko", handleZokoSourceAPI)
 	mux.HandleFunc("/player/salt", handleCustomSaltPlayer)
 	mux.HandleFunc("/player/as-cdn/", handleCustomSaltPlayer)
 	mux.HandleFunc("/api/animesalt/source", handleAnimeSaltSourceAPI)
@@ -4721,12 +5162,20 @@ func main() {
 			handleAnimeSaltEmbed(w, r)
 			return
 		}
+		if strings.HasPrefix(r.URL.Path, "/embed/zoko") || strings.HasPrefix(r.URL.Path, "/player/zoko") {
+			handleZokoEmbed(w, r)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/player/salt") || strings.HasPrefix(r.URL.Path, "/player/as-cdn") {
 			handleCustomSaltPlayer(w, r)
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/animesalt") || strings.HasPrefix(r.URL.Path, "/api/as-cdn") {
 			handleAnimeSaltSourceAPI(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/zoko") {
+			handleZokoSourceAPI(w, r)
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/stream/getSources") {
@@ -4754,12 +5203,8 @@ func main() {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	log.Printf("🚀 MegaPlay & AnimeSalt (Server 1) Stream & Clean Embed Proxy running on 0.0.0.0:%d", port)
+	log.Printf("🚀 MegaPlay, AnimeSalt & Zoko Stream & Clean Embed Proxy running on 0.0.0.0:%d", port)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Proxy server failed: %v", err)
 	}
 }
-
-
-
-
