@@ -67,6 +67,16 @@ var cdnRules = []CDNRule{
 		Referer: "https://zokoanime.video/", Origin: "https://zokoanime.video", SecSite: "cross-site",
 	},
 	{
+		Matches: func(h string) bool {
+			return strings.HasSuffix(h, ".shiora.site") || h == "shiora.site" ||
+				strings.HasSuffix(h, ".shiora.top") || h == "shiora.top" ||
+				strings.HasSuffix(h, ".imgnex.top") || h == "imgnex.top" ||
+				strings.HasSuffix(h, ".tiktokcdn.com") || h == "tiktokcdn.com" ||
+				strings.HasSuffix(h, ".ipstatp.com") || h == "ipstatp.com"
+		},
+		Referer: "https://megaplay.buzz/", Origin: "https://megaplay.buzz", SecSite: "cross-site",
+	},
+	{
 		Matches: func(h string) bool { return strings.HasSuffix(h, ".otakuu.se") || h == "otakuu.se" },
 		Referer: "https://animex.one/", Origin: "https://animex.one", SecSite: "cross-site",
 	},
@@ -884,13 +894,49 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/octet-stream")
 	}
 
+	w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
+
+	// Transparently strip fake PNG header (252 bytes) prepended by MegaPlay/TikTok/ByteDance CDNs
+	if resp.StatusCode == http.StatusOK && !isVTT && !isSRT {
+		leadBuf := make([]byte, 256)
+		n, _ := io.ReadFull(resp.Body, leadBuf)
+		if n >= 253 && bytes.HasPrefix(leadBuf, []byte("\x89PNG\r\n\x1a\n")) && leadBuf[252] == 0x47 {
+			w.Header().Set("Content-Type", "video/mp2t")
+			if cl := resp.Header.Get("Content-Length"); cl != "" {
+				if totalLen, parseErr := strconv.ParseInt(cl, 10, 64); parseErr == nil && totalLen >= 252 {
+					w.Header().Set("Content-Length", strconv.FormatInt(totalLen-252, 10))
+				}
+			}
+			w.WriteHeader(resp.StatusCode)
+			w.Write(leadBuf[252:n])
+			bufPtr := bufferPool.Get().(*[]byte)
+			defer bufferPool.Put(bufPtr)
+			_, _ = io.CopyBuffer(w, resp.Body, *bufPtr)
+			return
+		}
+
+		if cl := resp.Header.Get("Content-Length"); cl != "" {
+			w.Header().Set("Content-Length", cl)
+		}
+		if cr := resp.Header.Get("Content-Range"); cr != "" {
+			w.Header().Set("Content-Range", cr)
+		}
+		w.WriteHeader(resp.StatusCode)
+		if n > 0 {
+			w.Write(leadBuf[:n])
+		}
+		bufPtr := bufferPool.Get().(*[]byte)
+		defer bufferPool.Put(bufPtr)
+		_, _ = io.CopyBuffer(w, resp.Body, *bufPtr)
+		return
+	}
+
 	if cl := resp.Header.Get("Content-Length"); cl != "" {
 		w.Header().Set("Content-Length", cl)
 	}
 	if cr := resp.Header.Get("Content-Range"); cr != "" {
 		w.Header().Set("Content-Range", cr)
 	}
-	w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
 
 	w.WriteHeader(resp.StatusCode)
 
@@ -1167,27 +1213,49 @@ func extractMegaplayHLS(ctx context.Context, targetPath string) (string, []Subti
 	cidu := ciduMatch[1]
 	dataId := dataIdMatch[1]
 
-	apiURL := fmt.Sprintf("https://megaplay.buzz/stream/getSources?id=%s&cid=%s&cidu=%s", dataId, cid, cidu)
+	// 1. Try getSourcesNew (new MegaPlay client endpoint)
+	apiURL := fmt.Sprintf("https://megaplay.buzz/stream/getSourcesNew?id=%s&cid=%s&cidu=%s", dataId, cid, cidu)
 	apiReq, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err == nil {
+		apiReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+		apiReq.Header.Set("Referer", "https://megaplay.buzz/")
+		apiReq.Header.Set("X-Requested-With", "XMLHttpRequest")
+
+		apiResp, err := httpClient.Do(apiReq)
+		if err == nil {
+			if apiResp.StatusCode == http.StatusOK {
+				var res MegaplaySourcesResponse
+				if err := json.NewDecoder(apiResp.Body).Decode(&res); err == nil && res.Sources.File != "" {
+					apiResp.Body.Close()
+					return res.Sources.File, res.Tracks, nil
+				}
+			}
+			apiResp.Body.Close()
+		}
+	}
+
+	// 2. Fallback to legacy getSources
+	legacyURL := fmt.Sprintf("https://megaplay.buzz/stream/getSources?id=%s&cid=%s&cidu=%s", dataId, cid, cidu)
+	legacyReq, err := http.NewRequestWithContext(ctx, http.MethodGet, legacyURL, nil)
 	if err != nil {
 		return "", nil, err
 	}
-	apiReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-	apiReq.Header.Set("Referer", "https://megaplay.buzz/")
-	apiReq.Header.Set("X-Requested-With", "XMLHttpRequest")
+	legacyReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	legacyReq.Header.Set("Referer", "https://megaplay.buzz/")
+	legacyReq.Header.Set("X-Requested-With", "XMLHttpRequest")
 
-	apiResp, err := httpClient.Do(apiReq)
+	legacyResp, err := httpClient.Do(legacyReq)
 	if err != nil {
 		return "", nil, err
 	}
-	defer apiResp.Body.Close()
+	defer legacyResp.Body.Close()
 
-	if apiResp.StatusCode != http.StatusOK {
-		return "", nil, fmt.Errorf("getSources status %d", apiResp.StatusCode)
+	if legacyResp.StatusCode != http.StatusOK {
+		return "", nil, fmt.Errorf("getSources status %d", legacyResp.StatusCode)
 	}
 
 	var res MegaplaySourcesResponse
-	if err := json.NewDecoder(apiResp.Body).Decode(&res); err != nil {
+	if err := json.NewDecoder(legacyResp.Body).Decode(&res); err != nil {
 		return "", nil, err
 	}
 
@@ -2684,7 +2752,11 @@ func handleMegaplaySources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	upstreamURL := "https://megaplay.buzz" + r.URL.Path
+	path := r.URL.Path
+	if path == "/stream/getSources" {
+		path = "/stream/getSourcesNew"
+	}
+	upstreamURL := "https://megaplay.buzz" + path
 	if r.URL.RawQuery != "" {
 		upstreamURL += "?" + r.URL.RawQuery
 	}
