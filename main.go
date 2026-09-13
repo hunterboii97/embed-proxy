@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -71,6 +72,9 @@ var cdnRules = []CDNRule{
 			return strings.HasSuffix(h, ".shiora.site") || h == "shiora.site" ||
 				strings.HasSuffix(h, ".shiora.top") || h == "shiora.top" ||
 				strings.HasSuffix(h, ".imgnex.top") || h == "imgnex.top" ||
+				strings.HasSuffix(h, ".nexabloom.top") || h == "nexabloom.top" ||
+				strings.HasSuffix(h, ".quavex.top") || h == "quavex.top" ||
+				strings.HasSuffix(h, ".qeltrix.top") || h == "qeltrix.top" ||
 				strings.HasSuffix(h, ".tiktokcdn.com") || h == "tiktokcdn.com" ||
 				strings.HasSuffix(h, ".ipstatp.com") || h == "ipstatp.com"
 		},
@@ -605,7 +609,11 @@ func resolveAbsoluteURL(rel string, base string) string {
 	if err != nil {
 		return rel
 	}
-	return baseURL.ResolveReference(relURL).String()
+	resolved := baseURL.ResolveReference(relURL)
+	if relURL.RawQuery == "" && baseURL.RawQuery != "" && strings.Contains(strings.ToLower(relURL.Path), ".m3u8") {
+		resolved.RawQuery = baseURL.RawQuery
+	}
+	return resolved.String()
 }
 
 func rewriteM3U8(text string, targetURL string, referer string, clientIP string, expires int64, playlistKey string, pkParam string, isEncrypted bool) string {
@@ -915,6 +923,11 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Ensure raw MPEG-TS video chunks (e.g. from MegaPlay CDNs disguised with .jpg or .html extensions) get correct MIME
+		if n > 0 && leadBuf[0] == 0x47 {
+			w.Header().Set("Content-Type", "video/mp2t")
+		}
+
 		if cl := resp.Header.Get("Content-Length"); cl != "" {
 			w.Header().Set("Content-Length", cl)
 		}
@@ -1156,11 +1169,130 @@ func isMegaplayValid(html string) bool {
 		len(html) > 3800
 }
 
-type MegaplaySourcesResponse struct {
-	Sources struct {
+var (
+	megaplayAESKey = func() []byte {
+		k := make([]byte, 32)
+		copy(k, "i?LMTAx0Q6,:}50U")
+		return k
+	}()
+	megaplayIV      = []byte("W0;27ToaUpl_P%'c")
+	megaplayHMACKey = []byte("MpCdnT0k3n!9f2K#xQ7vL5mR8wN1pY4s")
+	pathKeyRegex    = regexp.MustCompile(`(?i)/([a-f0-9]{32})/([a-f0-9]{32})/`)
+)
+
+func decryptMegaplayEnc(enc string) (string, error) {
+	b64 := strings.ReplaceAll(strings.ReplaceAll(enc, "-", "+"), "_", "/")
+	if pad := len(b64) % 4; pad != 0 {
+		b64 += strings.Repeat("=", 4-pad)
+	}
+
+	cipherBytes, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return "", fmt.Errorf("base64 decode error: %w", err)
+	}
+
+	if len(cipherBytes) == 0 || len(cipherBytes)%aes.BlockSize != 0 {
+		return "", fmt.Errorf("invalid ciphertext size: %d", len(cipherBytes))
+	}
+
+	block, err := aes.NewCipher(megaplayAESKey)
+	if err != nil {
+		return "", err
+	}
+
+	mode := cipher.NewCBCDecrypter(block, megaplayIV)
+	plain := make([]byte, len(cipherBytes))
+	mode.CryptBlocks(plain, cipherBytes)
+
+	// PKCS7 unpad
+	padLen := int(plain[len(plain)-1])
+	if padLen <= 0 || padLen > aes.BlockSize {
+		return "", fmt.Errorf("invalid PKCS7 padding: %d", padLen)
+	}
+	for i := len(plain) - padLen; i < len(plain); i++ {
+		if plain[i] != byte(padLen) {
+			return "", fmt.Errorf("bad PKCS7 byte")
+		}
+	}
+	plain = plain[:len(plain)-padLen]
+
+	var decRes struct {
 		File string `json:"file"`
-	} `json:"sources"`
-	Tracks []SubtitleTrack `json:"tracks"`
+	}
+	if err := json.Unmarshal(plain, &decRes); err != nil {
+		return "", fmt.Errorf("json unmarshal error: %w", err)
+	}
+
+	fileURL := decRes.File
+	if fileURL == "" {
+		return "", fmt.Errorf("empty file URL in decrypted payload")
+	}
+
+	// Attach CDN token if path key matches and not already present
+	if !strings.Contains(fileURL, "token=") {
+		matches := pathKeyRegex.FindStringSubmatch(fileURL)
+		if len(matches) >= 3 {
+			pathKey := strings.ToLower(matches[1]) + "/" + strings.ToLower(matches[2])
+			exp := time.Now().Unix() + 86400
+			msg := fmt.Sprintf("%d|%s", exp, pathKey)
+			h := hmac.New(sha256.New, megaplayHMACKey)
+			h.Write([]byte(msg))
+			sig := h.Sum(nil)
+			token := base64.RawURLEncoding.EncodeToString([]byte(msg)) + "." + base64.RawURLEncoding.EncodeToString(sig)
+
+			sep := "?"
+			if strings.Contains(fileURL, "?") {
+				sep = "&"
+			}
+			fileURL = fileURL + sep + "token=" + url.QueryEscape(token)
+		}
+	}
+
+	return fileURL, nil
+}
+
+func parseMegaplaySourcesResponse(body []byte) (string, []SubtitleTrack, error) {
+	var res struct {
+		Sources json.RawMessage `json:"sources"`
+		Enc     string          `json:"enc"`
+		Tracks  []SubtitleTrack `json:"tracks"`
+	}
+	if err := json.Unmarshal(body, &res); err != nil {
+		return "", nil, err
+	}
+
+	var streamFile string
+
+	// 1. Try decrypting enc first if present
+	if res.Enc != "" {
+		decryptedFile, err := decryptMegaplayEnc(res.Enc)
+		if err == nil && decryptedFile != "" {
+			streamFile = decryptedFile
+		}
+	}
+
+	// 2. If no file from enc, try plain sources (object or array)
+	if streamFile == "" && len(res.Sources) > 0 {
+		var objSource struct {
+			File string `json:"file"`
+		}
+		if err := json.Unmarshal(res.Sources, &objSource); err == nil && objSource.File != "" {
+			streamFile = objSource.File
+		} else {
+			var arrSource []struct {
+				File string `json:"file"`
+			}
+			if err := json.Unmarshal(res.Sources, &arrSource); err == nil && len(arrSource) > 0 && arrSource[0].File != "" {
+				streamFile = arrSource[0].File
+			}
+		}
+	}
+
+	if streamFile == "" {
+		return "", nil, fmt.Errorf("no stream file found in getSources response")
+	}
+
+	return streamFile, res.Tracks, nil
 }
 
 type SubtitleTrack struct {
@@ -1224,13 +1356,16 @@ func extractMegaplayHLS(ctx context.Context, targetPath string) (string, []Subti
 		apiResp, err := httpClient.Do(apiReq)
 		if err == nil {
 			if apiResp.StatusCode == http.StatusOK {
-				var res MegaplaySourcesResponse
-				if err := json.NewDecoder(apiResp.Body).Decode(&res); err == nil && res.Sources.File != "" {
-					apiResp.Body.Close()
-					return res.Sources.File, res.Tracks, nil
+				bodyBytes, err := io.ReadAll(apiResp.Body)
+				apiResp.Body.Close()
+				if err == nil {
+					if file, tracks, parseErr := parseMegaplaySourcesResponse(bodyBytes); parseErr == nil && file != "" {
+						return file, tracks, nil
+					}
 				}
+			} else {
+				apiResp.Body.Close()
 			}
-			apiResp.Body.Close()
 		}
 	}
 
@@ -1254,16 +1389,12 @@ func extractMegaplayHLS(ctx context.Context, targetPath string) (string, []Subti
 		return "", nil, fmt.Errorf("getSources status %d", legacyResp.StatusCode)
 	}
 
-	var res MegaplaySourcesResponse
-	if err := json.NewDecoder(legacyResp.Body).Decode(&res); err != nil {
+	bodyBytes, err = io.ReadAll(legacyResp.Body)
+	if err != nil {
 		return "", nil, err
 	}
 
-	if res.Sources.File == "" {
-		return "", nil, fmt.Errorf("no video file in getSources response")
-	}
-
-	return res.Sources.File, res.Tracks, nil
+	return parseMegaplaySourcesResponse(bodyBytes)
 }
 
 func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, preferredLang string) string {
@@ -2779,12 +2910,33 @@ func handleMegaplaySources(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, `{"error":"Failed to read upstream response"}`, http.StatusBadGateway)
+		return
+	}
+
+	// Decrypt enc and inject sources for backwards compatibility with older clients
+	var jsonMap map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &jsonMap); err == nil {
+		if encVal, ok := jsonMap["enc"].(string); ok && encVal != "" {
+			if fileURL, decErr := decryptMegaplayEnc(encVal); decErr == nil && fileURL != "" {
+				jsonMap["sources"] = []map[string]interface{}{
+					{"file": fileURL},
+				}
+				if reencoded, err := json.Marshal(jsonMap); err == nil {
+					bodyBytes = reencoded
+				}
+			}
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
 	w.Header().Set("Cache-Control", "public, max-age=600")
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	w.Write(bodyBytes)
 }
 
 func handleMegaplayLib(w http.ResponseWriter, r *http.Request) {
