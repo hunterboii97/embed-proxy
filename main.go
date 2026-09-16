@@ -1397,7 +1397,7 @@ func extractMegaplayHLS(ctx context.Context, targetPath string) (string, []Subti
 	return parseMegaplaySourcesResponse(bodyBytes)
 }
 
-func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, preferredLang string) string {
+func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, preferredLang string, episodeKey string) string {
 	tracksJSON, _ := json.Marshal(subtitleTracks)
 	if preferredLang == "" {
 		preferredLang = "hin"
@@ -1862,6 +1862,95 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             background: rgba(255, 255, 255, 0.08);
         }
 
+        /* Volume Boost Sub-Setting UI - Pure B&W Theme */
+        .yume-boost-panel {
+            padding: 14px 16px 18px 16px;
+        }
+        .yume-boost-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 14px;
+        }
+        .yume-boost-title {
+            font-size: 13px;
+            font-weight: 500;
+            color: #a1a1aa;
+            letter-spacing: 0.2px;
+        }
+        .yume-boost-val {
+            font-size: 14px;
+            font-weight: 700;
+            color: #ffffff;
+            letter-spacing: 0.3px;
+            font-variant-numeric: tabular-nums;
+        }
+        .yume-boost-slider-wrap {
+            width: 100%%;
+            display: flex;
+            align-items: center;
+            position: relative;
+            padding: 4px 0;
+        }
+        .yume-boost-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%%;
+            height: 6px;
+            background: linear-gradient(to right, #ffffff 0%%, #ffffff var(--boost-pct, 0%%), rgba(255, 255, 255, 0.3) var(--boost-pct, 0%%), rgba(255, 255, 255, 0.3) 100%%);
+            border-radius: 3px;
+            outline: none;
+            cursor: pointer;
+            margin: 0;
+            padding: 0;
+            touch-action: none;
+        }
+        .yume-boost-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%%;
+            background: #ffffff;
+            box-shadow: 0 0 6px rgba(0, 0, 0, 0.7);
+            cursor: pointer;
+        }
+        .yume-boost-slider::-moz-range-thumb {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%%;
+            background: #ffffff;
+            border: none;
+            box-shadow: 0 0 6px rgba(0, 0, 0, 0.7);
+            cursor: pointer;
+        }
+        .yume-boost-ticks {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 12px;
+            padding: 0 2px;
+            user-select: none;
+        }
+        .yume-boost-tick {
+            font-size: 12px;
+            font-weight: 500;
+            color: #a1a1aa;
+            cursor: pointer;
+            padding: 3px 8px;
+            border-radius: 6px;
+            transition: all 0.15s ease;
+        }
+        .yume-boost-tick:hover {
+            color: #ffffff;
+            background: rgba(255, 255, 255, 0.1);
+        }
+        .yume-boost-tick.active {
+            color: #ffffff !important;
+            font-weight: 700 !important;
+            background: rgba(255, 255, 255, 0.12);
+        }
+
         /* Mobile Responsiveness */
         @media (max-width: 640px) {
             #yume-top-bar {
@@ -1950,6 +2039,10 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
                     <span>Speed</span>
                     <span class="yume-item-val" id="yume-val-speed">Normal <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg></span>
                 </div>
+                <div class="yume-menu-item" id="yume-row-boost">
+                    <span>Volume Boost</span>
+                    <span class="yume-item-val" id="yume-val-boost">100%% <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg></span>
+                </div>
             </div>
 
             <div id="yume-menu-audio" class="yume-menu-view hidden">
@@ -1982,6 +2075,27 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
                     <span>Speed</span>
                 </div>
                 <div id="yume-speed-list"></div>
+            </div>
+
+            <div id="yume-menu-boost" class="yume-menu-view hidden">
+                <div class="yume-menu-header" id="yume-back-boost">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                    <span>Volume Boost</span>
+                </div>
+                <div class="yume-boost-panel">
+                    <div class="yume-boost-header">
+                        <span class="yume-boost-title">Level</span>
+                        <span class="yume-boost-val" id="yume-boost-val-text">100%%</span>
+                    </div>
+                    <div class="yume-boost-slider-wrap">
+                        <input type="range" class="yume-boost-slider" id="yume-boost-range" min="100" max="200" step="1" value="100">
+                    </div>
+                    <div class="yume-boost-ticks">
+                        <span class="yume-boost-tick active" data-val="100">100%%</span>
+                        <span class="yume-boost-tick" data-val="150">150%%</span>
+                        <span class="yume-boost-tick" data-val="200">200%%</span>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -2069,6 +2183,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
         const streamURL = '%s';
         const rawTracks = %s || [];
         const preferredLang = '%s';
+        const episodeKey = '%s';
 
         const container = document.getElementById('yume-player-container');
         const video = document.getElementById('yume-video');
@@ -2092,6 +2207,123 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
         let hlsInstance = null;
         let isScrubbing = false;
         let hideControlsTimeout = null;
+
+        // Web Audio API Volume Boost
+        let audioCtx = null;
+        let gainNode = null;
+        let compressorNode = null;
+
+        function initAudioBoost() {
+            if (audioCtx) {
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume().catch(() => {});
+                }
+                return;
+            }
+            try {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const source = audioCtx.createMediaElementSource(video);
+                gainNode = audioCtx.createGain();
+                gainNode.gain.value = 1.0;
+                compressorNode = audioCtx.createDynamicsCompressor();
+                compressorNode.threshold.setValueAtTime(-3, audioCtx.currentTime);
+                compressorNode.knee.setValueAtTime(6, audioCtx.currentTime);
+                compressorNode.ratio.setValueAtTime(20, audioCtx.currentTime);
+                compressorNode.attack.setValueAtTime(0.003, audioCtx.currentTime);
+                compressorNode.release.setValueAtTime(0.25, audioCtx.currentTime);
+                source.connect(gainNode);
+                gainNode.connect(compressorNode);
+                compressorNode.connect(audioCtx.destination);
+                // Restore saved boost level
+                try {
+                    const sb = localStorage.getItem('yume_volume_boost');
+                    if (sb) {
+                        const parsed = parseFloat(sb);
+                        let boostVal = 100;
+                        if (parsed >= 100 && parsed <= 200) boostVal = parsed;
+                        else if (parsed >= 1.0 && parsed <= 2.0) boostVal = parsed * 100;
+                        gainNode.gain.value = boostVal / 100.0;
+                    }
+                } catch(e) {}
+            } catch(e) { console.warn('AudioBoost init failed:', e); }
+        }
+
+        // Continue Watching - Seamless Exact Position Tracking
+        const RESUME_TTL = 4 * 60 * 60 * 1000; // 4 hours
+        let resumeTime = 0;
+        let resumeApplied = false;
+        let lastSaveTime = 0;
+        let saveProgressTimer = null;
+
+        function clearProgress() {
+            if (!episodeKey) return;
+            try { localStorage.removeItem('yume_resume_' + episodeKey); } catch(e) {}
+        }
+
+        function loadResumeTime() {
+            if (!episodeKey) return 0;
+            try {
+                const raw = localStorage.getItem('yume_resume_' + episodeKey);
+                if (!raw) return 0;
+                const data = JSON.parse(raw);
+                if (!data.ts || (Date.now() - data.ts > RESUME_TTL)) {
+                    clearProgress();
+                    return 0;
+                }
+                const savedTime = typeof data.time === 'number' ? data.time : parseFloat(data.time);
+                if (isNaN(savedTime) || savedTime < 5) return 0;
+
+                if (data.duration && isFinite(data.duration) && data.duration > 30) {
+                    if ((data.duration - savedTime < 15) || (savedTime / data.duration) > 0.98) {
+                        clearProgress();
+                        return 0;
+                    }
+                }
+                return savedTime;
+            } catch(e) { return 0; }
+        }
+
+        function saveProgress(force) {
+            if (!episodeKey) return;
+            // Never overwrite saved position before initial resume has applied
+            if (!resumeApplied && resumeTime > 0) return;
+            const cur = video.currentTime;
+            const dur = video.duration;
+            if (!dur || !isFinite(dur) || dur < 30 || isNaN(cur) || video.seeking) return;
+
+            const now = Date.now();
+            if (!force && (now - lastSaveTime < 1000)) return;
+            lastSaveTime = now;
+
+            if (cur < 5) return;
+
+            if (dur - cur < 15 || (cur / dur) > 0.98) {
+                clearProgress();
+                return;
+            }
+
+            try {
+                localStorage.setItem('yume_resume_' + episodeKey, JSON.stringify({
+                    time: Math.round(cur * 10) / 10,
+                    duration: Math.round(dur),
+                    ts: now
+                }));
+            } catch(e) {}
+        }
+
+        function applyResume() {
+            if (resumeApplied || resumeTime <= 0) return;
+            try {
+                if (Math.abs(video.currentTime - resumeTime) > 0.5) {
+                    video.currentTime = resumeTime;
+                }
+                if (Math.abs(video.currentTime - resumeTime) <= 1.5) {
+                    resumeApplied = true;
+                }
+            } catch(e) {}
+        }
+
+        resumeTime = loadResumeTime();
         let activeCues = [];
 
         // Time Formatter (HH:MM:SS or MM:SS)
@@ -2112,7 +2344,8 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             hlsInstance = new Hls({
                 maxBufferLength: 30,
                 maxMaxBufferLength: 60,
-                enableWorker: true
+                enableWorker: true,
+                startPosition: resumeTime > 0 ? resumeTime : -1
             });
             hlsInstance.loadSource(streamURL);
             hlsInstance.attachMedia(video);
@@ -2123,6 +2356,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
                 }
                 initQualityMenu(hlsInstance);
                 initAudioMenu(hlsInstance, preferredLang);
+                applyResume();
             });
 
             hlsInstance.on(Hls.Events.AUDIO_TRACKS_UPDATED, function () {
@@ -2135,6 +2369,19 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             video.src = streamURL;
         }
 
+        video.addEventListener('loadedmetadata', () => {
+            if (video.duration && isFinite(video.duration)) {
+                const curTime = resumeTime > 0 ? resumeTime : video.currentTime;
+                const pct = (curTime / video.duration) * 100;
+                updateTimelineUI(pct);
+                document.getElementById('yume-time-display').textContent = formatTime(curTime) + ' / ' + formatTime(video.duration);
+                document.getElementById('yume-top-time').textContent = formatTime(curTime) + ' / ' + formatTime(video.duration);
+            }
+            applyResume();
+        });
+
+        video.addEventListener('canplay', applyResume);
+
         // Play / Pause Logic
         function togglePlay() {
             if (video.paused || video.ended) {
@@ -2145,13 +2392,22 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
         }
 
         video.addEventListener('play', () => {
+            initAudioBoost();
+            applyResume();
             document.getElementById('yume-icon-play').style.display = 'none';
             document.getElementById('yume-icon-pause').style.display = 'block';
             pauseOverlay.classList.add('hidden');
             resetHideControlsTimer();
+            if (!saveProgressTimer) saveProgressTimer = setInterval(() => saveProgress(false), 5000);
+        });
+
+        video.addEventListener('playing', () => {
+            applyResume();
+            resumeApplied = true;
         });
 
         video.addEventListener('pause', () => {
+            saveProgress(true);
             document.getElementById('yume-icon-play').style.display = 'block';
             document.getElementById('yume-icon-pause').style.display = 'none';
             if (!startScreen || startScreen.classList.contains('hidden')) {
@@ -2159,6 +2415,13 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             }
             container.classList.remove('controls-hidden');
             if (hideControlsTimeout) clearTimeout(hideControlsTimeout);
+        });
+
+        video.addEventListener('seeked', () => {
+            if (resumeTime > 0 && Math.abs(video.currentTime - resumeTime) <= 2) {
+                resumeApplied = true;
+            }
+            saveProgress(true);
         });
 
         document.getElementById('yume-btn-play').addEventListener('click', togglePlay);
@@ -2174,13 +2437,24 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             startScreen.classList.add('hidden');
             video.volume = 1.0;
             video.muted = false;
-            video.play();
+            initAudioBoost();
+            applyResume();
+            video.play().catch(() => {});
+            if (!saveProgressTimer) saveProgressTimer = setInterval(() => saveProgress(false), 5000);
             setTimeout(() => { if (startScreen.parentNode) startScreen.parentNode.removeChild(startScreen); }, 350);
         });
 
         // Rewind & Forward
-        document.getElementById('yume-btn-rewind').addEventListener('click', () => { video.currentTime = Math.max(0, video.currentTime - 10); resetHideControlsTimer(); });
-        document.getElementById('yume-btn-forward').addEventListener('click', () => { video.currentTime = Math.min(video.duration || 9999, video.currentTime + 10); resetHideControlsTimer(); });
+        document.getElementById('yume-btn-rewind').addEventListener('click', () => {
+            video.currentTime = Math.max(0, video.currentTime - 10);
+            resetHideControlsTimer();
+            saveProgress(true);
+        });
+        document.getElementById('yume-btn-forward').addEventListener('click', () => {
+            video.currentTime = Math.min(video.duration || 9999, video.currentTime + 10);
+            resetHideControlsTimer();
+            saveProgress(true);
+        });
 
         // Screenshot
         document.getElementById('yume-btn-snap').addEventListener('click', () => {
@@ -2215,6 +2489,18 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
 
         // Timeline Progress Tracking & Time Code Updates
         video.addEventListener('timeupdate', () => {
+            // Safety fallback for resume
+            if (!resumeApplied && resumeTime > 0) {
+                if (video.currentTime < 2 && video.readyState >= 1) {
+                    applyResume();
+                } else if (video.currentTime >= 2 && Math.abs(video.currentTime - resumeTime) < 5) {
+                    resumeApplied = true;
+                }
+            }
+
+            // Continuously track exact position (throttled to 1s)
+            saveProgress(false);
+
             if (!isScrubbing && video.duration) {
                 const pct = (video.currentTime / video.duration) * 100;
                 updateTimelineUI(pct);
@@ -2229,7 +2515,19 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             } catch(e) {}
         });
 
-        video.addEventListener('ended', () => { try { window.parent.postMessage({ type: 'complete' }, '*'); } catch(e) {} });
+        video.addEventListener('ended', () => {
+            clearProgress();
+            resumeApplied = true;
+            if (saveProgressTimer) { clearInterval(saveProgressTimer); saveProgressTimer = null; }
+            try { window.parent.postMessage({ type: 'complete' }, '*'); } catch(e) {}
+        });
+
+        // Lifecycle save progress flushes
+        window.addEventListener('beforeunload', () => saveProgress(true));
+        window.addEventListener('pagehide', () => saveProgress(true));
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') saveProgress(true);
+        });
 
         video.addEventListener('progress', () => {
             if (video.duration && video.buffered.length > 0) {
@@ -2280,7 +2578,10 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             isScrubbing = false;
             progWrap.classList.remove('scrubbing');
             const pos = getScrubPos(e);
-            if (video.duration) video.currentTime = pos * video.duration;
+            if (video.duration) {
+                video.currentTime = pos * video.duration;
+                saveProgress(true);
+            }
             window.removeEventListener('mousemove', onScrubMove);
             window.removeEventListener('touchmove', onScrubMove);
             window.removeEventListener('mouseup', onScrubEnd);
@@ -2404,6 +2705,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
         const menuQuality = document.getElementById('yume-menu-quality');
         const menuSubtitles = document.getElementById('yume-menu-subtitles');
         const menuSpeed = document.getElementById('yume-menu-speed');
+        const menuBoost = document.getElementById('yume-menu-boost');
 
         function toggleSettings() {
             if (settingsPopover.classList.contains('hidden')) {
@@ -2415,12 +2717,13 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
         }
 
         function showMenu(name) {
-            [menuMain, menuAudio, menuQuality, menuSubtitles, menuSpeed].forEach(m => m && m.classList.add('hidden'));
+            [menuMain, menuAudio, menuQuality, menuSubtitles, menuSpeed, menuBoost].forEach(m => m && m.classList.add('hidden'));
             if (name === 'main' && menuMain) menuMain.classList.remove('hidden');
             if (name === 'audio' && menuAudio) menuAudio.classList.remove('hidden');
             if (name === 'quality' && menuQuality) menuQuality.classList.remove('hidden');
             if (name === 'subtitles' && menuSubtitles) menuSubtitles.classList.remove('hidden');
             if (name === 'speed' && menuSpeed) menuSpeed.classList.remove('hidden');
+            if (name === 'boost' && menuBoost) menuBoost.classList.remove('hidden');
         }
 
         btnSettings.addEventListener('click', (e) => { e.stopPropagation(); toggleSettings(); });
@@ -2429,11 +2732,13 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
         document.getElementById('yume-row-quality').addEventListener('click', () => showMenu('quality'));
         document.getElementById('yume-row-subtitles').addEventListener('click', () => showMenu('subtitles'));
         document.getElementById('yume-row-speed').addEventListener('click', () => showMenu('speed'));
+        document.getElementById('yume-row-boost').addEventListener('click', () => showMenu('boost'));
 
         document.getElementById('yume-back-audio').addEventListener('click', () => showMenu('main'));
         document.getElementById('yume-back-quality').addEventListener('click', () => showMenu('main'));
         document.getElementById('yume-back-subtitles').addEventListener('click', () => showMenu('main'));
         document.getElementById('yume-back-speed').addEventListener('click', () => showMenu('main'));
+        document.getElementById('yume-back-boost').addEventListener('click', () => showMenu('main'));
 
         document.addEventListener('click', (e) => {
             if (!settingsPopover.contains(e.target) && !e.target.closest('#yume-btn-settings')) settingsPopover.classList.add('hidden');
@@ -2634,9 +2939,89 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
         }
         initSubtitlesMenu();
         initSpeedMenu();
+
+        // Volume Boost Menu
+        function initBoostMenu() {
+            const range = document.getElementById('yume-boost-range');
+            const valText = document.getElementById('yume-boost-val-text');
+            const mainVal = document.getElementById('yume-val-boost');
+            const ticks = document.querySelectorAll('.yume-boost-tick');
+            if (!range || !valText || !mainVal) return;
+
+            const chevron = ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+
+            let currentBoostVal = 100; // Default 100%% (1.0x gain), ranges to 200%% (2.0x gain)
+            try {
+                const sb = localStorage.getItem('yume_volume_boost');
+                if (sb) {
+                    const parsed = parseFloat(sb);
+                    if (parsed >= 100 && parsed <= 200) {
+                        currentBoostVal = Math.round(parsed);
+                    } else if (parsed >= 1.0 && parsed <= 2.0) {
+                        currentBoostVal = Math.round(parsed * 100);
+                    }
+                }
+            } catch(e) {}
+
+            function updateBoost(val, persist) {
+                currentBoostVal = Math.max(100, Math.min(200, Math.round(val)));
+                range.value = currentBoostVal;
+
+                // Fill percentage (0%% at 100, 100%% at 200)
+                const pct = currentBoostVal - 100;
+                range.style.setProperty('--boost-pct', pct + '%%');
+
+                const label = currentBoostVal + '%%';
+                valText.textContent = label;
+                mainVal.innerHTML = label + chevron;
+
+                ticks.forEach(t => {
+                    const tVal = parseInt(t.getAttribute('data-val'), 10);
+                    if (tVal === currentBoostVal) {
+                        t.classList.add('active');
+                    } else {
+                        t.classList.remove('active');
+                    }
+                });
+
+                if (gainNode) {
+                    gainNode.gain.value = currentBoostVal / 100.0;
+                }
+
+                if (persist) {
+                    try { localStorage.setItem('yume_volume_boost', String(currentBoostVal)); } catch(e) {}
+                }
+            }
+
+            range.addEventListener('input', (e) => {
+                initAudioBoost();
+                updateBoost(parseFloat(e.target.value), false);
+            });
+
+            range.addEventListener('change', () => {
+                try { localStorage.setItem('yume_volume_boost', String(currentBoostVal)); } catch(e) {}
+            });
+
+            range.addEventListener('click', (e) => e.stopPropagation());
+
+            ticks.forEach(t => {
+                t.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const targetVal = parseInt(t.getAttribute('data-val'), 10);
+                    if (!isNaN(targetVal)) {
+                        initAudioBoost();
+                        updateBoost(targetVal, true);
+                    }
+                });
+            });
+
+            // Initial apply
+            updateBoost(currentBoostVal, false);
+        }
+        initBoostMenu();
     </script>
 </body>
-</html>`, streamURL, string(tracksJSON), preferredLang)
+</html>`, streamURL, string(tracksJSON), preferredLang, episodeKey)
 }
 
 func renderCustomProxy404(path string, message string) string {
@@ -2845,7 +3230,8 @@ func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
 			if strings.HasSuffix(targetPath, "/dub") {
 				prefLang = "dub"
 			}
-			html := renderCleanArtplayer(proxiedStreamURL, proxiedTracks, prefLang)
+			cleanTarget := strings.TrimSuffix(strings.TrimSuffix(targetPath, "/dub"), "_dub")
+			html := renderCleanArtplayer(proxiedStreamURL, proxiedTracks, prefLang, "megaplay_"+strings.ReplaceAll(cleanTarget, "/", "_"))
 
 			embedCache.Store(cacheKey, EmbedCacheEntry{
 				HTML:      html,
@@ -3522,7 +3908,7 @@ func handleAnimeSaltEmbed(w http.ResponseWriter, r *http.Request) {
 		})
 		if err == nil {
 			proxiedStreamURL := "/p/" + streamToken
-			html := renderCleanArtplayer(proxiedStreamURL, proxiedTracks, lang)
+			html := renderCleanArtplayer(proxiedStreamURL, proxiedTracks, lang, fmt.Sprintf("animesalt_%s_%d_%d", slug, season, ep))
 
 			animeSaltCache.Store(cacheKey, EmbedCacheEntry{
 				HTML:      html,
@@ -3935,7 +4321,7 @@ func handleZokoEmbed(w http.ResponseWriter, r *http.Request) {
 		})
 		if err == nil {
 			proxiedStreamURL := "/p/" + streamToken
-			html := renderCleanArtplayer(proxiedStreamURL, proxiedTracks, lang)
+			html := renderCleanArtplayer(proxiedStreamURL, proxiedTracks, lang, fmt.Sprintf("zoko_%d_%d", malID, ep))
 
 			zokoCache.Store(cacheKey, EmbedCacheEntry{
 				HTML:      html,
