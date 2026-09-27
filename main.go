@@ -839,7 +839,34 @@ func streamAbyssCTR(w http.ResponseWriter, resp *http.Response, payload *TokenPa
 		}
 	}
 
-	io.CopyBuffer(w, resp.Body, buf)
+	copyWithImmediateFlush(w, resp.Body, buf)
+}
+
+func copyWithImmediateFlush(w http.ResponseWriter, src io.Reader, buf []byte) error {
+	flusher, hasFlusher := w.(http.Flusher)
+	first := true
+	for {
+		nr, er := src.Read(buf)
+		if nr > 0 {
+			if _, ew := w.Write(buf[:nr]); ew != nil {
+				return ew
+			}
+			if first && hasFlusher {
+				flusher.Flush()
+				first = false
+			}
+		}
+		if er != nil {
+			if er != io.EOF {
+				return er
+			}
+			break
+		}
+	}
+	if hasFlusher {
+		flusher.Flush()
+	}
+	return nil
 }
 
 func handleAbyssChunkedProxy(w http.ResponseWriter, r *http.Request, payload *TokenPayload) {
@@ -921,20 +948,22 @@ func handleAbyssChunkedProxy(w http.ResponseWriter, r *http.Request, payload *To
 			return
 		}
 		cReq.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", reqStartInChunk, reqEndInChunk))
-		cReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+		cReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 		cReq.Header.Set("Referer", "https://abyssplayer.com/")
+		cReq.Header.Set("Origin", "https://abyssplayer.com")
+		cReq.Header.Set("Connection", "keep-alive")
+		cReq.Header.Set("Sec-Fetch-Dest", "video")
+		cReq.Header.Set("Sec-Fetch-Mode", "cors")
+		cReq.Header.Set("Sec-Fetch-Site", "cross-site")
 
 		cResp, err := httpClient.Do(cReq)
 		if err != nil {
 			return
 		}
-		_, copyErr := io.CopyBuffer(w, cResp.Body, buf)
+		copyErr := copyWithImmediateFlush(w, cResp.Body, buf)
 		cResp.Body.Close()
 		if copyErr != nil {
 			return
-		}
-		if flusher, ok := w.(http.Flusher); ok {
-			flusher.Flush()
 		}
 	}
 }
@@ -3663,10 +3692,31 @@ type AnimeSaltSourcesResponse struct {
 	Tracks     []SubtitleTrack `json:"tracks"`
 }
 
+type AnimeSaltStreamCacheEntry struct {
+	ProxiedURL   string
+	Tracks       []SubtitleTrack
+	AudioOptions []AnimeSaltAudioOption
+	ResolvedSlug string
+	ExpiresAt    time.Time
+}
+
+type AnimeSaltAudioLinksCacheEntry struct {
+	AudioLinks []AbyssAudioLink
+	ExpiresAt  time.Time
+}
+
+type AnimeSaltSubCacheEntry struct {
+	Tracks    []SubtitleTrack
+	ExpiresAt time.Time
+}
+
 var (
-	animeSaltSlugCache sync.Map
-	animeTitleCache    sync.Map
-	animeSaltCache     sync.Map
+	animeSaltSlugCache       sync.Map
+	animeTitleCache          sync.Map
+	animeSaltCache           sync.Map
+	animeSaltStreamCache     sync.Map
+	animeSaltAudioLinksCache sync.Map
+	animeSaltSubCache        sync.Map
 )
 
 func readResponseBody(resp *http.Response) ([]byte, error) {
@@ -3945,6 +3995,14 @@ func extractAnimeSaltStream(ctx context.Context, slug string, season int, ep int
 	}
 	requestedLang = strings.ToLower(strings.TrimSpace(requestedLang))
 
+	cacheKey := fmt.Sprintf("stream:%s:%d:%d:%s:%s", slug, season, ep, hashDirect, requestedLang)
+	if val, ok := animeSaltStreamCache.Load(cacheKey); ok {
+		entry := val.(AnimeSaltStreamCacheEntry)
+		if time.Now().Before(entry.ExpiresAt) {
+			return entry.ProxiedURL, entry.Tracks, entry.AudioOptions, entry.ResolvedSlug, nil
+		}
+	}
+
 	selectedLink := ""
 	var audioOptions []AnimeSaltAudioOption
 
@@ -3955,84 +4013,102 @@ func extractAnimeSaltStream(ctx context.Context, slug string, season int, ep int
 		if ep <= 0 {
 			ep = 1
 		}
-		episodeReferer := fmt.Sprintf("https://animesalt.cx/episode/%s-%dx%d/", slug, season, ep)
 
-		epReq, err := http.NewRequestWithContext(ctx, http.MethodGet, episodeReferer, nil)
-		if err != nil {
-			return "", nil, nil, "", err
-		}
-		epReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-		epReq.Header.Set("Referer", fmt.Sprintf("https://animesalt.cx/series/%s/", slug))
-
-		epResp, err := httpClient.Do(epReq)
-		if err != nil {
-			return "", nil, nil, "", err
-		}
-		defer epResp.Body.Close()
-
-		if epResp.StatusCode != http.StatusOK {
-			return "", nil, nil, "", fmt.Errorf("animesalt episode page returned %d", epResp.StatusCode)
-		}
-
-		bodyBytes, err := readResponseBody(epResp)
-		if err != nil {
-			return "", nil, nil, "", err
-		}
-		html := string(bodyBytes)
-
-		reData := regexp.MustCompile(`multi-lang-plyr\.php\?data=([a-zA-Z0-9%_-]+)`)
-		m := reData.FindStringSubmatch(html)
-		if len(m) > 1 {
-			unescapedData, _ := url.QueryUnescape(m[1])
-			b64Dec, err := base64.StdEncoding.DecodeString(unescapedData)
-			if err != nil {
-				b64Dec, _ = base64.URLEncoding.DecodeString(unescapedData)
+		var audioLinks []AbyssAudioLink
+		audioLinksKey := fmt.Sprintf("%s:%d:%d", slug, season, ep)
+		if val, ok := animeSaltAudioLinksCache.Load(audioLinksKey); ok {
+			entry := val.(AnimeSaltAudioLinksCacheEntry)
+			if time.Now().Before(entry.ExpiresAt) {
+				audioLinks = entry.AudioLinks
 			}
-			var audioLinks []AbyssAudioLink
-			if err := json.Unmarshal(b64Dec, &audioLinks); err == nil && len(audioLinks) > 0 {
-				for _, a := range audioLinks {
-					lLower := strings.ToLower(a.Language)
-					lCode := "sub"
-					lLabel := a.Language
-					if strings.Contains(lLower, "hindi") {
-						lCode = "hin"
-						lLabel = "Hindi (Default Dub)"
-					} else if strings.Contains(lLower, "japan") {
-						lCode = "sub"
-						lLabel = "Japanese (Sub)"
-					} else if strings.Contains(lLower, "english") {
-						lCode = "dub"
-						lLabel = "English (Dub)"
-					} else if strings.Contains(lLower, "tamil") {
-						lCode = "tam"
-						lLabel = "Tamil"
-					} else if strings.Contains(lLower, "telugu") {
-						lCode = "tel"
-						lLabel = "Telugu"
-					} else if strings.Contains(lLower, "kannada") {
-						lCode = "kan"
-						lLabel = "Kannada"
-					}
-					audioOptions = append(audioOptions, AnimeSaltAudioOption{
-						Label:    lLabel,
-						Language: a.Language,
-						LangCode: lCode,
-					})
+		}
 
-					if selectedLink == "" {
-						if (requestedLang == "hin" && strings.Contains(lLower, "hindi")) ||
-							((requestedLang == "sub" || requestedLang == "jpn") && strings.Contains(lLower, "japan")) ||
-							((requestedLang == "dub" || requestedLang == "eng") && strings.Contains(lLower, "english")) ||
-							(requestedLang == "tam" && strings.Contains(lLower, "tamil")) ||
-							(requestedLang == "tel" && strings.Contains(lLower, "telugu")) ||
-							(requestedLang == "kan" && strings.Contains(lLower, "kannada")) {
-							selectedLink = a.Link
-						}
+		if len(audioLinks) == 0 {
+			episodeReferer := fmt.Sprintf("https://animesalt.cx/episode/%s-%dx%d/", slug, season, ep)
+
+			epReq, err := http.NewRequestWithContext(ctx, http.MethodGet, episodeReferer, nil)
+			if err != nil {
+				return "", nil, nil, "", err
+			}
+			epReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+			epReq.Header.Set("Referer", fmt.Sprintf("https://animesalt.cx/series/%s/", slug))
+
+			epResp, err := httpClient.Do(epReq)
+			if err != nil {
+				return "", nil, nil, "", err
+			}
+			defer epResp.Body.Close()
+
+			if epResp.StatusCode != http.StatusOK {
+				return "", nil, nil, "", fmt.Errorf("animesalt episode page returned %d", epResp.StatusCode)
+			}
+
+			bodyBytes, err := readResponseBody(epResp)
+			if err != nil {
+				return "", nil, nil, "", err
+			}
+			html := string(bodyBytes)
+
+			reData := regexp.MustCompile(`multi-lang-plyr\.php\?data=([a-zA-Z0-9%_-]+)`)
+			m := reData.FindStringSubmatch(html)
+			if len(m) > 1 {
+				unescapedData, _ := url.QueryUnescape(m[1])
+				b64Dec, err := base64.StdEncoding.DecodeString(unescapedData)
+				if err != nil {
+					b64Dec, _ = base64.URLEncoding.DecodeString(unescapedData)
+				}
+				if err := json.Unmarshal(b64Dec, &audioLinks); err == nil && len(audioLinks) > 0 {
+					animeSaltAudioLinksCache.Store(audioLinksKey, AnimeSaltAudioLinksCacheEntry{
+						AudioLinks: audioLinks,
+						ExpiresAt:  time.Now().Add(2 * time.Hour),
+					})
+				}
+			}
+		}
+
+		if len(audioLinks) > 0 {
+			for _, a := range audioLinks {
+				lLower := strings.ToLower(a.Language)
+				lCode := "sub"
+				lLabel := a.Language
+				if strings.Contains(lLower, "hindi") {
+					lCode = "hin"
+					lLabel = "Hindi (Default Dub)"
+				} else if strings.Contains(lLower, "japan") {
+					lCode = "sub"
+					lLabel = "Japanese (Sub)"
+				} else if strings.Contains(lLower, "english") {
+					lCode = "dub"
+					lLabel = "English (Dub)"
+				} else if strings.Contains(lLower, "tamil") {
+					lCode = "tam"
+					lLabel = "Tamil"
+				} else if strings.Contains(lLower, "telugu") {
+					lCode = "tel"
+					lLabel = "Telugu"
+				} else if strings.Contains(lLower, "kannada") {
+					lCode = "kan"
+					lLabel = "Kannada"
+				}
+				audioOptions = append(audioOptions, AnimeSaltAudioOption{
+					Label:    lLabel,
+					Language: a.Language,
+					LangCode: lCode,
+				})
+
+				if selectedLink == "" {
+					if (requestedLang == "hin" && strings.Contains(lLower, "hindi")) ||
+						((requestedLang == "sub" || requestedLang == "jpn") && strings.Contains(lLower, "japan")) ||
+						((requestedLang == "dub" || requestedLang == "eng") && strings.Contains(lLower, "english")) ||
+						(requestedLang == "tam" && strings.Contains(lLower, "tamil")) ||
+						(requestedLang == "tel" && strings.Contains(lLower, "telugu")) ||
+						(requestedLang == "kan" && strings.Contains(lLower, "kannada")) {
+						selectedLink = a.Link
 					}
 				}
-				if selectedLink == "" && len(audioLinks) > 0 {
-					selectedLink = audioLinks[0].Link
-				}
+			}
+			if selectedLink == "" && len(audioLinks) > 0 {
+				selectedLink = audioLinks[0].Link
 			}
 		}
 	}
@@ -4047,6 +4123,22 @@ func extractAnimeSaltStream(ctx context.Context, slug string, season int, ep int
 
 	if selectedLink == "" {
 		return "", nil, nil, "", fmt.Errorf("could not locate Server 1 AbyssPlayer link on episode page")
+	}
+
+	// Check if selectedLink Abyss stream metadata is already cached
+	if val, ok := animeSaltStreamCache.Load(selectedLink); ok {
+		entry := val.(AnimeSaltStreamCacheEntry)
+		if time.Now().Before(entry.ExpiresAt) {
+			resEntry := AnimeSaltStreamCacheEntry{
+				ProxiedURL:   entry.ProxiedURL,
+				Tracks:       entry.Tracks,
+				AudioOptions: audioOptions,
+				ResolvedSlug: entry.ResolvedSlug,
+				ExpiresAt:    entry.ExpiresAt,
+			}
+			animeSaltStreamCache.Store(cacheKey, resEntry)
+			return entry.ProxiedURL, entry.Tracks, audioOptions, entry.ResolvedSlug, nil
+		}
 	}
 
 	abyssReq, err := http.NewRequestWithContext(ctx, http.MethodGet, selectedLink, nil)
@@ -4144,6 +4236,15 @@ func extractAnimeSaltStream(ctx context.Context, slug string, season int, ep int
 			return "", nil, nil, "", err
 		}
 		proxiedURL := "/p/" + streamToken + "/video.mp4"
+		resEntry := AnimeSaltStreamCacheEntry{
+			ProxiedURL:   proxiedURL,
+			Tracks:       nil,
+			AudioOptions: audioOptions,
+			ResolvedSlug: datas.Slug,
+			ExpiresAt:    time.Now().Add(2 * time.Hour),
+		}
+		animeSaltStreamCache.Store(cacheKey, resEntry)
+		animeSaltStreamCache.Store(selectedLink, resEntry)
 		return proxiedURL, nil, audioOptions, datas.Slug, nil
 	}
 
@@ -4189,6 +4290,15 @@ func extractAnimeSaltStream(ctx context.Context, slug string, season int, ep int
 			return "", nil, nil, "", err
 		}
 		proxiedURL := "/p/" + streamToken + "/video.mp4"
+		resEntry := AnimeSaltStreamCacheEntry{
+			ProxiedURL:   proxiedURL,
+			Tracks:       nil,
+			AudioOptions: audioOptions,
+			ResolvedSlug: datas.Slug,
+			ExpiresAt:    time.Now().Add(2 * time.Hour),
+		}
+		animeSaltStreamCache.Store(cacheKey, resEntry)
+		animeSaltStreamCache.Store(selectedLink, resEntry)
 		return proxiedURL, nil, audioOptions, datas.Slug, nil
 	}
 
@@ -4329,20 +4439,55 @@ func handleAnimeSaltEmbed(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var malIDForSub int
+	if malID > 0 {
+		malIDForSub = malID
+	} else if anilistID > 0 {
+		malIDForSub = resolveMalId(anilistID)
+	}
+
+	var subTracks []SubtitleTrack
+	var subChan chan []SubtitleTrack
+	if malIDForSub > 0 {
+		subKey := fmt.Sprintf("%d:%d", malIDForSub, ep)
+		if val, ok := animeSaltSubCache.Load(subKey); ok {
+			entry := val.(AnimeSaltSubCacheEntry)
+			if time.Now().Before(entry.ExpiresAt) {
+				subTracks = entry.Tracks
+			}
+		}
+		if subTracks == nil {
+			subChan = make(chan []SubtitleTrack, 1)
+			go func() {
+				subCtx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+				defer cancel()
+				_, mTracks, err := extractMegaplayHLS(subCtx, fmt.Sprintf("mal/%d/%d/sub", malIDForSub, ep))
+				if err == nil && len(mTracks) > 0 {
+					animeSaltSubCache.Store(subKey, AnimeSaltSubCacheEntry{
+						Tracks:    mTracks,
+						ExpiresAt: time.Now().Add(2 * time.Hour),
+					})
+					subChan <- mTracks
+				} else {
+					subChan <- nil
+				}
+			}()
+		}
+	}
+
 	proxiedStreamURL, tracks, audioOpts, _, err := extractAnimeSaltStream(r.Context(), slug, season, ep, hash, lang)
 	if err == nil && proxiedStreamURL != "" {
 		// Backfill subtitles from MegaPlay if Server 1 does not provide .vtt tracks directly
 		if len(tracks) == 0 {
-			var malIDForSub int
-			if malID > 0 {
-				malIDForSub = malID
-			} else if anilistID > 0 {
-				malIDForSub = resolveMalId(anilistID)
-			}
-			if malIDForSub > 0 {
-				_, megaplayTracks, _ := extractMegaplayHLS(r.Context(), fmt.Sprintf("mal/%d/%d/sub", malIDForSub, ep))
-				if len(megaplayTracks) > 0 {
-					tracks = megaplayTracks
+			if len(subTracks) > 0 {
+				tracks = subTracks
+			} else if subChan != nil {
+				select {
+				case t := <-subChan:
+					if len(t) > 0 {
+						tracks = t
+					}
+				case <-time.After(200 * time.Millisecond):
 				}
 			}
 		}
@@ -4459,6 +4604,26 @@ func handleAnimeSaltSourceAPI(w http.ResponseWriter, r *http.Request) {
 		lang = "hin"
 	}
 
+	var malIDForSub int
+	if malStr != "" {
+		malIDForSub, _ = strconv.Atoi(malStr)
+	} else if anilistStr != "" {
+		if aId, err := strconv.Atoi(anilistStr); err == nil && aId > 0 {
+			malIDForSub = resolveMalId(aId)
+		}
+	}
+
+	var subTracks []SubtitleTrack
+	if malIDForSub > 0 {
+		subKey := fmt.Sprintf("%d:%d", malIDForSub, ep)
+		if val, ok := animeSaltSubCache.Load(subKey); ok {
+			entry := val.(AnimeSaltSubCacheEntry)
+			if time.Now().Before(entry.ExpiresAt) {
+				subTracks = entry.Tracks
+			}
+		}
+	}
+
 	proxiedStreamURL, tracks, audioOpts, resolvedSlug, err := extractAnimeSaltStream(r.Context(), slug, season, ep, hash, lang)
 	if err != nil || proxiedStreamURL == "" {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -4468,6 +4633,10 @@ func handleAnimeSaltSourceAPI(w http.ResponseWriter, r *http.Request) {
 			"message": err.Error(),
 		})
 		return
+	}
+
+	if len(tracks) == 0 && len(subTracks) > 0 {
+		tracks = subTracks
 	}
 
 	var proxiedTracks []SubtitleTrack
