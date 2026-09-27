@@ -1006,6 +1006,17 @@ func handleAbyssChunkedProxy(w http.ResponseWriter, r *http.Request, payload *To
 		}
 	}
 
+	// Cap range response to at most 1 chunk (5MB) per HTTP request.
+	// This prevents the proxy from getting stuck in an infinite 300MB download loop
+	// when browsers request open-ended ranges like 'bytes=0-'.
+	chunkEnd := ((start / chunkSize) + 1) * chunkSize - 1
+	if chunkEnd >= totalSize {
+		chunkEnd = totalSize - 1
+	}
+	if end > chunkEnd {
+		end = chunkEnd
+	}
+
 	if start > end || start >= totalSize {
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
 		http.Error(w, "Requested range not satisfiable", http.StatusRequestedRangeNotSatisfiable)
@@ -4551,11 +4562,30 @@ func handleAnimeSaltEmbed(w http.ResponseWriter, r *http.Request) {
 			ep, _ = strconv.Atoi(m[3])
 		} else {
 			slug = epPart
-			if len(parts) > 1 && parts[1] != "" {
-				ep, _ = strconv.Atoi(parts[1])
-			}
-			if len(parts) > 2 && parts[2] != "" {
-				lang = parts[2]
+			if len(parts) >= 4 {
+				if s, err := strconv.Atoi(parts[1]); err == nil && s > 0 {
+					season = s
+				}
+				if e, err := strconv.Atoi(parts[2]); err == nil && e > 0 {
+					ep = e
+				}
+				if parts[3] != "" {
+					lang = parts[3]
+				}
+			} else if len(parts) == 3 {
+				if e, err := strconv.Atoi(parts[1]); err == nil && e > 0 {
+					ep = e
+				}
+				if s, err := strconv.Atoi(parts[2]); err == nil && s > 0 {
+					season = ep
+					ep = s
+				} else if parts[2] != "" {
+					lang = parts[2]
+				}
+			} else if len(parts) == 2 {
+				if e, err := strconv.Atoi(parts[1]); err == nil && e > 0 {
+					ep = e
+				}
 			}
 		}
 	}
