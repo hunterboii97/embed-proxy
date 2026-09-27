@@ -56,7 +56,19 @@ var (
 	proxySecretKey      []byte
 	allowedOrigins      []string
 	allowedEmbedDomains []string
-	httpClient          *http.Client
+
+	// Specialized HTTP Clients per service to prevent connection pool contention
+	streamHttpClient    *http.Client // Dedicated for /p/ video chunk streaming (high-throughput, zero-timeout)
+	megaplayHttpClient  *http.Client // Dedicated for MegaPlay scraping & endpoints
+	animesaltHttpClient *http.Client // Dedicated for AnimeSalt scraping & mirrors
+	zokoHttpClient      *http.Client // Dedicated for Zoko scraping & endpoints
+	apiHttpClient       *http.Client // Dedicated for AniList GraphQL / AniZip / MAL metadata
+	httpClient          *http.Client // Fallback general HTTP client
+
+	// Caches for extracted stream URLs and playlists (RAM light: <20MB for thousands of episodes)
+	megaplayStreamCache sync.Map
+	zokoStreamCache     sync.Map
+
 	// 64KB Buffer Pool for zero-copy high-throughput video segment streaming
 	bufferPool = sync.Pool{
 		New: func() interface{} {
@@ -66,6 +78,19 @@ var (
 	}
 	uriRegex = regexp.MustCompile(`URI="([^"]+)"`)
 )
+
+type MegaplayStreamCacheEntry struct {
+	HLSFile   string
+	Tracks    []SubtitleTrack
+	ExpiresAt time.Time
+}
+
+type ZokoStreamCacheEntry struct {
+	StreamFile string
+	Tracks     []SubtitleTrack
+	Skip       *ZokoSkip
+	ExpiresAt  time.Time
+}
 
 var cdnRules = []CDNRule{
 	{
@@ -363,25 +388,111 @@ func initConfig() {
 		}
 	}
 
-	transport := &http.Transport{
+	// 1. streamHttpClient: High-capacity pool for video streaming (/p/*) with NO timeout
+	streamTransport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
 			Timeout:   10 * time.Second,
-			KeepAlive: 30 * time.Second,
+			KeepAlive: 90 * time.Second,
 		}).DialContext,
 		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          2000,
-		MaxIdleConnsPerHost:   250,
+		MaxIdleConns:          2500,
+		MaxIdleConnsPerHost:   400,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 20 * time.Second,
+		ResponseHeaderTimeout: 25 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		DisableCompression:    true,
 	}
+	streamHttpClient = &http.Client{
+		Transport: streamTransport,
+		Timeout:   0, // No client timeout for streaming video segments!
+	}
 
+	// 2. megaplayHttpClient: Dedicated pool for MegaPlay scraping with fast-fail timeouts
+	megaplayTransport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   6 * time.Second,
+			KeepAlive: 45 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          300,
+		MaxIdleConnsPerHost:   100,
+		IdleConnTimeout:       60 * time.Second,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+		DisableCompression:    true,
+	}
+	megaplayHttpClient = &http.Client{
+		Transport: megaplayTransport,
+		Timeout:   10 * time.Second,
+	}
+
+	// 3. animesaltHttpClient: Dedicated pool for AnimeSalt scraping & mirrors
+	animesaltTransport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   6 * time.Second,
+			KeepAlive: 45 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          300,
+		MaxIdleConnsPerHost:   100,
+		IdleConnTimeout:       60 * time.Second,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+		DisableCompression:    true,
+	}
+	animesaltHttpClient = &http.Client{
+		Transport: animesaltTransport,
+		Timeout:   10 * time.Second,
+	}
+
+	// 4. zokoHttpClient: Dedicated pool for Zoko scraping
+	zokoTransport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   6 * time.Second,
+			KeepAlive: 45 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          300,
+		MaxIdleConnsPerHost:   100,
+		IdleConnTimeout:       60 * time.Second,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+		DisableCompression:    true,
+	}
+	zokoHttpClient = &http.Client{
+		Transport: zokoTransport,
+		Timeout:   10 * time.Second,
+	}
+
+	// 5. apiHttpClient: Rapid metadata resolver (AniZip, AniList GraphQL, MAL)
+	apiTransport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   4 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   50,
+		IdleConnTimeout:       30 * time.Second,
+		TLSHandshakeTimeout:   4 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Second,
+		DisableCompression:    true,
+	}
+	apiHttpClient = &http.Client{
+		Transport: apiTransport,
+		Timeout:   5 * time.Second,
+	}
+
+	// 6. General fallback client
 	httpClient = &http.Client{
-		Transport: transport,
-		Timeout:   35 * time.Second,
+		Transport: streamTransport,
+		Timeout:   30 * time.Second,
 	}
 }
 
@@ -956,7 +1067,7 @@ func handleAbyssChunkedProxy(w http.ResponseWriter, r *http.Request, payload *To
 		cReq.Header.Set("Sec-Fetch-Mode", "cors")
 		cReq.Header.Set("Sec-Fetch-Site", "cross-site")
 
-		cResp, err := httpClient.Do(cReq)
+		cResp, err := streamHttpClient.Do(cReq)
 		if err != nil {
 			return
 		}
@@ -1088,7 +1199,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		upstreamReq.Header.Set("True-Client-IP", clientIP)
 	}
 
-	resp, err := httpClient.Do(upstreamReq)
+	resp, err := streamHttpClient.Do(upstreamReq)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"Upstream fetch failed: %s"}`, err.Error()), http.StatusBadGateway)
 		return
@@ -1173,7 +1284,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 			w.Write(leadBuf[252:n])
 			bufPtr := bufferPool.Get().(*[]byte)
 			defer bufferPool.Put(bufPtr)
-			_, _ = io.CopyBuffer(w, resp.Body, *bufPtr)
+			_ = copyWithImmediateFlush(w, resp.Body, *bufPtr)
 			return
 		}
 
@@ -1194,7 +1305,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 		bufPtr := bufferPool.Get().(*[]byte)
 		defer bufferPool.Put(bufPtr)
-		_, _ = io.CopyBuffer(w, resp.Body, *bufPtr)
+		_ = copyWithImmediateFlush(w, resp.Body, *bufPtr)
 		return
 	}
 
@@ -1210,7 +1321,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	bufPtr := bufferPool.Get().(*[]byte)
 	defer bufferPool.Put(bufPtr)
 
-	_, _ = io.CopyBuffer(w, resp.Body, *bufPtr)
+	_ = copyWithImmediateFlush(w, resp.Body, *bufPtr)
 }
 
 // MegaPlay embed cache structure
@@ -1243,8 +1354,7 @@ func resolveMalId(idNum int) int {
 	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
 	if err == nil {
 		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-		client := &http.Client{Timeout: 3 * time.Second}
-		resp, err := client.Do(req)
+		resp, err := apiHttpClient.Do(req)
 		if err == nil && resp.StatusCode == http.StatusOK {
 			var data struct {
 				Mappings struct {
@@ -1272,8 +1382,7 @@ func resolveMalId(idNum int) int {
 	if err == nil {
 		gqlReq.Header.Set("Content-Type", "application/json")
 		gqlReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-		client := &http.Client{Timeout: 3 * time.Second}
-		resp, err := client.Do(gqlReq)
+		resp, err := apiHttpClient.Do(gqlReq)
 		if err == nil && resp.StatusCode == http.StatusOK {
 			var gqlRes struct {
 				Data struct {
@@ -1296,8 +1405,7 @@ func resolveMalId(idNum int) int {
 	kitsuReq, err := http.NewRequest(http.MethodGet, kitsuURL, nil)
 	if err == nil {
 		kitsuReq.Header.Set("User-Agent", "Mozilla/5.0")
-		client := &http.Client{Timeout: 3 * time.Second}
-		resp, err := client.Do(kitsuReq)
+		resp, err := apiHttpClient.Do(kitsuReq)
 		if err == nil && resp.StatusCode == http.StatusOK {
 			var kitsuData struct {
 				Data []struct {
@@ -1394,7 +1502,7 @@ func fetchMegaplayStream(ctx context.Context, path string) (string, int, error) 
 	upstreamReq.Header.Set("Sec-Fetch-Mode", "navigate")
 	upstreamReq.Header.Set("Sec-Fetch-Site", "cross-site")
 
-	resp, err := httpClient.Do(upstreamReq)
+	resp, err := megaplayHttpClient.Do(upstreamReq)
 	if err != nil {
 		return "", 502, err
 	}
@@ -1570,7 +1678,7 @@ func extractMegaplayHLS(ctx context.Context, targetPath string) (string, []Subti
 	upstreamReq.Header.Set("Sec-Fetch-Dest", "iframe")
 	upstreamReq.Header.Set("Sec-Fetch-Mode", "navigate")
 
-	resp, err := httpClient.Do(upstreamReq)
+	resp, err := megaplayHttpClient.Do(upstreamReq)
 	if err != nil {
 		return "", nil, err
 	}
@@ -1610,7 +1718,7 @@ func extractMegaplayHLS(ctx context.Context, targetPath string) (string, []Subti
 		apiReq.Header.Set("Referer", "https://megaplay.buzz/")
 		apiReq.Header.Set("X-Requested-With", "XMLHttpRequest")
 
-		apiResp, err := httpClient.Do(apiReq)
+		apiResp, err := megaplayHttpClient.Do(apiReq)
 		if err == nil {
 			if apiResp.StatusCode == http.StatusOK {
 				bodyBytes, err := io.ReadAll(apiResp.Body)
@@ -1636,7 +1744,7 @@ func extractMegaplayHLS(ctx context.Context, targetPath string) (string, []Subti
 	legacyReq.Header.Set("Referer", "https://megaplay.buzz/")
 	legacyReq.Header.Set("X-Requested-With", "XMLHttpRequest")
 
-	legacyResp, err := httpClient.Do(legacyReq)
+	legacyResp, err := megaplayHttpClient.Do(legacyReq)
 	if err != nil {
 		return "", nil, err
 	}
@@ -3440,30 +3548,88 @@ func renderCustomProxy404(path string, message string) string {
 func extractMegaplayHLSWithFallback(ctx context.Context, originalPath string) (string, []SubtitleTrack, error) {
 	normPath := normalizeMegaplayPath(originalPath)
 
-	// Candidate 1: Normalized MAL path on megaplay.buzz
-	hlsFile, tracks, err := extractMegaplayHLS(ctx, normPath)
-	if err == nil && hlsFile != "" {
-		return hlsFile, tracks, nil
+	// Check cache first for 0ms instant hit
+	if val, ok := megaplayStreamCache.Load(normPath); ok {
+		entry := val.(MegaplayStreamCacheEntry)
+		if time.Now().Before(entry.ExpiresAt) {
+			return entry.HLSFile, entry.Tracks, nil
+		}
 	}
-
-	// Candidate 2: Original raw path on megaplay.buzz if different
 	if originalPath != normPath {
-		hlsFile, tracks, err = extractMegaplayHLS(ctx, originalPath)
-		if err == nil && hlsFile != "" {
-			return hlsFile, tracks, nil
+		if val, ok := megaplayStreamCache.Load(originalPath); ok {
+			entry := val.(MegaplayStreamCacheEntry)
+			if time.Now().Before(entry.ExpiresAt) {
+				return entry.HLSFile, entry.Tracks, nil
+			}
 		}
 	}
 
-	// Candidate 3: Try alternate prefix (ani/ vs mal/)
+	// Prepare candidate mirrors
+	candidates := []string{normPath}
+	if originalPath != normPath {
+		candidates = append(candidates, originalPath)
+	}
 	if strings.HasPrefix(normPath, "mal/") {
-		aniCandidate := "ani/" + strings.TrimPrefix(normPath, "mal/")
-		hlsFile, tracks, err = extractMegaplayHLS(ctx, aniCandidate)
+		candidates = append(candidates, "ani/"+strings.TrimPrefix(normPath, "mal/"))
+	} else if strings.HasPrefix(normPath, "ani/") {
+		candidates = append(candidates, "mal/"+strings.TrimPrefix(normPath, "ani/"))
+	}
+
+	if len(candidates) == 1 {
+		hlsFile, tracks, err := extractMegaplayHLS(ctx, candidates[0])
 		if err == nil && hlsFile != "" {
+			cacheEntry := MegaplayStreamCacheEntry{
+				HLSFile:   hlsFile,
+				Tracks:    tracks,
+				ExpiresAt: time.Now().Add(3 * time.Hour),
+			}
+			megaplayStreamCache.Store(normPath, cacheEntry)
 			return hlsFile, tracks, nil
+		}
+		return "", nil, err
+	}
+
+	// Run candidates in parallel race! First valid stream wins and cancels others
+	subCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	type candResult struct {
+		file   string
+		tracks []SubtitleTrack
+		err    error
+	}
+
+	resChan := make(chan candResult, len(candidates))
+	for _, cand := range candidates {
+		c := cand
+		go func() {
+			f, t, e := extractMegaplayHLS(subCtx, c)
+			resChan <- candResult{file: f, tracks: t, err: e}
+		}()
+	}
+
+	var lastErr error
+	for i := 0; i < len(candidates); i++ {
+		res := <-resChan
+		if res.err == nil && res.file != "" {
+			cancel() // Cancel remaining candidate requests immediately
+			cacheEntry := MegaplayStreamCacheEntry{
+				HLSFile:   res.file,
+				Tracks:    res.tracks,
+				ExpiresAt: time.Now().Add(3 * time.Hour),
+			}
+			megaplayStreamCache.Store(normPath, cacheEntry)
+			if originalPath != normPath {
+				megaplayStreamCache.Store(originalPath, cacheEntry)
+			}
+			return res.file, res.tracks, nil
+		}
+		if res.err != nil {
+			lastErr = res.err
 		}
 	}
 
-	return "", nil, fmt.Errorf("all megaplay extraction mirrors failed for path: %s", originalPath)
+	return "", nil, fmt.Errorf("all megaplay extraction mirrors failed for path: %s (last err: %v)", originalPath, lastErr)
 }
 
 func handleMegaplayEmbed(w http.ResponseWriter, r *http.Request) {
@@ -3603,7 +3769,7 @@ func handleMegaplaySources(w http.ResponseWriter, r *http.Request) {
 	upstreamReq.Header.Set("Referer", "https://megaplay.buzz/")
 	upstreamReq.Header.Set("X-Requested-With", "XMLHttpRequest")
 
-	resp, err := httpClient.Do(upstreamReq)
+	resp, err := megaplayHttpClient.Do(upstreamReq)
 	if err != nil {
 		http.Error(w, `{"error":"Upstream fetch failed"}`, http.StatusBadGateway)
 		return
@@ -3660,7 +3826,7 @@ func handleMegaplayLib(w http.ResponseWriter, r *http.Request) {
 	upstreamReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 	upstreamReq.Header.Set("Referer", "https://megaplay.buzz/")
 
-	resp, err := httpClient.Do(upstreamReq)
+	resp, err := megaplayHttpClient.Do(upstreamReq)
 	if err != nil {
 		http.Error(w, "error", http.StatusBadGateway)
 		return
@@ -3762,8 +3928,7 @@ func resolveAnimeTitle(anilistID int, malID int) string {
 	req, err := http.NewRequest(http.MethodGet, aniZipURL, nil)
 	if err == nil {
 		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-		client := &http.Client{Timeout: 4 * time.Second}
-		resp, err := client.Do(req)
+		resp, err := apiHttpClient.Do(req)
 		if err == nil && resp.StatusCode == http.StatusOK {
 			bodyBytes, bErr := readResponseBody(resp)
 			if bErr == nil {
@@ -3804,8 +3969,7 @@ func resolveAnimeTitle(anilistID int, malID int) string {
 		if err == nil {
 			gqlReq.Header.Set("Content-Type", "application/json")
 			gqlReq.Header.Set("User-Agent", "Mozilla/5.0")
-			client := &http.Client{Timeout: 4 * time.Second}
-			resp, err := client.Do(gqlReq)
+			resp, err := apiHttpClient.Do(gqlReq)
 			if err == nil && resp.StatusCode == http.StatusOK {
 				bodyBytes, bErr := readResponseBody(resp)
 				if bErr == nil {
@@ -3844,8 +4008,7 @@ func resolveAnimeTitle(anilistID int, malID int) string {
 		req, err := http.NewRequest(http.MethodGet, reqURL, nil)
 		if err == nil {
 			req.Header.Set("User-Agent", "Mozilla/5.0")
-			client := &http.Client{Timeout: 4 * time.Second}
-			resp, err := client.Do(req)
+			resp, err := apiHttpClient.Do(req)
 			if err == nil && resp.StatusCode == http.StatusOK {
 				bodyBytes, bErr := readResponseBody(resp)
 				if bErr == nil {
@@ -3916,7 +4079,7 @@ func resolveAnimeSaltSlug(ctx context.Context, anilistID int, malID int, manualS
 		searchReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 		searchReq.Header.Set("Referer", "https://animesalt.cx/")
 
-		resp, err := httpClient.Do(searchReq)
+		resp, err := animesaltHttpClient.Do(searchReq)
 		if err != nil {
 			continue
 		}
@@ -4033,7 +4196,7 @@ func extractAnimeSaltStream(ctx context.Context, slug string, season int, ep int
 			epReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 			epReq.Header.Set("Referer", fmt.Sprintf("https://animesalt.cx/series/%s/", slug))
 
-			epResp, err := httpClient.Do(epReq)
+			epResp, err := animesaltHttpClient.Do(epReq)
 			if err != nil {
 				return "", nil, nil, "", err
 			}
@@ -4148,7 +4311,7 @@ func extractAnimeSaltStream(ctx context.Context, slug string, season int, ep int
 	abyssReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 	abyssReq.Header.Set("Referer", "https://animesalt.cx/")
 
-	abyssResp, err := httpClient.Do(abyssReq)
+	abyssResp, err := animesaltHttpClient.Do(abyssReq)
 	if err != nil {
 		return "", nil, nil, "", err
 	}
@@ -4739,6 +4902,14 @@ func extractZokoHLS(ctx context.Context, malID int, ep int, track string) (strin
 		return "", nil, nil, fmt.Errorf("invalid mal_id: %d", malID)
 	}
 
+	cacheKey := fmt.Sprintf("%d:%d:%s", malID, ep, track)
+	if val, ok := zokoStreamCache.Load(cacheKey); ok {
+		entry := val.(ZokoStreamCacheEntry)
+		if time.Now().Before(entry.ExpiresAt) {
+			return entry.StreamFile, entry.Tracks, entry.Skip, nil
+		}
+	}
+
 	targetURL := fmt.Sprintf("https://zokoanime.video/stream/mal/%d/%d/%s", malID, ep, track)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
@@ -4748,7 +4919,7 @@ func extractZokoHLS(ctx context.Context, malID int, ep int, track string) (strin
 	req.Header.Set("Referer", "https://zokoanime.video/")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 
-	resp, err := httpClient.Do(req)
+	resp, err := zokoHttpClient.Do(req)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -4792,6 +4963,13 @@ func extractZokoHLS(ctx context.Context, malID int, ep int, track string) (strin
 			})
 		}
 	}
+
+	zokoStreamCache.Store(cacheKey, ZokoStreamCacheEntry{
+		StreamFile: data.Src,
+		Tracks:     tracks,
+		Skip:       data.Skip,
+		ExpiresAt:  time.Now().Add(3 * time.Hour),
+	})
 
 	return data.Src, tracks, data.Skip, nil
 }
