@@ -9,6 +9,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
+	"crypto/md5"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -37,11 +38,18 @@ type CDNRule struct {
 }
 
 type TokenPayload struct {
-	URL string `json:"url"`
-	Ref string `json:"ref,omitempty"`
-	Exp int64  `json:"exp"`
-	IP  string `json:"ip,omitempty"`
-	Key string `json:"key,omitempty"`
+	URL       string `json:"url"`
+	Ref       string `json:"ref,omitempty"`
+	Exp       int64  `json:"exp"`
+	IP        string `json:"ip,omitempty"`
+	Key       string `json:"key,omitempty"`
+	Cipher    string `json:"cipher,omitempty"`
+	TotalSize int64  `json:"ts,omitempty"`
+	PartSize  int64  `json:"ps,omitempty"`
+	ChunkSize int64  `json:"cs,omitempty"`
+	Md5ID     int    `json:"mid,omitempty"`
+	ResID     int    `json:"rid,omitempty"`
+	Domain    string `json:"dom,omitempty"`
 }
 
 var (
@@ -168,6 +176,13 @@ var cdnRules = []CDNRule{
 				strings.HasSuffix(h, ".animesalt.cx") || h == "animesalt.cx"
 		},
 		Referer: "https://animesalt.cx/", Origin: "https://as-cdn26.top", SecSite: "cross-site",
+	},
+	{
+		Matches: func(h string) bool {
+			return strings.HasSuffix(h, ".sssrr.org") || h == "sssrr.org" ||
+				strings.HasSuffix(h, ".abyssplayer.com") || h == "abyssplayer.com"
+		},
+		Referer: "https://abyssplayer.com/", Origin: "https://abyssplayer.com", SecSite: "cross-site",
 	},
 	{
 		Matches: func(h string) bool { return strings.HasSuffix(h, ".vid-cdn.xyz") || h == "vid-cdn.xyz" },
@@ -724,6 +739,206 @@ func getClientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
+func genSoraToken(path string, size int64) string {
+	sizeStr := strconv.FormatInt(size, 10)
+	quirkBytes := make([]byte, len(sizeStr))
+	for i := 0; i < len(sizeStr); i++ {
+		quirkBytes[i] = sizeStr[i] - '0'
+	}
+	h := md5.Sum(quirkBytes)
+	hexKey := hex.EncodeToString(h[:])
+	key := []byte(hexKey)
+	iv := key[:16]
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return ""
+	}
+	ctr := cipher.NewCTR(block, iv)
+	enc := make([]byte, len(path))
+	ctr.XORKeyStream(enc, []byte(path))
+
+	b1 := strings.TrimRight(base64.StdEncoding.EncodeToString(enc), "=")
+	b2 := strings.TrimRight(base64.StdEncoding.EncodeToString([]byte(b1)), "=")
+	return b2
+}
+
+func streamAbyssCTR(w http.ResponseWriter, resp *http.Response, payload *TokenPayload, reqRange string) {
+	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("Accept-Ranges", "bytes")
+	if cl := resp.Header.Get("Content-Length"); cl != "" {
+		w.Header().Set("Content-Length", cl)
+	}
+	if cr := resp.Header.Get("Content-Range"); cr != "" {
+		w.Header().Set("Content-Range", cr)
+	}
+	w.WriteHeader(resp.StatusCode)
+
+	var rangeStart int64 = 0
+	if cr := resp.Header.Get("Content-Range"); cr != "" {
+		parts := strings.Split(cr, " ")
+		if len(parts) == 2 {
+			rangePart := strings.Split(parts[1], "/")[0]
+			startStr := strings.Split(rangePart, "-")[0]
+			rangeStart, _ = strconv.ParseInt(startStr, 10, 64)
+		}
+	} else if reqRange != "" {
+		trimmed := strings.TrimPrefix(reqRange, "bytes=")
+		startStr := strings.Split(trimmed, "-")[0]
+		rangeStart, _ = strconv.ParseInt(startStr, 10, 64)
+	}
+
+	bufPtr := bufferPool.Get().(*[]byte)
+	defer bufferPool.Put(bufPtr)
+
+	if rangeStart >= 65536 {
+		io.CopyBuffer(w, resp.Body, *bufPtr)
+		return
+	}
+
+	filename := payload.Key
+	if filename == "" {
+		uParts := strings.Split(strings.Split(payload.URL, "?")[0], "/")
+		filename = uParts[len(uParts)-1]
+	}
+	h := md5.Sum([]byte(filename))
+	hexKey := hex.EncodeToString(h[:])
+	key := []byte(hexKey)
+	iv := key[:16]
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		io.CopyBuffer(w, resp.Body, *bufPtr)
+		return
+	}
+	ctr := cipher.NewCTR(block, iv)
+
+	if rangeStart > 0 {
+		discard := make([]byte, rangeStart)
+		ctr.XORKeyStream(discard, discard)
+	}
+
+	encBytesRemaining := int64(65536 - rangeStart)
+	buf := *bufPtr
+
+	for encBytesRemaining > 0 {
+		readSize := int64(len(buf))
+		if readSize > encBytesRemaining {
+			readSize = encBytesRemaining
+		}
+		n, rErr := resp.Body.Read(buf[:readSize])
+		if n > 0 {
+			ctr.XORKeyStream(buf[:n], buf[:n])
+			if _, wErr := w.Write(buf[:n]); wErr != nil {
+				return
+			}
+			encBytesRemaining -= int64(n)
+		}
+		if rErr != nil {
+			return
+		}
+	}
+
+	io.CopyBuffer(w, resp.Body, buf)
+}
+
+func handleAbyssChunkedProxy(w http.ResponseWriter, r *http.Request, payload *TokenPayload) {
+	totalSize := payload.TotalSize
+	chunkSize := payload.ChunkSize
+	if chunkSize <= 0 {
+		chunkSize = 5242880
+	}
+
+	rangeHeader := r.Header.Get("Range")
+	var start int64 = 0
+	var end int64 = totalSize - 1
+
+	if rangeHeader != "" && strings.HasPrefix(rangeHeader, "bytes=") {
+		spec := strings.TrimPrefix(rangeHeader, "bytes=")
+		parts := strings.Split(spec, "-")
+		if len(parts) == 2 {
+			if pStart, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
+				start = pStart
+			}
+			if parts[1] != "" {
+				if pEnd, err := strconv.ParseInt(parts[1], 10, 64); err == nil && pEnd < totalSize {
+					end = pEnd
+				}
+			}
+		}
+	}
+
+	if start > end || start >= totalSize {
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+		http.Error(w, "Requested range not satisfiable", http.StatusRequestedRangeNotSatisfiable)
+		return
+	}
+
+	contentLength := end - start + 1
+	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("Content-Length", strconv.FormatInt(contentLength, 10))
+	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, totalSize))
+	w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
+	w.WriteHeader(http.StatusPartialContent)
+
+	startChunkIdx := start / chunkSize
+	endChunkIdx := end / chunkSize
+
+	bufPtr := bufferPool.Get().(*[]byte)
+	defer bufferPool.Put(bufPtr)
+	buf := *bufPtr
+
+	for idx := startChunkIdx; idx <= endChunkIdx; idx++ {
+		select {
+		case <-r.Context().Done():
+			return
+		default:
+		}
+
+		cStartByte := idx * chunkSize
+		cEndByte := cStartByte + chunkSize - 1
+		if cEndByte >= totalSize {
+			cEndByte = totalSize - 1
+		}
+
+		reqStartInChunk := int64(0)
+		if start > cStartByte {
+			reqStartInChunk = start - cStartByte
+		}
+
+		reqEndInChunk := cEndByte - cStartByte
+		if end < cEndByte {
+			reqEndInChunk = end - cStartByte
+		}
+
+		soraPath := fmt.Sprintf("/mp4/%d/%d/%d/%d/%d", payload.Md5ID, payload.ResID, totalSize, chunkSize, idx)
+		soraToken := genSoraToken(soraPath, totalSize)
+		chunkURL := fmt.Sprintf("https://%s/sora/%d/%s", payload.Domain, totalSize, soraToken)
+
+		cReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, chunkURL, nil)
+		if err != nil {
+			return
+		}
+		cReq.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", reqStartInChunk, reqEndInChunk))
+		cReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+		cReq.Header.Set("Referer", "https://abyssplayer.com/")
+
+		cResp, err := httpClient.Do(cReq)
+		if err != nil {
+			return
+		}
+		_, copyErr := io.CopyBuffer(w, cResp.Body, buf)
+		cResp.Body.Close()
+		if copyErr != nil {
+			return
+		}
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+	}
+}
+
 func handleProxy(w http.ResponseWriter, r *http.Request) {
 	setCORS(w)
 	if r.Method == http.MethodOptions {
@@ -752,6 +967,11 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	// Check token expiration
 	if payload.Exp > 0 && time.Now().Unix() > payload.Exp {
 		http.Error(w, `{"error":"Token expired"}`, http.StatusGone)
+		return
+	}
+
+	if payload.Cipher == "abyss-chunked" {
+		handleAbyssChunkedProxy(w, r, payload)
 		return
 	}
 
@@ -903,6 +1123,11 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
+
+	if payload.Cipher == "abyss-ctr" {
+		streamAbyssCTR(w, resp, payload, r.Header.Get("Range"))
+		return
+	}
 
 	// Transparently strip fake PNG header (252 bytes) prepended by MegaPlay/TikTok/ByteDance CDNs
 	if resp.StatusCode == http.StatusOK && !isVTT && !isSRT {
@@ -1098,6 +1323,9 @@ func normalizeMegaplayPath(rawPath string) string {
 		if len(parts) > 2 {
 			lang = parts[2]
 		}
+	}
+	if lang != "dub" {
+		lang = "sub"
 	}
 
 	idNum, err := strconv.Atoi(idStr)
@@ -1397,11 +1625,22 @@ func extractMegaplayHLS(ctx context.Context, targetPath string) (string, []Subti
 	return parseMegaplaySourcesResponse(bodyBytes)
 }
 
-func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, preferredLang string, episodeKey string) string {
+type AnimeSaltAudioOption struct {
+	Label    string `json:"label"`
+	Language string `json:"language"`
+	LangCode string `json:"langCode"`
+}
+
+func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, preferredLang string, episodeKey string, audioOptions ...AnimeSaltAudioOption) string {
 	tracksJSON, _ := json.Marshal(subtitleTracks)
 	if preferredLang == "" {
-		preferredLang = "hin"
+		preferredLang = "sub"
 	}
+	var auds []AnimeSaltAudioOption
+	if len(audioOptions) > 0 {
+		auds = audioOptions
+	}
+	audsJSON, _ := json.Marshal(auds)
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2023,7 +2262,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
         <!-- Floating Settings Popover Elevated Above Timeline -->
         <div id="yume-settings-popover" class="hidden">
             <div id="yume-menu-main" class="yume-menu-view">
-                <div class="yume-menu-item" id="yume-row-audio">
+                <div class="yume-menu-item" id="yume-row-audio" style="display: none;">
                     <span>Audio Track</span>
                     <span class="yume-item-val" id="yume-val-audio">Default <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg></span>
                 </div>
@@ -2184,6 +2423,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
         const rawTracks = %s || [];
         const preferredLang = '%s';
         const episodeKey = '%s';
+        const rawAudioOptions = %s || [];
 
         const container = document.getElementById('yume-player-container');
         const video = document.getElementById('yume-video');
@@ -2339,8 +2579,9 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             return (m < 10 ? '0' + m : m) + ':' + (s < 10 ? '0' + s : s);
         }
 
-        // HLS Initialization
-        if (Hls.isSupported()) {
+        // Video Stream Initialization (HLS for MegaPlay/Zoko or Native MP4 for AnimeSalt)
+        const isHls = streamURL.indexOf('.mp4') === -1 && streamURL.indexOf('video.mp4') === -1;
+        if (isHls && Hls.isSupported()) {
             hlsInstance = new Hls({
                 maxBufferLength: 30,
                 maxMaxBufferLength: 60,
@@ -2365,8 +2606,16 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
 
             hlsInstance.on(Hls.ErrorTypes.NETWORK_ERROR, () => hlsInstance.startLoad());
             hlsInstance.on(Hls.ErrorTypes.MEDIA_ERROR, () => hlsInstance.recoverMediaError());
-        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        } else if (isHls && video.canPlayType('application/vnd.apple.mpegurl')) {
             video.src = streamURL;
+        } else {
+            // Direct MP4 playback (AnimeSalt, etc.)
+            video.src = streamURL;
+            initQualityMenu(null);
+            initAudioMenu(null, preferredLang);
+            if (resumeTime > 0) {
+                video.currentTime = resumeTime;
+            }
         }
 
         video.addEventListener('loadedmetadata', () => {
@@ -2749,18 +2998,49 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
         function initAudioMenu(hls, pref) {
             const list = document.getElementById('yume-audio-list');
             const rowAudio = document.getElementById('yume-row-audio');
-            if (!list || !hls || !hls.audioTracks) return;
+            if (!list || !rowAudio) return;
+
+            if (!hls) {
+                if (!rawAudioOptions || rawAudioOptions.length <= 1) {
+                    rowAudio.style.display = 'none';
+                    return;
+                }
+                rowAudio.style.display = 'flex';
+                list.innerHTML = '';
+                const targetLang = (pref || 'hin').toLowerCase();
+                let curLabel = rawAudioOptions[0].label;
+
+                rawAudioOptions.forEach(opt => {
+                    const oLang = (opt.langCode || '').toLowerCase();
+                    const isActive = oLang === targetLang ||
+                                     ((targetLang === 'sub' || targetLang === 'jpn') && (oLang === 'sub' || oLang === 'jpn')) ||
+                                     ((targetLang === 'dub' || targetLang === 'eng') && (oLang === 'dub' || oLang === 'eng'));
+                    if (isActive) curLabel = opt.label;
+                    const div = document.createElement('div');
+                    div.className = 'yume-option' + (isActive ? ' active' : '');
+                    div.textContent = opt.label;
+                    div.onclick = () => {
+                        const u = new URL(window.location.href);
+                        u.searchParams.set('lang', opt.langCode);
+                        window.location.href = u.toString();
+                    };
+                    list.appendChild(div);
+                });
+
+                document.getElementById('yume-val-audio').innerHTML = curLabel + ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+                return;
+            }
+
+            if (!hls.audioTracks || hls.audioTracks.length <= 1) {
+                rowAudio.style.display = 'none';
+                return;
+            }
+            rowAudio.style.display = 'flex';
             list.innerHTML = '';
 
             const tracks = hls.audioTracks;
-            if (tracks.length <= 1) {
-                if (rowAudio) rowAudio.style.display = 'none';
-                return;
-            }
-            if (rowAudio) rowAudio.style.display = 'flex';
-
             let selectedIdx = hls.audioTrack >= 0 ? hls.audioTrack : 0;
-            const targetLang = (pref || 'hin').toLowerCase();
+            const targetLang = (pref || 'sub').toLowerCase();
 
             // Auto-select preferred language on manifest load if not already manually set
             if (!window.__userSelectedAudio) {
@@ -2770,10 +3050,10 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
                     if (targetLang === 'hin' && (tName.includes('hin') || tLang.includes('hin') || tName.includes('hindi'))) {
                         selectedIdx = i;
                         break;
-                    } else if (targetLang === 'eng' && (tName.includes('eng') || tLang.includes('eng') || tName.includes('english'))) {
+                    } else if ((targetLang === 'dub' || targetLang === 'eng') && (tName.includes('eng') || tLang.includes('eng') || tName.includes('english'))) {
                         selectedIdx = i;
                         break;
-                    } else if (targetLang === 'jpn' && (tName.includes('jpn') || tLang.includes('jpn') || tName.includes('jap'))) {
+                    } else if ((targetLang === 'sub' || targetLang === 'jpn') && (tName.includes('jpn') || tLang.includes('jpn') || tName.includes('jap'))) {
                         selectedIdx = i;
                         break;
                     }
@@ -2803,7 +3083,12 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
         // Quality Menu Setup
         function initQualityMenu(hls) {
             const list = document.getElementById('yume-quality-list');
-            if (!list || !hls || !hls.levels) return;
+            if (!list) return;
+            if (!hls || !hls.levels) {
+                document.getElementById('yume-val-quality').innerHTML = '1080P <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+                list.innerHTML = '<div class="yume-option active">1080P (FHD)</div>';
+                return;
+            }
             list.innerHTML = '';
             const levels = hls.levels;
             const highestLabel = (levels[levels.length - 1]?.height || '1080') + 'P';
@@ -3021,7 +3306,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
         initBoostMenu();
     </script>
 </body>
-</html>`, streamURL, string(tracksJSON), preferredLang, episodeKey)
+</html>`, streamURL, string(tracksJSON), preferredLang, episodeKey, string(audsJSON))
 }
 
 func renderCustomProxy404(path string, message string) string {
@@ -3614,10 +3899,54 @@ func resolveAnimeSaltSlug(ctx context.Context, anilistID int, malID int, manualS
 	return "", fmt.Errorf("no matching series found on AnimeSalt for: %s", title)
 }
 
-func extractAnimeSaltHLS(ctx context.Context, slug string, season int, ep int, hashDirect string) (string, []SubtitleTrack, string, error) {
-	domain := "as-cdn26.top"
-	hash := hashDirect
-	episodeReferer := ""
+type AbyssAudioLink struct {
+	Language string `json:"language"`
+	Link     string `json:"link"`
+}
+
+type AbyssDatas struct {
+	Slug   string `json:"slug"`
+	Md5ID  int    `json:"md5_id"`
+	UserID int    `json:"user_id"`
+	Media  string `json:"media"`
+}
+
+type AbyssSource struct {
+	Label    string `json:"label"`
+	ResID    int    `json:"res_id"`
+	Size     int64  `json:"size"`
+	Codec    string `json:"codec"`
+	Status   bool   `json:"status"`
+	Path     string `json:"path"`
+	URL      string `json:"url"`
+	PartSize int64  `json:"partSize"`
+	Sub      string `json:"sub"`
+}
+
+type AbyssFristData struct {
+	ResID    int    `json:"res_id"`
+	Size     int64  `json:"size"`
+	Codec    string `json:"codec"`
+	URL      string `json:"url"`
+	PartSize int64  `json:"partSize"`
+}
+
+type AbyssMedia struct {
+	MP4 struct {
+		Sources    []AbyssSource    `json:"sources"`
+		Domains    []string         `json:"domains"`
+		FristDatas []AbyssFristData `json:"fristDatas"`
+	} `json:"mp4"`
+}
+
+func extractAnimeSaltStream(ctx context.Context, slug string, season int, ep int, hashDirect string, requestedLang string) (string, []SubtitleTrack, []AnimeSaltAudioOption, string, error) {
+	if requestedLang == "" {
+		requestedLang = "hin"
+	}
+	requestedLang = strings.ToLower(strings.TrimSpace(requestedLang))
+
+	selectedLink := ""
+	var audioOptions []AnimeSaltAudioOption
 
 	if slug != "" {
 		if season <= 0 {
@@ -3626,117 +3955,249 @@ func extractAnimeSaltHLS(ctx context.Context, slug string, season int, ep int, h
 		if ep <= 0 {
 			ep = 1
 		}
-		episodeReferer = fmt.Sprintf("https://animesalt.cx/episode/%s-%dx%d/", slug, season, ep)
-	}
-
-	if hash == "" {
-		if slug == "" {
-			return "", nil, "", fmt.Errorf("missing slug or hash")
-		}
+		episodeReferer := fmt.Sprintf("https://animesalt.cx/episode/%s-%dx%d/", slug, season, ep)
 
 		epReq, err := http.NewRequestWithContext(ctx, http.MethodGet, episodeReferer, nil)
 		if err != nil {
-			return "", nil, "", err
+			return "", nil, nil, "", err
 		}
 		epReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 		epReq.Header.Set("Referer", fmt.Sprintf("https://animesalt.cx/series/%s/", slug))
 
 		epResp, err := httpClient.Do(epReq)
 		if err != nil {
-			return "", nil, "", err
+			return "", nil, nil, "", err
 		}
+		defer epResp.Body.Close()
 
 		if epResp.StatusCode != http.StatusOK {
-			epResp.Body.Close()
-			return "", nil, "", fmt.Errorf("animesalt episode page returned %d", epResp.StatusCode)
+			return "", nil, nil, "", fmt.Errorf("animesalt episode page returned %d", epResp.StatusCode)
 		}
 
 		bodyBytes, err := readResponseBody(epResp)
 		if err != nil {
-			return "", nil, "", err
+			return "", nil, nil, "", err
 		}
 		html := string(bodyBytes)
 
-		frameRegex := regexp.MustCompile(`https?://(as-cdn\d*\.top)/video/([a-zA-Z0-9]+)`)
-		match := frameRegex.FindStringSubmatch(html)
-		if len(match) > 2 {
-			domain = match[1]
-			hash = match[2]
-		} else {
-			simpleHashRegex := regexp.MustCompile(`/video/([a-f0-9]{24,64})`)
-			simpleMatch := simpleHashRegex.FindStringSubmatch(html)
-			if len(simpleMatch) > 1 {
-				hash = simpleMatch[1]
-			} else {
-				return "", nil, "", fmt.Errorf("could not locate Server 1 iframe on episode page")
+		reData := regexp.MustCompile(`multi-lang-plyr\.php\?data=([a-zA-Z0-9%_-]+)`)
+		m := reData.FindStringSubmatch(html)
+		if len(m) > 1 {
+			unescapedData, _ := url.QueryUnescape(m[1])
+			b64Dec, err := base64.StdEncoding.DecodeString(unescapedData)
+			if err != nil {
+				b64Dec, _ = base64.URLEncoding.DecodeString(unescapedData)
 			}
-		}
-	}
+			var audioLinks []AbyssAudioLink
+			if err := json.Unmarshal(b64Dec, &audioLinks); err == nil && len(audioLinks) > 0 {
+				for _, a := range audioLinks {
+					lLower := strings.ToLower(a.Language)
+					lCode := "sub"
+					lLabel := a.Language
+					if strings.Contains(lLower, "hindi") {
+						lCode = "hin"
+						lLabel = "Hindi (Default Dub)"
+					} else if strings.Contains(lLower, "japan") {
+						lCode = "sub"
+						lLabel = "Japanese (Sub)"
+					} else if strings.Contains(lLower, "english") {
+						lCode = "dub"
+						lLabel = "English (Dub)"
+					} else if strings.Contains(lLower, "tamil") {
+						lCode = "tam"
+						lLabel = "Tamil"
+					} else if strings.Contains(lLower, "telugu") {
+						lCode = "tel"
+						lLabel = "Telugu"
+					} else if strings.Contains(lLower, "kannada") {
+						lCode = "kan"
+						lLabel = "Kannada"
+					}
+					audioOptions = append(audioOptions, AnimeSaltAudioOption{
+						Label:    lLabel,
+						Language: a.Language,
+						LangCode: lCode,
+					})
 
-	if episodeReferer == "" {
-		episodeReferer = fmt.Sprintf("https://%s/video/%s", domain, hash)
-	}
-
-	apiURL := fmt.Sprintf("https://%s/player/index.php?data=%s&do=getVideo", domain, hash)
-	formData := url.Values{}
-	formData.Set("hash", hash)
-	formData.Set("r", episodeReferer)
-
-	apiReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, strings.NewReader(formData.Encode()))
-	if err != nil {
-		return "", nil, "", err
-	}
-	apiReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	apiReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-	apiReq.Header.Set("Referer", fmt.Sprintf("https://%s/video/%s", domain, hash))
-	apiReq.Header.Set("Origin", fmt.Sprintf("https://%s", domain))
-	apiReq.Header.Set("X-Requested-With", "XMLHttpRequest")
-
-	apiResp, err := httpClient.Do(apiReq)
-	if err != nil {
-		return "", nil, "", err
-	}
-
-	if apiResp.StatusCode != http.StatusOK {
-		apiResp.Body.Close()
-		return "", nil, "", fmt.Errorf("getVideo API returned %d", apiResp.StatusCode)
-	}
-
-	bodyBytes, err := readResponseBody(apiResp)
-	if err != nil {
-		return "", nil, "", err
-	}
-
-	var res AnimeSaltSourcesResponse
-	if err := json.Unmarshal(bodyBytes, &res); err != nil {
-		videoPageURL := fmt.Sprintf("https://%s/video/%s", domain, hash)
-		vReq, vErr := http.NewRequestWithContext(ctx, http.MethodGet, videoPageURL, nil)
-		if vErr == nil {
-			vReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-			vReq.Header.Set("Referer", episodeReferer)
-			vResp, vErr := httpClient.Do(vReq)
-			if vErr == nil && vResp.StatusCode == http.StatusOK {
-				vBytes, _ := readResponseBody(vResp)
-				m3u8Regex := regexp.MustCompile(`https?://[^\s"'<>]+\.m3u8[^\s"'<>]*`)
-				m3u8Match := m3u8Regex.FindString(string(vBytes))
-				if m3u8Match != "" {
-					return m3u8Match, nil, hash, nil
+					if selectedLink == "" {
+						if (requestedLang == "hin" && strings.Contains(lLower, "hindi")) ||
+							((requestedLang == "sub" || requestedLang == "jpn") && strings.Contains(lLower, "japan")) ||
+							((requestedLang == "dub" || requestedLang == "eng") && strings.Contains(lLower, "english")) ||
+							(requestedLang == "tam" && strings.Contains(lLower, "tamil")) ||
+							(requestedLang == "tel" && strings.Contains(lLower, "telugu")) ||
+							(requestedLang == "kan" && strings.Contains(lLower, "kannada")) {
+							selectedLink = a.Link
+						}
+					}
+				}
+				if selectedLink == "" && len(audioLinks) > 0 {
+					selectedLink = audioLinks[0].Link
 				}
 			}
 		}
-		return "", nil, "", fmt.Errorf("invalid json from getVideo API: %s", string(bodyBytes))
 	}
 
-	streamFile := res.VideoSource
-	if streamFile == "" && len(res.VideoSources) > 0 {
-		streamFile = res.VideoSources[0].File
+	if selectedLink == "" && hashDirect != "" {
+		if strings.HasPrefix(hashDirect, "http") {
+			selectedLink = hashDirect
+		} else {
+			selectedLink = fmt.Sprintf("https://abyssplayer.com/%s", hashDirect)
+		}
 	}
 
-	if streamFile == "" {
-		return "", nil, "", fmt.Errorf("empty video stream from AnimeSalt Server 1")
+	if selectedLink == "" {
+		return "", nil, nil, "", fmt.Errorf("could not locate Server 1 AbyssPlayer link on episode page")
 	}
 
-	return streamFile, res.Tracks, hash, nil
+	abyssReq, err := http.NewRequestWithContext(ctx, http.MethodGet, selectedLink, nil)
+	if err != nil {
+		return "", nil, nil, "", err
+	}
+	abyssReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	abyssReq.Header.Set("Referer", "https://animesalt.cx/")
+
+	abyssResp, err := httpClient.Do(abyssReq)
+	if err != nil {
+		return "", nil, nil, "", err
+	}
+	defer abyssResp.Body.Close()
+
+	if abyssResp.StatusCode != http.StatusOK {
+		return "", nil, nil, "", fmt.Errorf("abyssplayer returned %d", abyssResp.StatusCode)
+	}
+
+	abyssBytes, err := readResponseBody(abyssResp)
+	if err != nil {
+		return "", nil, nil, "", err
+	}
+	abyssHtml := string(abyssBytes)
+
+	reDatas := regexp.MustCompile(`const datas = "([^"]+)"`)
+	mDatas := reDatas.FindStringSubmatch(abyssHtml)
+	if len(mDatas) < 2 {
+		return "", nil, nil, "", fmt.Errorf("const datas payload not found in abyssplayer page")
+	}
+
+	datasRaw, err := base64.StdEncoding.DecodeString(mDatas[1])
+	if err != nil {
+		return "", nil, nil, "", fmt.Errorf("failed base64 decoding datas: %w", err)
+	}
+
+	var utf8Buf strings.Builder
+	for _, b := range datasRaw {
+		utf8Buf.WriteRune(rune(b))
+	}
+
+	var datas AbyssDatas
+	if err := json.Unmarshal([]byte(utf8Buf.String()), &datas); err != nil {
+		return "", nil, nil, "", fmt.Errorf("failed unmarshaling datas metadata: %w", err)
+	}
+
+	keyStr := fmt.Sprintf("%d:%s:%d", datas.UserID, datas.Slug, datas.Md5ID)
+	hKey := md5.Sum([]byte(keyStr))
+	hexKey := hex.EncodeToString(hKey[:])
+	keyBytes := []byte(hexKey)
+	ivBytes := keyBytes[:16]
+
+	mediaRunes := []rune(datas.Media)
+	cipherMedia := make([]byte, len(mediaRunes))
+	for i, r := range mediaRunes {
+		cipherMedia[i] = byte(r)
+	}
+
+	block, err := aes.NewCipher(keyBytes)
+	if err != nil {
+		return "", nil, nil, "", fmt.Errorf("failed creating cipher: %w", err)
+	}
+	ctr := cipher.NewCTR(block, ivBytes)
+	decryptedMedia := make([]byte, len(cipherMedia))
+	ctr.XORKeyStream(decryptedMedia, cipherMedia)
+
+	var media AbyssMedia
+	if err := json.Unmarshal(decryptedMedia, &media); err != nil {
+		return "", nil, nil, "", fmt.Errorf("failed parsing decrypted media json: %w", err)
+	}
+
+	// 1. Check for Direct H.264 Source (Type A)
+	var bestSource *AbyssSource
+	for _, s := range media.MP4.Sources {
+		if s.Codec == "av1" || !s.Status || s.Path == "" || s.URL == "" {
+			continue
+		}
+		if bestSource == nil || s.ResID > bestSource.ResID {
+			curr := s
+			bestSource = &curr
+		}
+	}
+
+	if bestSource != nil {
+		parts := strings.Split(bestSource.Path, "/")
+		filename := parts[len(parts)-1]
+		streamToken, err := encryptToken(&TokenPayload{
+			URL:    fmt.Sprintf("%s/%s", bestSource.URL, bestSource.Path),
+			Ref:    "https://abyssplayer.com/",
+			Key:    filename,
+			Cipher: "abyss-ctr",
+			Exp:    time.Now().Add(6 * time.Hour).Unix(),
+		})
+		if err != nil {
+			return "", nil, nil, "", err
+		}
+		proxiedURL := "/p/" + streamToken + "/video.mp4"
+		return proxiedURL, nil, audioOptions, datas.Slug, nil
+	}
+
+	// 2. Check for Chunked FristData H.264 Source (Type B)
+	var bestFD *AbyssFristData
+	for _, fd := range media.MP4.FristDatas {
+		if fd.Codec == "av1" || fd.URL == "" {
+			continue
+		}
+		if bestFD == nil || fd.ResID > bestFD.ResID {
+			curr := fd
+			bestFD = &curr
+		}
+	}
+
+	if bestFD != nil {
+		domain := ""
+		for _, s := range media.MP4.Sources {
+			if s.ResID == bestFD.ResID && s.Sub != "" {
+				domain = s.Sub + ".sssrr.org"
+				break
+			}
+		}
+		if domain == "" && len(media.MP4.Domains) > 0 {
+			domain = media.MP4.Domains[0]
+		}
+		parts := strings.Split(bestFD.URL, "/")
+		filename := parts[len(parts)-1]
+		streamToken, err := encryptToken(&TokenPayload{
+			URL:       bestFD.URL,
+			Ref:       "https://abyssplayer.com/",
+			Key:       filename,
+			Cipher:    "abyss-chunked",
+			TotalSize: bestFD.Size,
+			PartSize:  bestFD.PartSize,
+			ChunkSize: 5242880,
+			Md5ID:     datas.Md5ID,
+			ResID:     bestFD.ResID,
+			Domain:    domain,
+			Exp:       time.Now().Add(6 * time.Hour).Unix(),
+		})
+		if err != nil {
+			return "", nil, nil, "", err
+		}
+		proxiedURL := "/p/" + streamToken + "/video.mp4"
+		return proxiedURL, nil, audioOptions, datas.Slug, nil
+	}
+
+	return "", nil, nil, "", fmt.Errorf("no valid H.264 stream found in Abyss response")
+}
+
+func extractAnimeSaltHLS(ctx context.Context, slug string, season int, ep int, hashDirect string) (string, []SubtitleTrack, string, error) {
+	url, tracks, _, resolvedSlug, err := extractAnimeSaltStream(ctx, slug, season, ep, hashDirect, "hin")
+	return url, tracks, resolvedSlug, err
 }
 
 func handleAnimeSaltEmbed(w http.ResponseWriter, r *http.Request) {
@@ -3868,8 +4329,8 @@ func handleAnimeSaltEmbed(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	streamFile, tracks, _, err := extractAnimeSaltHLS(r.Context(), slug, season, ep, hash)
-	if err == nil && streamFile != "" {
+	proxiedStreamURL, tracks, audioOpts, _, err := extractAnimeSaltStream(r.Context(), slug, season, ep, hash, lang)
+	if err == nil && proxiedStreamURL != "" {
 		// Backfill subtitles from MegaPlay if Server 1 does not provide .vtt tracks directly
 		if len(tracks) == 0 {
 			var malIDForSub int
@@ -3901,19 +4362,12 @@ func handleAnimeSaltEmbed(w http.ResponseWriter, r *http.Request) {
 			proxiedTracks = append(proxiedTracks, t)
 		}
 
-		streamToken, err := encryptToken(&TokenPayload{
-			URL: streamFile,
-			Ref: "https://animesalt.cx/",
-			Exp: time.Now().Add(6 * time.Hour).Unix(),
-		})
-		if err == nil {
-			proxiedStreamURL := "/p/" + streamToken
-			html := renderCleanArtplayer(proxiedStreamURL, proxiedTracks, lang, fmt.Sprintf("animesalt_%s_%d_%d", slug, season, ep))
+		html := renderCleanArtplayer(proxiedStreamURL, proxiedTracks, lang, fmt.Sprintf("animesalt_%s_%d_%d", slug, season, ep), audioOpts...)
 
-			animeSaltCache.Store(cacheKey, EmbedCacheEntry{
-				HTML:      html,
-				ExpiresAt: time.Now().Add(2 * time.Hour),
-			})
+		animeSaltCache.Store(cacheKey, EmbedCacheEntry{
+			HTML:      html,
+			ExpiresAt: time.Now().Add(2 * time.Hour),
+		})
 
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Header().Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
@@ -3925,7 +4379,6 @@ func handleAnimeSaltEmbed(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte(html))
 			return
 		}
-	}
 
 	errorHTML := renderCustomProxy404(rawPath, "")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -4001,8 +4454,13 @@ func handleAnimeSaltSourceAPI(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	streamFile, tracks, resolvedHash, err := extractAnimeSaltHLS(r.Context(), slug, season, ep, hash)
-	if err != nil || streamFile == "" {
+	lang := q.Get("lang")
+	if lang == "" {
+		lang = "hin"
+	}
+
+	proxiedStreamURL, tracks, audioOpts, resolvedSlug, err := extractAnimeSaltStream(r.Context(), slug, season, ep, hash, lang)
+	if err != nil || proxiedStreamURL == "" {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -4011,12 +4469,6 @@ func handleAnimeSaltSourceAPI(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-
-	streamToken, _ := encryptToken(&TokenPayload{
-		URL: streamFile,
-		Ref: "https://animesalt.cx/",
-		Exp: time.Now().Add(6 * time.Hour).Unix(),
-	})
 
 	var proxiedTracks []SubtitleTrack
 	for _, t := range tracks {
@@ -4038,18 +4490,16 @@ func handleAnimeSaltSourceAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "public, max-age=1800")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":       true,
-		"server":        "AnimeSalt Server 1 (as-cdn26)",
-		"hash":          resolvedHash,
+		"server":        "AnimeSalt Server 1 (Abyss)",
 		"slug":          slug,
+		"resolved_slug": resolvedSlug,
 		"season":        season,
 		"episode":       ep,
-		"stream_url":    streamFile,
-		"proxied_m3u8":  "/p/" + streamToken,
+		"stream_url":    proxiedStreamURL,
+		"type":          "mp4",
 		"subtitles":     proxiedTracks,
-		"default_audio": "hin",
-		"audio_renditions": []string{
-			"Hindi (Default Dub)", "Japanese (Original Audio)", "English", "Tamil", "Telugu",
-		},
+		"default_audio": lang,
+		"audio_options": audioOpts,
 	})
 }
 
@@ -5500,8 +5950,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
                         <div class="form-group">
                             <label for="sb-lang">Audio Preference</label>
                             <select class="form-select" id="sb-lang">
-                                <option value="hin">Hindi (Default Dub Audio Track)</option>
-                                <option value="sub">Sub (Japanese Original Audio)</option>
+                                <option value="sub">Sub (Japanese Original Audio / Subtitles)</option>
                                 <option value="dub">Dub (English Audio Track)</option>
                             </select>
                         </div>
@@ -5556,16 +6005,19 @@ const docsHTMLTemplate = `<!DOCTYPE html>
             id = encodeURIComponent(String(id).trim());
             ep = encodeURIComponent(String(ep).trim());
             lang = encodeURIComponent(String(lang).trim().toLowerCase());
-            if (mode === "zoko-mal") return BASE_ORIGIN + "/embed/zoko/mal/" + id + "/" + ep + "/" + lang;
-            if (mode === "zoko-ani") return BASE_ORIGIN + "/embed/zoko/ani/" + id + "/" + ep + "/" + lang;
-            if (mode === "salt-slug") return BASE_ORIGIN + "/embed/animesalt/" + id + "-1x" + ep + "?lang=" + lang;
-            if (mode === "salt-ani") return BASE_ORIGIN + "/embed/animesalt/ani/" + id + "/" + ep + "/" + lang;
-            if (mode === "salt-mal") return BASE_ORIGIN + "/embed/animesalt/mal/" + id + "/" + ep + "/" + lang;
-            if (mode === "salt-hash") return BASE_ORIGIN + "/embed/as-cdn/" + id + "?lang=" + lang;
-            if (mode === "mal") return BASE_ORIGIN + "/embed/megaplay/mal/" + id + "/" + ep + "/" + lang;
-            if (mode === "ani") return BASE_ORIGIN + "/embed/megaplay/ani/" + id + "/" + ep + "/" + lang;
-            if (mode === "s-2") return BASE_ORIGIN + "/embed/megaplay/s-2/" + id + "/" + lang;
-            return BASE_ORIGIN + "/embed/zoko/mal/" + id + "/" + ep + "/" + lang;
+            const isSalt = mode.startsWith("salt");
+            const safeLang = isSalt ? lang : (lang === "dub" ? "dub" : "sub");
+
+            if (mode === "zoko-mal") return BASE_ORIGIN + "/embed/zoko/mal/" + id + "/" + ep + "/" + safeLang;
+            if (mode === "zoko-ani") return BASE_ORIGIN + "/embed/zoko/ani/" + id + "/" + ep + "/" + safeLang;
+            if (mode === "salt-slug") return BASE_ORIGIN + "/embed/animesalt/" + id + "-1x" + ep + "?lang=" + safeLang;
+            if (mode === "salt-ani") return BASE_ORIGIN + "/embed/animesalt/ani/" + id + "/" + ep + "/" + safeLang;
+            if (mode === "salt-mal") return BASE_ORIGIN + "/embed/animesalt/mal/" + id + "/" + ep + "/" + safeLang;
+            if (mode === "salt-hash") return BASE_ORIGIN + "/embed/as-cdn/" + id + "?lang=" + safeLang;
+            if (mode === "mal") return BASE_ORIGIN + "/embed/megaplay/mal/" + id + "/" + ep + "/" + safeLang;
+            if (mode === "ani") return BASE_ORIGIN + "/embed/megaplay/ani/" + id + "/" + ep + "/" + safeLang;
+            if (mode === "s-2") return BASE_ORIGIN + "/embed/megaplay/s-2/" + id + "/" + safeLang;
+            return BASE_ORIGIN + "/embed/zoko/mal/" + id + "/" + ep + "/" + safeLang;
         }
 
         function buildIframe(url) {
@@ -5628,6 +6080,13 @@ const docsHTMLTemplate = `<!DOCTYPE html>
         // Mode switch UI adjustments
         $("sb-mode").addEventListener("change", (e) => {
             const mode = e.target.value;
+            const langSelect = $("sb-lang");
+            if (mode.startsWith("salt")) {
+                langSelect.innerHTML = '<option value="hin">Hindi (Default Dub Audio Track)</option><option value="sub">Sub (Japanese Original Audio)</option><option value="dub">Dub (English Audio Track)</option><option value="tam">Tamil</option><option value="tel">Telugu</option>';
+            } else {
+                langSelect.innerHTML = '<option value="sub">Sub (Japanese Original Audio / Subtitles)</option><option value="dub">Dub (English Audio Track)</option>';
+            }
+
             if (mode === "zoko-mal") {
                 $("group-series-id").querySelector("label").textContent = "Zoko (MyAnimeList MAL ID)";
                 $("sb-series-id").placeholder = "e.g. 21 (One Piece), 5114 (FMA:B)";
@@ -5704,17 +6163,29 @@ const docsHTMLTemplate = `<!DOCTYPE html>
 
             if (!id) return alert("Please enter a slug or ID.");
 
-            const hinUrl = buildUrl(mode, id, ep, "hin");
-            const subUrl = buildUrl(mode, id, ep, "sub");
-            const dubUrl = buildUrl(mode, id, ep, "dub");
+            if (mode.startsWith("salt")) {
+                const hinUrl = buildUrl(mode, id, ep, "hin");
+                const subUrl = buildUrl(mode, id, ep, "sub");
+                const dubUrl = buildUrl(mode, id, ep, "dub");
 
-            renderOutputBoxes([
-                { label: "Hindi Dub Iframe (Hindi Default Track)", code: buildIframe(hinUrl) },
-                { label: "Japanese Sub Iframe", code: buildIframe(subUrl) },
-                { label: "English Dub Iframe", code: buildIframe(dubUrl) },
-            ]);
+                renderOutputBoxes([
+                    { label: "Hindi Dub Iframe (Hindi Default Track)", code: buildIframe(hinUrl) },
+                    { label: "Japanese Sub Iframe", code: buildIframe(subUrl) },
+                    { label: "English Dub Iframe", code: buildIframe(dubUrl) },
+                ]);
 
-            $("preview-frame").src = hinUrl;
+                $("preview-frame").src = hinUrl;
+            } else {
+                const subUrl = buildUrl(mode, id, ep, "sub");
+                const dubUrl = buildUrl(mode, id, ep, "dub");
+
+                renderOutputBoxes([
+                    { label: "Japanese Sub Iframe (Default)", code: buildIframe(subUrl) },
+                    { label: "English Dub Iframe", code: buildIframe(dubUrl) },
+                ]);
+
+                $("preview-frame").src = subUrl;
+            }
             $("sb-output").scrollIntoView({ behavior: "smooth", block: "nearest" });
         });
     </script>
