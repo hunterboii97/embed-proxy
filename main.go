@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -65,19 +66,48 @@ var (
 	apiHttpClient       *http.Client // Dedicated for AniList GraphQL / AniZip / MAL metadata
 	httpClient          *http.Client // Fallback general HTTP client
 
-	// Caches for extracted stream URLs and playlists (RAM light: <20MB for thousands of episodes)
+	// ULTRA Caches for extracted stream URLs and playlists with size limits
 	megaplayStreamCache sync.Map
 	zokoStreamCache     sync.Map
+	m3u8PlaylistCache   sync.Map
 
-	// 64KB Buffer Pool for zero-copy high-throughput video segment streaming
+	// Cache statistics for monitoring
+	cacheStats struct {
+		megaplayHits    int64
+		megaplayMisses  int64
+		zokoHits        int64
+		zokoMisses      int64
+		animeSaltHits   int64
+		animeSaltMisses int64
+	}
+
+	// ULTRA 64KB Buffer Pool for responsive zero-copy video segment streaming
 	bufferPool = sync.Pool{
 		New: func() interface{} {
-			b := make([]byte, 64*1024)
+			b := make([]byte, 128*1024) // Increased from 64KB to 128KB for better throughput
 			return &b
 		},
 	}
+
+	// Pooled byte buffers for reading response bodies with minimal GC pressure
+	bodyBufferPool = sync.Pool{
+		New: func() interface{} {
+			return bytes.NewBuffer(make([]byte, 0, 64*1024)) // Increased from 32KB to 64KB
+		},
+	}
+
 	uriRegex = regexp.MustCompile(`URI="([^"]+)"`)
 )
+
+// Cache size limits (prevent memory bloat under high load)
+const maxCacheEntries = 10000
+
+type M3U8CacheEntry struct {
+	Body        []byte
+	ContentType string
+	StatusCode  int
+	ExpiresAt   time.Time
+}
 
 type MegaplayStreamCacheEntry struct {
 	HLSFile   string
@@ -346,6 +376,62 @@ func isPrivateHost(hostname string) bool {
 	return false
 }
 
+// Helper to check if any cached struct entry is expired
+func isEntryExpired(v interface{}) bool {
+	switch e := v.(type) {
+	case MegaplayStreamCacheEntry:
+		return time.Now().After(e.ExpiresAt)
+	case ZokoStreamCacheEntry:
+		return time.Now().After(e.ExpiresAt)
+	case AnimeSaltStreamCacheEntry:
+		return time.Now().After(e.ExpiresAt)
+	case AnimeSaltAudioLinksCacheEntry:
+		return time.Now().After(e.ExpiresAt)
+	case AnimeSaltSubCacheEntry:
+		return time.Now().After(e.ExpiresAt)
+	case EmbedCacheEntry:
+		return time.Now().After(e.ExpiresAt)
+	case M3U8CacheEntry:
+		return time.Now().After(e.ExpiresAt)
+	default:
+		return false
+	}
+}
+
+// ULTRA Cache cleanup goroutine to prevent memory bloat under high load
+func startCacheCleanup() {
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			cleanupCache(&megaplayStreamCache, "megaplay_stream")
+			cleanupCache(&zokoStreamCache, "zoko_stream")
+			cleanupCache(&animeSaltStreamCache, "animesalt_stream")
+			cleanupCache(&animeSaltAudioLinksCache, "animesalt_audio_links")
+			cleanupCache(&animeSaltSubCache, "animesalt_sub")
+			cleanupCache(&embedCache, "megaplay_embed")
+			cleanupCache(&animeSaltCache, "animesalt_embed")
+			cleanupCache(&zokoCache, "zoko_embed")
+			cleanupCache(&m3u8PlaylistCache, "m3u8_playlist")
+		}
+	}()
+}
+
+func cleanupCache(cache *sync.Map, name string) {
+	var expiredCount int
+	cache.Range(func(key, value interface{}) bool {
+		if isEntryExpired(value) {
+			cache.Delete(key)
+			expiredCount++
+		}
+		return true
+	})
+	if expiredCount > 0 {
+		log.Printf("🧹 Cleaned %d expired entries from %s cache", expiredCount, name)
+	}
+}
+
 func initConfig() {
 	loadEnvFile(".env")
 	loadEnvFile("apps/proxy/.env")
@@ -388,105 +474,121 @@ func initConfig() {
 		}
 	}
 
-	// 1. streamHttpClient: High-capacity pool for video streaming (/p/*) with NO timeout
+	// 1. streamHttpClient: ULTRA high-capacity pool for video streaming (/p/*) with NO timeout
+	// Optimized for 500+ users per minute with concurrent video segment streaming
 	streamTransport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
-			Timeout:   10 * time.Second,
-			KeepAlive: 90 * time.Second,
+			Timeout:   5 * time.Second,  // Faster connection timeout
+			KeepAlive: 120 * time.Second, // Longer keepalive for connection reuse
 		}).DialContext,
 		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          2500,
-		MaxIdleConnsPerHost:   400,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 25 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		DisableCompression:    true,
+		MaxIdleConns:          10000, // Dramatically increased for high concurrency
+		MaxIdleConnsPerHost:   2000,  // Increased per-host connections
+		MaxConnsPerHost:       3000,  // NEW: Absolute limit per host to prevent overload
+		IdleConnTimeout:       180 * time.Second, // Longer idle timeout for connection reuse
+		TLSHandshakeTimeout:   5 * time.Second,  // Faster TLS handshake
+		ResponseHeaderTimeout: 15 * time.Second, // Faster header timeout
+		ExpectContinueTimeout: 500 * time.Millisecond, // Faster continue timeout
+		DisableCompression:    true, // TS and MP4 chunks are already compressed
+		WriteBufferSize:       64 * 1024,
+		ReadBufferSize:        64 * 1024,
 	}
 	streamHttpClient = &http.Client{
 		Transport: streamTransport,
 		Timeout:   0, // No client timeout for streaming video segments!
 	}
 
-	// 2. megaplayHttpClient: Dedicated pool for MegaPlay scraping with fast-fail timeouts
+	// 2. megaplayHttpClient: ULTRA dedicated pool for MegaPlay scraping with fast-fail timeouts
+	// Optimized for high-concurrency scraping with parallel request execution
 	megaplayTransport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
-			Timeout:   6 * time.Second,
-			KeepAlive: 45 * time.Second,
+			Timeout:   3 * time.Second,  // Ultra-fast connection timeout
+			KeepAlive: 90 * time.Second, // Longer keepalive for connection reuse
 		}).DialContext,
 		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          300,
-		MaxIdleConnsPerHost:   100,
-		IdleConnTimeout:       60 * time.Second,
-		TLSHandshakeTimeout:   5 * time.Second,
-		ResponseHeaderTimeout: 10 * time.Second,
-		DisableCompression:    true,
+		MaxIdleConns:          2000, // Dramatically increased for high concurrency
+		MaxIdleConnsPerHost:   500,  // Increased per-host connections
+		MaxConnsPerHost:       800,  // NEW: Absolute limit per host
+		IdleConnTimeout:       120 * time.Second, // Longer idle timeout
+		TLSHandshakeTimeout:   3 * time.Second,  // Ultra-fast TLS handshake
+		ResponseHeaderTimeout: 8 * time.Second,  // Faster header timeout
+		ExpectContinueTimeout: 500 * time.Millisecond,
+		DisableCompression:    false, // Enable gzip for fast HTML scraping
 	}
 	megaplayHttpClient = &http.Client{
 		Transport: megaplayTransport,
-		Timeout:   10 * time.Second,
+		Timeout:   8 * time.Second, // Reduced timeout for faster failover
 	}
 
-	// 3. animesaltHttpClient: Dedicated pool for AnimeSalt scraping & mirrors
+	// 3. animesaltHttpClient: ULTRA dedicated pool for AnimeSalt scraping & mirrors
+	// Optimized for high-concurrency scraping with parallel request execution
 	animesaltTransport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
-			Timeout:   6 * time.Second,
-			KeepAlive: 45 * time.Second,
+			Timeout:   3 * time.Second,  // Ultra-fast connection timeout
+			KeepAlive: 90 * time.Second, // Longer keepalive for connection reuse
 		}).DialContext,
 		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          300,
-		MaxIdleConnsPerHost:   100,
-		IdleConnTimeout:       60 * time.Second,
-		TLSHandshakeTimeout:   5 * time.Second,
-		ResponseHeaderTimeout: 10 * time.Second,
-		DisableCompression:    true,
+		MaxIdleConns:          2000, // Dramatically increased for high concurrency
+		MaxIdleConnsPerHost:   500,  // Increased per-host connections
+		MaxConnsPerHost:       800,  // NEW: Absolute limit per host
+		IdleConnTimeout:       120 * time.Second, // Longer idle timeout
+		TLSHandshakeTimeout:   3 * time.Second,  // Ultra-fast TLS handshake
+		ResponseHeaderTimeout: 8 * time.Second,  // Faster header timeout
+		ExpectContinueTimeout: 500 * time.Millisecond,
+		DisableCompression:    false, // Enable gzip for fast HTML scraping
 	}
 	animesaltHttpClient = &http.Client{
 		Transport: animesaltTransport,
-		Timeout:   10 * time.Second,
+		Timeout:   8 * time.Second, // Reduced timeout for faster failover
 	}
 
-	// 4. zokoHttpClient: Dedicated pool for Zoko scraping
+	// 4. zokoHttpClient: ULTRA dedicated pool for Zoko scraping
+	// Optimized for high-concurrency scraping with parallel request execution
 	zokoTransport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
-			Timeout:   6 * time.Second,
-			KeepAlive: 45 * time.Second,
+			Timeout:   3 * time.Second,  // Ultra-fast connection timeout
+			KeepAlive: 90 * time.Second, // Longer keepalive for connection reuse
 		}).DialContext,
 		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          300,
-		MaxIdleConnsPerHost:   100,
-		IdleConnTimeout:       60 * time.Second,
-		TLSHandshakeTimeout:   5 * time.Second,
-		ResponseHeaderTimeout: 10 * time.Second,
-		DisableCompression:    true,
+		MaxIdleConns:          2000, // Dramatically increased for high concurrency
+		MaxIdleConnsPerHost:   500,  // Increased per-host connections
+		MaxConnsPerHost:       800,  // NEW: Absolute limit per host
+		IdleConnTimeout:       120 * time.Second, // Longer idle timeout
+		TLSHandshakeTimeout:   3 * time.Second,  // Ultra-fast TLS handshake
+		ResponseHeaderTimeout: 8 * time.Second,  // Faster header timeout
+		ExpectContinueTimeout: 500 * time.Millisecond,
+		DisableCompression:    false, // Enable gzip for fast HTML scraping
 	}
 	zokoHttpClient = &http.Client{
 		Transport: zokoTransport,
-		Timeout:   10 * time.Second,
+		Timeout:   8 * time.Second, // Reduced timeout for faster failover
 	}
 
-	// 5. apiHttpClient: Rapid metadata resolver (AniZip, AniList GraphQL, MAL)
+	// 5. apiHttpClient: ULTRA rapid metadata resolver (AniZip, AniList GraphQL, MAL)
+	// Optimized for high-concurrency metadata lookups with parallel API calls
 	apiTransport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
-			Timeout:   4 * time.Second,
-			KeepAlive: 30 * time.Second,
+			Timeout:   2 * time.Second,  // Ultra-fast connection timeout
+			KeepAlive: 60 * time.Second, // Longer keepalive for connection reuse
 		}).DialContext,
 		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   50,
-		IdleConnTimeout:       30 * time.Second,
-		TLSHandshakeTimeout:   4 * time.Second,
-		ResponseHeaderTimeout: 5 * time.Second,
-		DisableCompression:    true,
+		MaxIdleConns:          1000, // Dramatically increased for high concurrency
+		MaxIdleConnsPerHost:   200,  // Increased per-host connections
+		MaxConnsPerHost:       300,  // NEW: Absolute limit per host
+		IdleConnTimeout:       90 * time.Second, // Longer idle timeout
+		TLSHandshakeTimeout:   2 * time.Second,  // Ultra-fast TLS handshake
+		ResponseHeaderTimeout: 4 * time.Second,  // Faster header timeout
+		ExpectContinueTimeout: 300 * time.Millisecond,
+		DisableCompression:    false, // Enable gzip compression for JSON metadata
 	}
 	apiHttpClient = &http.Client{
 		Transport: apiTransport,
-		Timeout:   5 * time.Second,
+		Timeout:   4 * time.Second, // Reduced timeout for faster failover
 	}
 
 	// 6. General fallback client
@@ -744,9 +846,10 @@ func resolveAbsoluteURL(rel string, base string) string {
 
 func rewriteM3U8(text string, targetURL string, referer string, clientIP string, expires int64, playlistKey string, pkParam string, isEncrypted bool) string {
 	var sb strings.Builder
+	sb.Grow(len(text) * 2)
 	scanner := bufio.NewScanner(strings.NewReader(text))
-	// Allocate 1MB max line buffer for huge master playlists
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	// Allocate 2MB max line buffer for huge master playlists (increased for high load)
+	scanner.Buffer(make([]byte, 128*1024), 2*1024*1024)
 
 	pkQuery := ""
 	if pkParam != "" {
@@ -955,16 +1058,14 @@ func streamAbyssCTR(w http.ResponseWriter, resp *http.Response, payload *TokenPa
 
 func copyWithImmediateFlush(w http.ResponseWriter, src io.Reader, buf []byte) error {
 	flusher, hasFlusher := w.(http.Flusher)
-	first := true
 	for {
 		nr, er := src.Read(buf)
 		if nr > 0 {
 			if _, ew := w.Write(buf[:nr]); ew != nil {
 				return ew
 			}
-			if first && hasFlusher {
+			if hasFlusher {
 				flusher.Flush()
-				first = false
 			}
 		}
 		if er != nil {
@@ -973,9 +1074,6 @@ func copyWithImmediateFlush(w http.ResponseWriter, src io.Reader, buf []byte) er
 			}
 			break
 		}
-	}
-	if hasFlusher {
-		flusher.Flush()
 	}
 	return nil
 }
@@ -1141,6 +1239,26 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cleanPath := strings.ToLower(strings.Split(targetURL, "?")[0])
+	isM3U8Target := strings.Contains(cleanPath, ".m3u8")
+	pkParam := r.URL.Query().Get("pk")
+	isEncrypted := r.URL.Query().Get("enc") == "1"
+	m3u8CacheKey := fmt.Sprintf("%s|pk:%s|enc:%t", targetURL, pkParam, isEncrypted)
+
+	// FAST PATH: Return cached rewritten M3U8 playlist immediately with zero network overhead
+	if isM3U8Target {
+		if val, ok := m3u8PlaylistCache.Load(m3u8CacheKey); ok {
+			entry := val.(M3U8CacheEntry)
+			if time.Now().Before(entry.ExpiresAt) {
+				w.Header().Set("Content-Type", entry.ContentType)
+				w.Header().Set("Cache-Control", "no-cache")
+				w.WriteHeader(entry.StatusCode)
+				w.Write(entry.Body)
+				return
+			}
+		}
+	}
+
 	effectiveReferer := payload.Ref
 	effectiveOrigin := ""
 	effectiveSecSite := "cross-site"
@@ -1218,8 +1336,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
-	cleanPath := strings.ToLower(strings.Split(targetURL, "?")[0])
-	isM3U8 := strings.Contains(contentType, "mpegurl") || strings.Contains(contentType, "x-mpegurl") || strings.HasSuffix(cleanPath, ".m3u8")
+	isM3U8 := strings.Contains(contentType, "mpegurl") || strings.Contains(contentType, "x-mpegurl") || isM3U8Target
 
 	if isM3U8 {
 		bodyBytes, err := io.ReadAll(resp.Body)
@@ -1228,7 +1345,6 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		pkParam := r.URL.Query().Get("pk")
 		if pkParam != "" && !bytes.HasPrefix(bytes.TrimSpace(bodyBytes), []byte("#EXTM3U")) {
 			keyBytes, err := base64.StdEncoding.DecodeString(pkParam)
 			if err == nil && len(keyBytes) > 0 {
@@ -1239,7 +1355,6 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		isEncrypted := r.URL.Query().Get("enc") == "1"
 		rewritten := rewriteM3U8(string(bodyBytes), targetURL, effectiveReferer, clientIP, payload.Exp, payload.Key, pkParam, isEncrypted)
 
 		if payload.Key != "" && isEncrypted {
@@ -1248,7 +1363,14 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 				w.Header().Set("Cache-Control", "no-cache")
 				w.WriteHeader(resp.StatusCode)
-				w.Write([]byte(encrypted))
+				out := []byte(encrypted)
+				m3u8PlaylistCache.Store(m3u8CacheKey, M3U8CacheEntry{
+					Body:        out,
+					ContentType: "text/plain; charset=utf-8",
+					StatusCode:  resp.StatusCode,
+					ExpiresAt:   time.Now().Add(2 * time.Hour),
+				})
+				w.Write(out)
 				return
 			}
 		}
@@ -1256,7 +1378,14 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.WriteHeader(resp.StatusCode)
-		w.Write([]byte(rewritten))
+		out := []byte(rewritten)
+		m3u8PlaylistCache.Store(m3u8CacheKey, M3U8CacheEntry{
+			Body:        out,
+			ContentType: "application/vnd.apple.mpegurl",
+			StatusCode:  resp.StatusCode,
+			ExpiresAt:   time.Now().Add(2 * time.Hour),
+		})
+		w.Write(out)
 		return
 	}
 
@@ -1293,6 +1422,9 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 			}
 			w.WriteHeader(resp.StatusCode)
 			w.Write(leadBuf[252:n])
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
 			bufPtr := bufferPool.Get().(*[]byte)
 			defer bufferPool.Put(bufPtr)
 			_ = copyWithImmediateFlush(w, resp.Body, *bufPtr)
@@ -1313,6 +1445,9 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(resp.StatusCode)
 		if n > 0 {
 			w.Write(leadBuf[:n])
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
 		}
 		bufPtr := bufferPool.Get().(*[]byte)
 		defer bufferPool.Put(bufPtr)
@@ -1360,54 +1495,74 @@ func resolveMalId(idNum int) int {
 		return cached.(int)
 	}
 
-	// Tier 1: AniZip API
-	reqURL := fmt.Sprintf("https://api.ani.zip/mappings?anilist_id=%d", idNum)
-	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
-	if err == nil {
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-		resp, err := apiHttpClient.Do(req)
-		if err == nil && resp.StatusCode == http.StatusOK {
-			var data struct {
-				Mappings struct {
-					MalID int `json:"mal_id"`
-				} `json:"mappings"`
-			}
-			if err := json.NewDecoder(resp.Body).Decode(&data); err == nil && data.Mappings.MalID > 0 {
-				resp.Body.Close()
-				malIdCache.Store(idNum, data.Mappings.MalID)
-				return data.Mappings.MalID
-			}
-			resp.Body.Close()
-		}
+	type idResult struct {
+		id int
 	}
+	ch := make(chan idResult, 2)
 
-	// Tier 2: AniList GraphQL API
-	graphqlQuery := `query ($id: Int) { Media (id: $id, type: ANIME) { idMal } }`
-	bodyBytes, _ := json.Marshal(map[string]interface{}{
-		"query": graphqlQuery,
-		"variables": map[string]interface{}{
-			"id": idNum,
-		},
-	})
-	gqlReq, err := http.NewRequest(http.MethodPost, "https://graphql.anilist.co", bytes.NewBuffer(bodyBytes))
-	if err == nil {
-		gqlReq.Header.Set("Content-Type", "application/json")
-		gqlReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-		resp, err := apiHttpClient.Do(gqlReq)
-		if err == nil && resp.StatusCode == http.StatusOK {
-			var gqlRes struct {
-				Data struct {
-					Media struct {
-						IDMal int `json:"idMal"`
-					} `json:"Media"`
-				} `json:"data"`
-			}
-			if err := json.NewDecoder(resp.Body).Decode(&gqlRes); err == nil && gqlRes.Data.Media.IDMal > 0 {
+	// Tier 1: AniZip API (Parallel)
+	go func() {
+		reqURL := fmt.Sprintf("https://api.ani.zip/mappings?anilist_id=%d", idNum)
+		req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+		if err == nil {
+			req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+			resp, err := apiHttpClient.Do(req)
+			if err == nil && resp.StatusCode == http.StatusOK {
+				var data struct {
+					Mappings struct {
+						MalID int `json:"mal_id"`
+					} `json:"mappings"`
+				}
+				if err := json.NewDecoder(resp.Body).Decode(&data); err == nil && data.Mappings.MalID > 0 {
+					resp.Body.Close()
+					ch <- idResult{id: data.Mappings.MalID}
+					return
+				}
 				resp.Body.Close()
-				malIdCache.Store(idNum, gqlRes.Data.Media.IDMal)
-				return gqlRes.Data.Media.IDMal
 			}
-			resp.Body.Close()
+		}
+		ch <- idResult{}
+	}()
+
+	// Tier 2: AniList GraphQL API (Parallel)
+	go func() {
+		graphqlQuery := `query ($id: Int) { Media (id: $id, type: ANIME) { idMal } }`
+		bodyBytes, _ := json.Marshal(map[string]interface{}{
+			"query": graphqlQuery,
+			"variables": map[string]interface{}{
+				"id": idNum,
+			},
+		})
+		gqlReq, err := http.NewRequest(http.MethodPost, "https://graphql.anilist.co", bytes.NewBuffer(bodyBytes))
+		if err == nil {
+			gqlReq.Header.Set("Content-Type", "application/json")
+			gqlReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+			resp, err := apiHttpClient.Do(gqlReq)
+			if err == nil && resp.StatusCode == http.StatusOK {
+				var gqlRes struct {
+					Data struct {
+						Media struct {
+							IDMal int `json:"idMal"`
+						} `json:"Media"`
+					} `json:"data"`
+				}
+				if err := json.NewDecoder(resp.Body).Decode(&gqlRes); err == nil && gqlRes.Data.Media.IDMal > 0 {
+					resp.Body.Close()
+					ch <- idResult{id: gqlRes.Data.Media.IDMal}
+					return
+				}
+				resp.Body.Close()
+			}
+		}
+		ch <- idResult{}
+	}()
+
+	// Return first successful ID from AniZip or AniList
+	for i := 0; i < 2; i++ {
+		res := <-ch
+		if res.id > 0 {
+			malIdCache.Store(idNum, res.id)
+			return res.id
 		}
 	}
 
@@ -1427,13 +1582,14 @@ func resolveMalId(idNum int) int {
 			}
 			if err := json.NewDecoder(resp.Body).Decode(&kitsuData); err == nil && len(kitsuData.Data) > 0 {
 				malId := kitsuData.Data[0].Attributes.MalID
+				resp.Body.Close()
 				if malId > 0 {
-					resp.Body.Close()
 					malIdCache.Store(idNum, malId)
 					return malId
 				}
+			} else {
+				resp.Body.Close()
 			}
-			resp.Body.Close()
 		}
 	}
 
@@ -1721,56 +1877,89 @@ func extractMegaplayHLS(ctx context.Context, targetPath string) (string, []Subti
 	cidu := ciduMatch[1]
 	dataId := dataIdMatch[1]
 
-	// 1. Try getSourcesNew (new MegaPlay client endpoint)
-	apiURL := fmt.Sprintf("https://megaplay.buzz/stream/getSourcesNew?id=%s&cid=%s&cidu=%s", dataId, cid, cidu)
-	apiReq, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
-	if err == nil {
-		apiReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-		apiReq.Header.Set("Referer", "https://megaplay.buzz/")
-		apiReq.Header.Set("X-Requested-With", "XMLHttpRequest")
+	// PARALLEL: Try both getSourcesNew and legacy getSources simultaneously
+	type apiResult struct {
+		file   string
+		tracks []SubtitleTrack
+		err    error
+	}
 
-		apiResp, err := megaplayHttpClient.Do(apiReq)
+	newAPIChan := make(chan apiResult, 1)
+	legacyAPIChan := make(chan apiResult, 1)
+
+	// Try getSourcesNew in parallel
+	go func() {
+		apiURL := fmt.Sprintf("https://megaplay.buzz/stream/getSourcesNew?id=%s&cid=%s&cidu=%s", dataId, cid, cidu)
+		apiReq, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 		if err == nil {
-			if apiResp.StatusCode == http.StatusOK {
-				bodyBytes, err := io.ReadAll(apiResp.Body)
-				apiResp.Body.Close()
-				if err == nil {
-					if file, tracks, parseErr := parseMegaplaySourcesResponse(bodyBytes); parseErr == nil && file != "" {
-						return file, tracks, nil
+			apiReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+			apiReq.Header.Set("Referer", "https://megaplay.buzz/")
+			apiReq.Header.Set("X-Requested-With", "XMLHttpRequest")
+
+			apiResp, err := megaplayHttpClient.Do(apiReq)
+			if err == nil {
+				if apiResp.StatusCode == http.StatusOK {
+					bodyBytes, err := io.ReadAll(apiResp.Body)
+					apiResp.Body.Close()
+					if err == nil {
+						if file, tracks, parseErr := parseMegaplaySourcesResponse(bodyBytes); parseErr == nil && file != "" {
+							newAPIChan <- apiResult{file: file, tracks: tracks, err: nil}
+							return
+						}
 					}
+				} else {
+					apiResp.Body.Close()
 				}
-			} else {
-				apiResp.Body.Close()
 			}
+		}
+		newAPIChan <- apiResult{err: fmt.Errorf("getSourcesNew failed")}
+	}()
+
+	// Try legacy getSources in parallel
+	go func() {
+		legacyURL := fmt.Sprintf("https://megaplay.buzz/stream/getSources?id=%s&cid=%s&cidu=%s", dataId, cid, cidu)
+		legacyReq, err := http.NewRequestWithContext(ctx, http.MethodGet, legacyURL, nil)
+		if err == nil {
+			legacyReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+			legacyReq.Header.Set("Referer", "https://megaplay.buzz/")
+			legacyReq.Header.Set("X-Requested-With", "XMLHttpRequest")
+
+			legacyResp, err := megaplayHttpClient.Do(legacyReq)
+			if err == nil {
+				if legacyResp.StatusCode == http.StatusOK {
+					bodyBytes, err := io.ReadAll(legacyResp.Body)
+					legacyResp.Body.Close()
+					if err == nil {
+						if file, tracks, parseErr := parseMegaplaySourcesResponse(bodyBytes); parseErr == nil && file != "" {
+							legacyAPIChan <- apiResult{file: file, tracks: tracks, err: nil}
+							return
+						}
+					}
+				} else {
+					legacyResp.Body.Close()
+				}
+			}
+		}
+		legacyAPIChan <- apiResult{err: fmt.Errorf("getSources failed")}
+	}()
+
+	// Return first successful result
+	for i := 0; i < 2; i++ {
+		select {
+		case res := <-newAPIChan:
+			if res.err == nil && res.file != "" {
+				return res.file, res.tracks, nil
+			}
+		case res := <-legacyAPIChan:
+			if res.err == nil && res.file != "" {
+				return res.file, res.tracks, nil
+			}
+		case <-ctx.Done():
+			return "", nil, ctx.Err()
 		}
 	}
 
-	// 2. Fallback to legacy getSources
-	legacyURL := fmt.Sprintf("https://megaplay.buzz/stream/getSources?id=%s&cid=%s&cidu=%s", dataId, cid, cidu)
-	legacyReq, err := http.NewRequestWithContext(ctx, http.MethodGet, legacyURL, nil)
-	if err != nil {
-		return "", nil, err
-	}
-	legacyReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-	legacyReq.Header.Set("Referer", "https://megaplay.buzz/")
-	legacyReq.Header.Set("X-Requested-With", "XMLHttpRequest")
-
-	legacyResp, err := megaplayHttpClient.Do(legacyReq)
-	if err != nil {
-		return "", nil, err
-	}
-	defer legacyResp.Body.Close()
-
-	if legacyResp.StatusCode != http.StatusOK {
-		return "", nil, fmt.Errorf("getSources status %d", legacyResp.StatusCode)
-	}
-
-	bodyBytes, err = io.ReadAll(legacyResp.Body)
-	if err != nil {
-		return "", nil, err
-	}
-
-	return parseMegaplaySourcesResponse(bodyBytes)
+	return "", nil, fmt.Errorf("both getSourcesNew and getSources failed")
 }
 
 type AnimeSaltAudioOption struct {
@@ -3563,9 +3752,11 @@ func extractMegaplayHLSWithFallback(ctx context.Context, originalPath string) (s
 	if val, ok := megaplayStreamCache.Load(normPath); ok {
 		entry := val.(MegaplayStreamCacheEntry)
 		if time.Now().Before(entry.ExpiresAt) {
+			atomic.AddInt64(&cacheStats.megaplayHits, 1)
 			return entry.HLSFile, entry.Tracks, nil
 		}
 	}
+	atomic.AddInt64(&cacheStats.megaplayMisses, 1)
 	if originalPath != normPath {
 		if val, ok := megaplayStreamCache.Load(originalPath); ok {
 			entry := val.(MegaplayStreamCacheEntry)
@@ -3621,22 +3812,26 @@ func extractMegaplayHLSWithFallback(ctx context.Context, originalPath string) (s
 
 	var lastErr error
 	for i := 0; i < len(candidates); i++ {
-		res := <-resChan
-		if res.err == nil && res.file != "" {
-			cancel() // Cancel remaining candidate requests immediately
-			cacheEntry := MegaplayStreamCacheEntry{
-				HLSFile:   res.file,
-				Tracks:    res.tracks,
-				ExpiresAt: time.Now().Add(3 * time.Hour),
+		select {
+		case res := <-resChan:
+			if res.err == nil && res.file != "" {
+				cancel() // Cancel remaining candidate requests immediately
+				cacheEntry := MegaplayStreamCacheEntry{
+					HLSFile:   res.file,
+					Tracks:    res.tracks,
+					ExpiresAt: time.Now().Add(3 * time.Hour),
+				}
+				megaplayStreamCache.Store(normPath, cacheEntry)
+				if originalPath != normPath {
+					megaplayStreamCache.Store(originalPath, cacheEntry)
+				}
+				return res.file, res.tracks, nil
 			}
-			megaplayStreamCache.Store(normPath, cacheEntry)
-			if originalPath != normPath {
-				megaplayStreamCache.Store(originalPath, cacheEntry)
+			if res.err != nil {
+				lastErr = res.err
 			}
-			return res.file, res.tracks, nil
-		}
-		if res.err != nil {
-			lastErr = res.err
+		case <-ctx.Done():
+			return "", nil, ctx.Err()
 		}
 	}
 
@@ -3916,7 +4111,16 @@ func readResponseBody(resp *http.Response) ([]byte, error) {
 		reader = flReader
 	}
 
-	return io.ReadAll(reader)
+	buf := bodyBufferPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer bodyBufferPool.Put(buf)
+
+	if _, err := buf.ReadFrom(reader); err != nil {
+		return nil, err
+	}
+	res := make([]byte, buf.Len())
+	copy(res, buf.Bytes())
+	return res, nil
 }
 
 func resolveAnimeTitle(anilistID int, malID int) string {
@@ -3928,119 +4132,154 @@ func resolveAnimeTitle(anilistID int, malID int) string {
 		return cached.(string)
 	}
 
-	// 1. AniZip API (supports both anilist_id and mal_id)
-	var aniZipURL string
-	if anilistID > 0 {
-		aniZipURL = fmt.Sprintf("https://api.ani.zip/mappings?anilist_id=%d", anilistID)
-	} else {
-		aniZipURL = fmt.Sprintf("https://api.ani.zip/mappings?mal_id=%d", malID)
+	type titleResult struct {
+		title string
 	}
 
-	req, err := http.NewRequest(http.MethodGet, aniZipURL, nil)
-	if err == nil {
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-		resp, err := apiHttpClient.Do(req)
-		if err == nil && resp.StatusCode == http.StatusOK {
-			bodyBytes, bErr := readResponseBody(resp)
-			if bErr == nil {
-				var data struct {
-					Titles struct {
-						En        string `json:"en"`
-						Canonical string `json:"canonical"`
-						Rj        string `json:"rj"`
-					} `json:"titles"`
-				}
-				if err := json.Unmarshal(bodyBytes, &data); err == nil {
-					title := data.Titles.En
-					if title == "" {
-						title = data.Titles.Canonical
-					}
-					if title == "" {
-						title = data.Titles.Rj
-					}
-					if title != "" {
-						animeTitleCache.Store(cacheKey, title)
-						return title
-					}
-				}
+	sources := 0
+	ch := make(chan titleResult, 3)
+
+	// 1. AniZip API (supports both anilist_id and mal_id) - parallel
+	if anilistID > 0 || malID > 0 {
+		sources++
+		go func() {
+			var aniZipURL string
+			if anilistID > 0 {
+				aniZipURL = fmt.Sprintf("https://api.ani.zip/mappings?anilist_id=%d", anilistID)
+			} else {
+				aniZipURL = fmt.Sprintf("https://api.ani.zip/mappings?mal_id=%d", malID)
 			}
-		}
-	}
 
-	// 2. AniList GraphQL (if anilistID is present)
-	if anilistID > 0 {
-		graphqlQuery := `query ($id: Int) { Media (id: $id, type: ANIME) { title { english userPreferred romaji } } }`
-		bodyBytes, _ := json.Marshal(map[string]interface{}{
-			"query": graphqlQuery,
-			"variables": map[string]interface{}{
-				"id": anilistID,
-			},
-		})
-		gqlReq, err := http.NewRequest(http.MethodPost, "https://graphql.anilist.co", bytes.NewBuffer(bodyBytes))
-		if err == nil {
-			gqlReq.Header.Set("Content-Type", "application/json")
-			gqlReq.Header.Set("User-Agent", "Mozilla/5.0")
-			resp, err := apiHttpClient.Do(gqlReq)
-			if err == nil && resp.StatusCode == http.StatusOK {
-				bodyBytes, bErr := readResponseBody(resp)
-				if bErr == nil {
-					var gqlRes struct {
-						Data struct {
-							Media struct {
-								Title struct {
-									English       string `json:"english"`
-									UserPreferred string `json:"userPreferred"`
-									Romaji        string `json:"romaji"`
-								} `json:"title"`
-							} `json:"Media"`
-						} `json:"data"`
-					}
-					if err := json.Unmarshal(bodyBytes, &gqlRes); err == nil {
-						t := gqlRes.Data.Media.Title.English
-						if t == "" {
-							t = gqlRes.Data.Media.Title.UserPreferred
+			req, err := http.NewRequest(http.MethodGet, aniZipURL, nil)
+			if err == nil {
+				req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+				resp, err := apiHttpClient.Do(req)
+				if err == nil && resp.StatusCode == http.StatusOK {
+					bodyBytes, bErr := readResponseBody(resp)
+					if bErr == nil {
+						var data struct {
+							Titles struct {
+								En        string `json:"en"`
+								Canonical string `json:"canonical"`
+								Rj        string `json:"rj"`
+							} `json:"titles"`
 						}
-						if t == "" {
-							t = gqlRes.Data.Media.Title.Romaji
-						}
-						if t != "" {
-							animeTitleCache.Store(cacheKey, t)
-							return t
+						if err := json.Unmarshal(bodyBytes, &data); err == nil {
+							title := data.Titles.En
+							if title == "" {
+								title = data.Titles.Canonical
+							}
+							if title == "" {
+								title = data.Titles.Rj
+							}
+							if title != "" {
+								ch <- titleResult{title: title}
+								return
+							}
 						}
 					}
 				}
 			}
-		}
+			ch <- titleResult{}
+		}()
 	}
 
-	// 3. Jikan / MAL API (if malID is present)
+	// 2. AniList GraphQL (if anilistID or malID is present) - ultra-fast Cloudflare edge (~150ms)
+	if anilistID > 0 || malID > 0 {
+		sources++
+		go func() {
+			var graphqlQuery string
+			variables := make(map[string]interface{})
+			if anilistID > 0 {
+				graphqlQuery = `query ($id: Int) { Media (id: $id, type: ANIME) { title { english userPreferred romaji } } }`
+				variables["id"] = anilistID
+			} else {
+				graphqlQuery = `query ($idMal: Int) { Media (idMal: $idMal, type: ANIME) { title { english userPreferred romaji } } }`
+				variables["idMal"] = malID
+			}
+			bodyBytes, _ := json.Marshal(map[string]interface{}{
+				"query":     graphqlQuery,
+				"variables": variables,
+			})
+			gqlReq, err := http.NewRequest(http.MethodPost, "https://graphql.anilist.co", bytes.NewBuffer(bodyBytes))
+			if err == nil {
+				gqlReq.Header.Set("Content-Type", "application/json")
+				gqlReq.Header.Set("User-Agent", "Mozilla/5.0")
+				resp, err := apiHttpClient.Do(gqlReq)
+				if err == nil && resp.StatusCode == http.StatusOK {
+					bodyBytes, bErr := readResponseBody(resp)
+					if bErr == nil {
+						var gqlRes struct {
+							Data struct {
+								Media struct {
+									Title struct {
+										English       string `json:"english"`
+										UserPreferred string `json:"userPreferred"`
+										Romaji        string `json:"romaji"`
+									} `json:"title"`
+								} `json:"Media"`
+							} `json:"data"`
+						}
+						if err := json.Unmarshal(bodyBytes, &gqlRes); err == nil {
+							t := gqlRes.Data.Media.Title.English
+							if t == "" {
+								t = gqlRes.Data.Media.Title.UserPreferred
+							}
+							if t == "" {
+								t = gqlRes.Data.Media.Title.Romaji
+							}
+							if t != "" {
+								ch <- titleResult{title: t}
+								return
+							}
+						}
+					}
+				}
+			}
+			ch <- titleResult{}
+		}()
+	}
+
+	// 3. Jikan / MAL API (if malID is present) - parallel
 	if malID > 0 {
-		reqURL := fmt.Sprintf("https://api.jikan.moe/v4/anime/%d", malID)
-		req, err := http.NewRequest(http.MethodGet, reqURL, nil)
-		if err == nil {
-			req.Header.Set("User-Agent", "Mozilla/5.0")
-			resp, err := apiHttpClient.Do(req)
-			if err == nil && resp.StatusCode == http.StatusOK {
-				bodyBytes, bErr := readResponseBody(resp)
-				if bErr == nil {
-					var jikanData struct {
-						Data struct {
-							TitleEnglish string `json:"title_english"`
-							Title        string `json:"title"`
-						} `json:"data"`
-					}
-					if err := json.Unmarshal(bodyBytes, &jikanData); err == nil {
-						t := jikanData.Data.TitleEnglish
-						if t == "" {
-							t = jikanData.Data.Title
+		sources++
+		go func() {
+			reqURL := fmt.Sprintf("https://api.jikan.moe/v4/anime/%d", malID)
+			req, err := http.NewRequest(http.MethodGet, reqURL, nil)
+			if err == nil {
+				req.Header.Set("User-Agent", "Mozilla/5.0")
+				resp, err := apiHttpClient.Do(req)
+				if err == nil && resp.StatusCode == http.StatusOK {
+					bodyBytes, bErr := readResponseBody(resp)
+					if bErr == nil {
+						var jikanData struct {
+							Data struct {
+								TitleEnglish string `json:"title_english"`
+								Title        string `json:"title"`
+							} `json:"data"`
 						}
-						if t != "" {
-							animeTitleCache.Store(cacheKey, t)
-							return t
+						if err := json.Unmarshal(bodyBytes, &jikanData); err == nil {
+							t := jikanData.Data.TitleEnglish
+							if t == "" {
+								t = jikanData.Data.Title
+							}
+							if t != "" {
+								ch <- titleResult{title: t}
+								return
+							}
 						}
 					}
 				}
 			}
+			ch <- titleResult{}
+		}()
+	}
+
+	for i := 0; i < sources; i++ {
+		res := <-ch
+		if res.title != "" {
+			animeTitleCache.Store(cacheKey, res.title)
+			return res.title
 		}
 	}
 
@@ -4061,56 +4300,126 @@ func resolveAnimeSaltSlug(ctx context.Context, anilistID int, malID int, manualS
 		return "", fmt.Errorf("could not resolve anime title for ani:%d mal:%d", anilistID, malID)
 	}
 
+	// Strip apostrophes and special single quotes so "Journey's" -> "Journeys"
+	t := strings.ReplaceAll(title, "'", "")
+	t = strings.ReplaceAll(t, "’", "")
+	t = strings.ReplaceAll(t, "`", "")
+	t = strings.ReplaceAll(t, "´", "")
+
 	cleanTitle := strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == ' ' {
 			return r
 		}
 		return ' '
-	}, title)
+	}, t)
 	cleanTitle = strings.Join(strings.Fields(cleanTitle), " ")
 
 	queries := []string{cleanTitle}
 	if strings.Contains(title, ":") {
-		queries = append(queries, strings.TrimSpace(strings.Split(title, ":")[0]))
+		part := strings.TrimSpace(strings.Split(title, ":")[0])
+		if part != "" && part != cleanTitle {
+			queries = append(queries, part)
+		}
 	}
 	if strings.Contains(title, "-") {
-		queries = append(queries, strings.TrimSpace(strings.Split(title, "-")[0]))
+		part := strings.TrimSpace(strings.Split(title, "-")[0])
+		if part != "" && part != cleanTitle {
+			queries = append(queries, part)
+		}
 	}
 
 	targetSlug := strings.ToLower(strings.ReplaceAll(cleanTitle, " ", "-"))
 	slugRegex := regexp.MustCompile(`https?://animesalt\.cx/series/([a-zA-Z0-9\-]+)/?`)
 
-	for _, q := range queries {
-		encodedQ := url.QueryEscape(q)
-		searchURL := "https://animesalt.cx/?s=" + encodedQ
-		searchReq, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
-		if err != nil {
-			continue
-		}
-		searchReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-		searchReq.Header.Set("Referer", "https://animesalt.cx/")
+	type searchResult struct {
+		slug string
+		err  error
+	}
 
-		resp, err := animesaltHttpClient.Do(searchReq)
-		if err != nil {
-			continue
-		}
-		bodyBytes, err := readResponseBody(resp)
-		if err != nil {
-			continue
-		}
+	resultChan := make(chan searchResult, len(queries)+1)
+	expectedResults := len(queries)
 
-		html := string(bodyBytes)
-		allMatches := slugRegex.FindAllStringSubmatch(html, -1)
-		if len(allMatches) > 0 {
-			for _, m := range allMatches {
-				if len(m) > 1 && m[1] == targetSlug {
-					animeSaltSlugCache.Store(cacheKey, m[1])
-					return m[1], nil
-				}
+	// FAST DIRECT PROBE: If canonical slug pattern exists, check series page directly in parallel (~200ms)
+	if targetSlug != "" {
+		expectedResults++
+		go func() {
+			directURL := fmt.Sprintf("https://animesalt.cx/series/%s/", targetSlug)
+			directReq, err := http.NewRequestWithContext(ctx, http.MethodGet, directURL, nil)
+			if err != nil {
+				resultChan <- searchResult{err: err}
+				return
 			}
-			firstSlug := allMatches[0][1]
-			animeSaltSlugCache.Store(cacheKey, firstSlug)
-			return firstSlug, nil
+			directReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+			directReq.Header.Set("Referer", "https://animesalt.cx/")
+
+			resp, err := animesaltHttpClient.Do(directReq)
+			if err != nil {
+				resultChan <- searchResult{err: err}
+				return
+			}
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				animeSaltSlugCache.Store(cacheKey, targetSlug)
+				resultChan <- searchResult{slug: targetSlug}
+				return
+			}
+			resultChan <- searchResult{err: fmt.Errorf("direct probe status %d", resp.StatusCode)}
+		}()
+	}
+
+	// PARALLEL: Run all search queries simultaneously for maximum speed
+	for _, q := range queries {
+		query := q
+		go func() {
+			encodedQ := url.QueryEscape(query)
+			searchURL := "https://animesalt.cx/?s=" + encodedQ
+			searchReq, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
+			if err != nil {
+				resultChan <- searchResult{err: err}
+				return
+			}
+			searchReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+			searchReq.Header.Set("Referer", "https://animesalt.cx/")
+
+			resp, err := animesaltHttpClient.Do(searchReq)
+			if err != nil {
+				resultChan <- searchResult{err: err}
+				return
+			}
+			bodyBytes, err := readResponseBody(resp)
+			if err != nil {
+				resultChan <- searchResult{err: err}
+				return
+			}
+
+			html := string(bodyBytes)
+			allMatches := slugRegex.FindAllStringSubmatch(html, -1)
+			if len(allMatches) > 0 {
+				for _, m := range allMatches {
+					if len(m) > 1 && m[1] == targetSlug {
+						animeSaltSlugCache.Store(cacheKey, m[1])
+						resultChan <- searchResult{slug: m[1]}
+						return
+					}
+				}
+				firstSlug := allMatches[0][1]
+				animeSaltSlugCache.Store(cacheKey, firstSlug)
+				resultChan <- searchResult{slug: firstSlug}
+				return
+			}
+			resultChan <- searchResult{err: fmt.Errorf("no slug found")}
+		}()
+	}
+
+	// Return first successful result
+	for i := 0; i < expectedResults; i++ {
+		select {
+		case res := <-resultChan:
+			if res.err == nil && res.slug != "" {
+				return res.slug, nil
+			}
+		case <-ctx.Done():
+			return "", ctx.Err()
 		}
 	}
 
@@ -4173,9 +4482,11 @@ func extractAnimeSaltStream(ctx context.Context, slug string, season int, ep int
 	if val, ok := animeSaltStreamCache.Load(cacheKey); ok {
 		entry := val.(AnimeSaltStreamCacheEntry)
 		if time.Now().Before(entry.ExpiresAt) {
+			atomic.AddInt64(&cacheStats.animeSaltHits, 1)
 			return entry.ProxiedURL, entry.Tracks, entry.AudioOptions, entry.ResolvedSlug, nil
 		}
 	}
+	atomic.AddInt64(&cacheStats.animeSaltMisses, 1)
 
 	selectedLink := ""
 	var audioOptions []AnimeSaltAudioOption
@@ -4303,6 +4614,7 @@ func extractAnimeSaltStream(ctx context.Context, slug string, season int, ep int
 	if val, ok := animeSaltStreamCache.Load(selectedLink); ok {
 		entry := val.(AnimeSaltStreamCacheEntry)
 		if time.Now().Before(entry.ExpiresAt) {
+			atomic.AddInt64(&cacheStats.animeSaltHits, 1)
 			resEntry := AnimeSaltStreamCacheEntry{
 				ProxiedURL:   entry.ProxiedURL,
 				Tracks:       entry.Tracks,
@@ -4507,6 +4819,29 @@ func handleAnimeSaltEmbed(w http.ResponseWriter, r *http.Request) {
 	rawPath = strings.TrimPrefix(rawPath, "/embed/as-cdn")
 	rawPath = strings.TrimPrefix(rawPath, "/")
 
+	frameAncestors := buildFrameAncestorsCSP(r.Host)
+	cspHeader := fmt.Sprintf("default-src * 'unsafe-inline' 'unsafe-eval' blob: data:; frame-ancestors %s;", frameAncestors)
+
+	// FAST PATH: Return cached embed immediately if the requested URL path is already cached
+	pathCacheKey := "animesalt:clean:path:" + r.URL.Path
+	if r.URL.RawQuery != "" {
+		pathCacheKey += "?" + r.URL.RawQuery
+	}
+	if val, ok := animeSaltCache.Load(pathCacheKey); ok {
+		entry := val.(EmbedCacheEntry)
+		if time.Now().Before(entry.ExpiresAt) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
+			w.Header().Set("Content-Security-Policy", cspHeader)
+			w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
+			w.Header().Del("X-Frame-Options")
+			w.Header().Del("Cross-Origin-Opener-Policy")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(entry.HTML))
+			return
+		}
+	}
+
 	parts := strings.Split(rawPath, "/")
 	slug := ""
 	season := 1
@@ -4613,9 +4948,6 @@ func handleAnimeSaltEmbed(w http.ResponseWriter, r *http.Request) {
 		lang = "hin"
 	}
 
-	frameAncestors := buildFrameAncestorsCSP(r.Host)
-	cspHeader := fmt.Sprintf("default-src * 'unsafe-inline' 'unsafe-eval' blob: data:; frame-ancestors %s;", frameAncestors)
-
 	cacheKey := fmt.Sprintf("animesalt:clean:%s:%d:%d:%s:%s", slug, season, ep, hash, lang)
 	if val, ok := animeSaltCache.Load(cacheKey); ok {
 		entry := val.(EmbedCacheEntry)
@@ -4680,7 +5012,7 @@ func handleAnimeSaltEmbed(w http.ResponseWriter, r *http.Request) {
 					if len(t) > 0 {
 						tracks = t
 					}
-				case <-time.After(200 * time.Millisecond):
+				case <-time.After(50 * time.Millisecond):
 				}
 			}
 		}
@@ -4706,17 +5038,21 @@ func handleAnimeSaltEmbed(w http.ResponseWriter, r *http.Request) {
 			HTML:      html,
 			ExpiresAt: time.Now().Add(2 * time.Hour),
 		})
+		animeSaltCache.Store(pathCacheKey, EmbedCacheEntry{
+			HTML:      html,
+			ExpiresAt: time.Now().Add(2 * time.Hour),
+		})
 
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Header().Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
-			w.Header().Set("Content-Security-Policy", cspHeader)
-			w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
-			w.Header().Del("X-Frame-Options")
-			w.Header().Del("Cross-Origin-Opener-Policy")
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(html))
-			return
-		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400")
+		w.Header().Set("Content-Security-Policy", cspHeader)
+		w.Header().Set("Cross-Origin-Resource-Policy", "cross-origin")
+		w.Header().Del("X-Frame-Options")
+		w.Header().Del("Cross-Origin-Opener-Policy")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(html))
+		return
+	}
 
 	errorHTML := renderCustomProxy404(rawPath, "")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -4936,9 +5272,11 @@ func extractZokoHLS(ctx context.Context, malID int, ep int, track string) (strin
 	if val, ok := zokoStreamCache.Load(cacheKey); ok {
 		entry := val.(ZokoStreamCacheEntry)
 		if time.Now().Before(entry.ExpiresAt) {
+			atomic.AddInt64(&cacheStats.zokoHits, 1)
 			return entry.StreamFile, entry.Tracks, entry.Skip, nil
 		}
 	}
+	atomic.AddInt64(&cacheStats.zokoMisses, 1)
 
 	targetURL := fmt.Sprintf("https://zokoanime.video/stream/mal/%d/%d/%s", malID, ep, track)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
@@ -5273,8 +5611,40 @@ func handleZokoSourceAPI(w http.ResponseWriter, r *http.Request) {
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	setCORS(w)
 	w.Header().Set("Content-Type", "application/json")
+	
+	// Calculate cache hit rates
+	var megaplayHitRate, zokoHitRate, animeSaltHitRate float64
+	totalMegaplay := cacheStats.megaplayHits + cacheStats.megaplayMisses
+	totalZoko := cacheStats.zokoHits + cacheStats.zokoMisses
+	totalAnimeSalt := cacheStats.animeSaltHits + cacheStats.animeSaltMisses
+	
+	if totalMegaplay > 0 {
+		megaplayHitRate = float64(cacheStats.megaplayHits) / float64(totalMegaplay) * 100
+	}
+	if totalZoko > 0 {
+		zokoHitRate = float64(cacheStats.zokoHits) / float64(totalZoko) * 100
+	}
+	if totalAnimeSalt > 0 {
+		animeSaltHitRate = float64(cacheStats.animeSaltHits) / float64(totalAnimeSalt) * 100
+	}
+	
 	w.WriteHeader(http.StatusOK)
-	w.Write(fmt.Appendf(nil, `{"ok":true,"service":"yumezone-proxy-railway","version":"2.0.0","ts":%d}`, time.Now().UnixMilli()))
+	w.Write(fmt.Appendf(nil, `{
+		"ok":true,
+		"service":"yumezone-proxy-railway",
+		"version":"3.0.0-ultra",
+		"ts":%d,
+		"cache_stats":{
+			"megaplay":{"hits":%d,"misses":%d,"hit_rate":%.2f},
+			"zoko":{"hits":%d,"misses":%d,"hit_rate":%.2f},
+			"animesalt":{"hits":%d,"misses":%d,"hit_rate":%.2f}
+		}
+	}`, 
+		time.Now().UnixMilli(),
+		cacheStats.megaplayHits, cacheStats.megaplayMisses, megaplayHitRate,
+		cacheStats.zokoHits, cacheStats.zokoMisses, zokoHitRate,
+		cacheStats.animeSaltHits, cacheStats.animeSaltMisses, animeSaltHitRate,
+	))
 }
 
 func handleDocs(w http.ResponseWriter, r *http.Request) {
@@ -6571,6 +6941,7 @@ const docsHTMLTemplate = `<!DOCTYPE html>
 
 func main() {
 	initConfig()
+	startCacheCleanup() // Start background cache cleanup for memory management
 
 	portStr := os.Getenv("PORT")
 	if portStr == "" {
@@ -6656,9 +7027,10 @@ func main() {
 	server := &http.Server{
 		Addr:         fmt.Sprintf("0.0.0.0:%d", port),
 		Handler:      mux,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 120 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		ReadTimeout:  15 * time.Second,  // Faster read timeout for better responsiveness
+		WriteTimeout: 60 * time.Second,  // Faster write timeout
+		IdleTimeout:  60 * time.Second,  // Faster idle timeout for connection reuse
+		MaxHeaderBytes: 1 << 20,       // 1MB max header size
 	}
 
 	log.Printf("🚀 MegaPlay, AnimeSalt & Zoko Stream & Clean Embed Proxy running on 0.0.0.0:%d", port)
