@@ -226,11 +226,13 @@ var cdnRules = []CDNRule{
 		Matches: func(h string) bool {
 			return strings.HasSuffix(h, ".as-cdn26.top") || h == "as-cdn26.top" ||
 				strings.HasSuffix(h, ".as-cdn28.top") || h == "as-cdn28.top" ||
+				strings.HasSuffix(h, ".as-cdn31.top") || h == "as-cdn31.top" ||
 				strings.HasSuffix(h, ".as-cdn.top") || h == "as-cdn.top" ||
 				strings.Contains(h, "as-cdn") ||
+				strings.HasSuffix(h, ".vexal.top") || h == "vexal.top" ||
 				strings.HasSuffix(h, ".animesalt.cx") || h == "animesalt.cx"
 		},
-		Referer: "https://animesalt.cx/", Origin: "https://as-cdn26.top", SecSite: "cross-site",
+		Referer: "https://animesalt.cx/", Origin: "https://animesalt.cx", SecSite: "cross-site",
 	},
 	{
 		Matches: func(h string) bool {
@@ -4534,19 +4536,44 @@ func extractAnimeSaltStream(ctx context.Context, slug string, season int, ep int
 			}
 			html := string(bodyBytes)
 
-			reData := regexp.MustCompile(`multi-lang-plyr\.php\?data=([a-zA-Z0-9%_-]+)`)
+			reData := regexp.MustCompile(`(?:plyr/player|player|multi-lang-plyr)\.php\?data=([a-zA-Z0-9%_\-\+=]+)`)
 			m := reData.FindStringSubmatch(html)
+			if len(m) <= 1 {
+				reDataFallback := regexp.MustCompile(`[?&]data=([a-zA-Z0-9%_\-\+=]{20,})`)
+				m = reDataFallback.FindStringSubmatch(html)
+			}
 			if len(m) > 1 {
 				unescapedData, _ := url.QueryUnescape(m[1])
 				b64Dec, err := base64.StdEncoding.DecodeString(unescapedData)
 				if err != nil {
-					b64Dec, _ = base64.URLEncoding.DecodeString(unescapedData)
+					b64Dec, err = base64.URLEncoding.DecodeString(unescapedData)
 				}
-				if err := json.Unmarshal(b64Dec, &audioLinks); err == nil && len(audioLinks) > 0 {
-					animeSaltAudioLinksCache.Store(audioLinksKey, AnimeSaltAudioLinksCacheEntry{
-						AudioLinks: audioLinks,
-						ExpiresAt:  time.Now().Add(2 * time.Hour),
-					})
+				if err != nil {
+					b64Dec, err = base64.RawStdEncoding.DecodeString(unescapedData)
+				}
+				if err != nil {
+					b64Dec, err = base64.RawURLEncoding.DecodeString(unescapedData)
+				}
+				if err == nil {
+					if err := json.Unmarshal(b64Dec, &audioLinks); err == nil && len(audioLinks) > 0 {
+						animeSaltAudioLinksCache.Store(audioLinksKey, AnimeSaltAudioLinksCacheEntry{
+							AudioLinks: audioLinks,
+							ExpiresAt:  time.Now().Add(2 * time.Hour),
+						})
+					}
+				}
+			}
+
+			// Direct Abyss player URL fallback
+			if len(audioLinks) == 0 {
+				reAbyssDirect := regexp.MustCompile(`https?://(?:player\.)?abyssplayer\.com/([a-zA-Z0-9_-]+)`)
+				if directMatches := reAbyssDirect.FindAllStringSubmatch(html, -1); len(directMatches) > 0 {
+					for _, dm := range directMatches {
+						audioLinks = append(audioLinks, AbyssAudioLink{
+							Language: "Default",
+							Link:     dm[0],
+						})
+					}
 				}
 			}
 		}
@@ -4658,6 +4685,15 @@ func extractAnimeSaltStream(ctx context.Context, slug string, season int, ep int
 
 	datasRaw, err := base64.StdEncoding.DecodeString(mDatas[1])
 	if err != nil {
+		datasRaw, err = base64.URLEncoding.DecodeString(mDatas[1])
+	}
+	if err != nil {
+		datasRaw, err = base64.RawStdEncoding.DecodeString(mDatas[1])
+	}
+	if err != nil {
+		datasRaw, err = base64.RawURLEncoding.DecodeString(mDatas[1])
+	}
+	if err != nil {
 		return "", nil, nil, "", fmt.Errorf("failed base64 decoding datas: %w", err)
 	}
 
@@ -4696,13 +4732,18 @@ func extractAnimeSaltStream(ctx context.Context, slug string, season int, ep int
 		return "", nil, nil, "", fmt.Errorf("failed parsing decrypted media json: %w", err)
 	}
 
-	// 1. Check for Direct H.264 Source (Type A)
+	// 1. Check for Direct Source (Type A - prefer H.264, fallback to any)
 	var bestSource *AbyssSource
 	for _, s := range media.MP4.Sources {
-		if s.Codec == "av1" || !s.Status || s.Path == "" || s.URL == "" {
+		if !s.Status || s.Path == "" || s.URL == "" {
 			continue
 		}
-		if bestSource == nil || s.ResID > bestSource.ResID {
+		if s.Codec == "h264" {
+			if bestSource == nil || bestSource.Codec != "h264" || s.ResID > bestSource.ResID {
+				curr := s
+				bestSource = &curr
+			}
+		} else if bestSource == nil || (bestSource.Codec != "h264" && s.ResID > bestSource.ResID) {
 			curr := s
 			bestSource = &curr
 		}
@@ -4734,13 +4775,18 @@ func extractAnimeSaltStream(ctx context.Context, slug string, season int, ep int
 		return proxiedURL, nil, audioOptions, datas.Slug, nil
 	}
 
-	// 2. Check for Chunked FristData H.264 Source (Type B)
+	// 2. Check for Chunked FristData (Type B - prefer H.264, fallback to any)
 	var bestFD *AbyssFristData
 	for _, fd := range media.MP4.FristDatas {
-		if fd.Codec == "av1" || fd.URL == "" {
+		if fd.URL == "" {
 			continue
 		}
-		if bestFD == nil || fd.ResID > bestFD.ResID {
+		if fd.Codec == "h264" {
+			if bestFD == nil || bestFD.Codec != "h264" || fd.ResID > bestFD.ResID {
+				curr := fd
+				bestFD = &curr
+			}
+		} else if bestFD == nil || (bestFD.Codec != "h264" && fd.ResID > bestFD.ResID) {
 			curr := fd
 			bestFD = &curr
 		}
@@ -4750,12 +4796,19 @@ func extractAnimeSaltStream(ctx context.Context, slug string, season int, ep int
 		domain := ""
 		for _, s := range media.MP4.Sources {
 			if s.ResID == bestFD.ResID && s.Sub != "" {
-				domain = s.Sub + ".sssrr.org"
-				break
+				if s.Codec == bestFD.Codec || domain == "" {
+					domain = s.Sub + ".sssrr.org"
+				}
+				if s.Codec == bestFD.Codec {
+					break
+				}
 			}
 		}
 		if domain == "" && len(media.MP4.Domains) > 0 {
 			domain = media.MP4.Domains[0]
+		}
+		if domain != "" && !strings.Contains(domain, ".") {
+			domain = domain + ".sssrr.org"
 		}
 		parts := strings.Split(bestFD.URL, "/")
 		filename := parts[len(parts)-1]
@@ -4851,7 +4904,18 @@ func handleAnimeSaltEmbed(w http.ResponseWriter, r *http.Request) {
 	anilistID := 0
 	malID := 0
 
-	if len(parts) >= 2 && parts[0] == "ani" {
+	isAsCdn := strings.HasPrefix(r.URL.Path, "/embed/as-cdn") || strings.HasPrefix(r.URL.Path, "/api/as-cdn") || strings.HasPrefix(r.URL.Path, "/player/as-cdn")
+	if isAsCdn && len(parts) >= 1 && parts[0] != "" {
+		hash = parts[0]
+		if hash == "video" && len(parts) > 1 {
+			hash = parts[1]
+		}
+		if len(parts) > 1 && parts[1] != "" && parts[0] != "video" {
+			lang = parts[1]
+		} else if len(parts) > 2 && parts[2] != "" && parts[0] == "video" {
+			lang = parts[2]
+		}
+	} else if len(parts) >= 2 && parts[0] == "ani" {
 		anilistID, _ = strconv.Atoi(parts[1])
 		if len(parts) > 2 && parts[2] != "" {
 			ep, _ = strconv.Atoi(parts[2])
@@ -4879,7 +4943,7 @@ func handleAnimeSaltEmbed(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf(`{"error":"Failed to resolve AnimeSalt slug: %s"}`, err.Error()), http.StatusNotFound)
 			return
 		}
-	} else if len(parts) >= 1 && (parts[0] == "video" || len(parts[0]) >= 24) {
+	} else if len(parts) >= 1 && (parts[0] == "video" || (!strings.Contains(parts[0], "-") && len(parts[0]) >= 6 && len(parts[0]) <= 64)) {
 		if parts[0] == "video" && len(parts) > 1 {
 			hash = parts[1]
 		} else {
@@ -5105,6 +5169,11 @@ func handleAnimeSaltSourceAPI(w http.ResponseWriter, r *http.Request) {
 	seasonStr := q.Get("season")
 	epStr := q.Get("ep")
 	hash := q.Get("hash")
+	if hash == "" && (strings.HasPrefix(r.URL.Path, "/api/as-cdn/") || strings.HasPrefix(r.URL.Path, "/embed/as-cdn/")) {
+		hash = strings.TrimPrefix(r.URL.Path, "/api/as-cdn/")
+		hash = strings.TrimPrefix(hash, "/embed/as-cdn/")
+		hash = strings.Trim(hash, "/")
+	}
 	anilistStr := q.Get("anilist")
 	malStr := q.Get("mal")
 
@@ -6855,9 +6924,9 @@ const docsHTMLTemplate = `<!DOCTYPE html>
                 $("sb-series-id").value = "dan-da-dan";
                 $("group-ep-num").style.display = "block";
             } else if (mode === "salt-hash") {
-                $("group-series-id").querySelector("label").textContent = "Server 1 Hash (as-cdn26)";
-                $("sb-series-id").placeholder = "e.g. d645920e395fedad7bbbed0eca3fe2e0";
-                $("sb-series-id").value = "d645920e395fedad7bbbed0eca3fe2e0";
+                $("group-series-id").querySelector("label").textContent = "Server 1 Hash (Abyss / as-cdn)";
+                $("sb-series-id").placeholder = "e.g. FfJcgjlZm";
+                $("sb-series-id").value = "FfJcgjlZm";
                 $("group-ep-num").style.display = "none";
             } else if (mode === "salt-ani") {
                 $("group-series-id").querySelector("label").textContent = "AniList ID (AnimeSalt Server 1)";
