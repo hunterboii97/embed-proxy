@@ -138,11 +138,33 @@ function decryptAbyssDatas(datasB64) {
   return { datas, media };
 }
 
+/**
+ * Generates Sora token for Abyss chunked proxying
+ */
+function genSoraToken(filePath, size) {
+  const sizeStr = String(size);
+  const quirkBytes = Buffer.alloc(sizeStr.length);
+  for (let i = 0; i < sizeStr.length; i++) {
+    quirkBytes[i] = sizeStr.charCodeAt(i) - 48;
+  }
+  const hexKey = crypto.createHash('md5').update(quirkBytes).digest('hex');
+  const keyBytes = Buffer.from(hexKey, 'utf8');
+  const ivBytes = keyBytes.subarray(0, 16);
+
+  const cipher = crypto.createCipheriv('aes-256-ctr', keyBytes, ivBytes);
+  const enc = Buffer.concat([cipher.update(Buffer.from(filePath, 'utf8')), cipher.final()]);
+
+  const b1 = enc.toString('base64').replace(/=+$/, '');
+  const b2 = Buffer.from(b1, 'utf8').toString('base64').replace(/=+$/, '');
+  return b2;
+}
+
 module.exports = {
   encryptToken,
   decryptToken,
   encryptPlaylistResponse,
   decryptMegaplayEnc,
   deobfuscateZokoPayload,
-  decryptAbyssDatas
+  decryptAbyssDatas,
+  genSoraToken
 };

@@ -7,7 +7,9 @@ const globalAgent = new Agent({
   connections: 10000,
   pipelining: 1,
   connect: {
-    timeout: 8000
+    timeout: 8000,
+    keepAlive: true,
+    noDelay: true
   }
 });
 

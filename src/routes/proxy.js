@@ -4,7 +4,7 @@ const { Readable, Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 
 const { cdnRules, isPrivateHost } = require('../../config');
-const { decryptToken, encryptPlaylistResponse } = require('../utils/crypto');
+const { decryptToken, encryptPlaylistResponse, genSoraToken } = require('../utils/crypto');
 const { rewriteM3U8 } = require('../utils/m3u8');
 const { m3u8PlaylistCache, stats } = require('../utils/cache');
 const { globalAgent, DEFAULT_UA } = require('../utils/http');
@@ -27,11 +27,12 @@ function setCORS(reply) {
 }
 
 /**
- * Handles Abyss Chunked (Type B) video proxying with range clamping (5MB per request)
+ * Handles Abyss Chunked (Type B) video proxying with Sora tokens and range clamping
  */
 async function handleAbyssChunked(req, reply, payload) {
   const totalSize = payload.ts || 0;
-  const chunkSize = payload.cs || 5242880;
+  let chunkSize = payload.cs || 5242880;
+  if (chunkSize <= 0) chunkSize = 5242880;
 
   const rangeHeader = req.headers['range'];
   let start = 0;
@@ -49,7 +50,9 @@ async function handleAbyssChunked(req, reply, payload) {
     }
   }
 
-  // Cap range response to at most 1 chunk (5MB) per HTTP request
+  // Cap range response to at most 1 chunk (5MB) per HTTP request.
+  // This prevents the proxy from getting stuck in an infinite 300MB download loop
+  // when browsers request open-ended ranges like 'bytes=0-'.
   let chunkEnd = (Math.floor(start / chunkSize) + 1) * chunkSize - 1;
   if (chunkEnd >= totalSize) chunkEnd = totalSize - 1;
   if (end > chunkEnd) end = chunkEnd;
@@ -89,21 +92,24 @@ async function handleAbyssChunked(req, reply, payload) {
     if (rawRes.destroyed) return;
 
     const cStartByte = idx * chunkSize;
-    const cEndByte = cStartByte + chunkSize - 1;
-    let actualCEnd = cEndByte;
-    if (actualCEnd >= totalSize) actualCEnd = totalSize - 1;
+    let cEndByte = cStartByte + chunkSize - 1;
+    if (cEndByte >= totalSize) cEndByte = totalSize - 1;
 
-    let partIdx = idx + 1;
-    if (payload.ps && payload.ps > 0) {
-      partIdx = Math.floor(cStartByte / payload.ps) + 1;
+    let reqStartInChunk = 0;
+    if (start > cStartByte) {
+      reqStartInChunk = start - cStartByte;
     }
 
-    let chunkURL = payload.url;
-    if (payload.dom) {
-      chunkURL = `https://${payload.dom}/${payload.mid}_${payload.rid}/${partIdx}.mp4`;
+    let reqEndInChunk = cEndByte - cStartByte;
+    if (end < cEndByte) {
+      reqEndInChunk = end - cStartByte;
     }
 
-    const cReqRange = `bytes=${cStartByte}-${actualCEnd}`;
+    const soraPath = `/mp4/${payload.mid}/${payload.rid}/${totalSize}/${chunkSize}/${idx}`;
+    const soraToken = genSoraToken(soraPath, totalSize);
+    const chunkURL = `https://${payload.dom}/sora/${totalSize}/${soraToken}`;
+
+    const cReqRange = `bytes=${reqStartInChunk}-${reqEndInChunk}`;
     try {
       const upstreamRes = await request(chunkURL, {
         method: 'GET',
@@ -111,26 +117,18 @@ async function handleAbyssChunked(req, reply, payload) {
           'user-agent': DEFAULT_UA,
           referer: 'https://abyssplayer.com/',
           origin: 'https://abyssplayer.com',
+          connection: 'keep-alive',
+          'sec-fetch-dest': 'video',
+          'sec-fetch-mode': 'cors',
+          'sec-fetch-site': 'cross-site',
           range: cReqRange
         },
         dispatcher: globalAgent
       });
 
-      const chunkBuffer = Buffer.from(await upstreamRes.body.arrayBuffer());
-
-      let sliceStart = 0;
-      let sliceEnd = chunkBuffer.length;
-
-      if (start > cStartByte) {
-        sliceStart = start - cStartByte;
-      }
-      if (end < actualCEnd) {
-        sliceEnd = sliceStart + (end - Math.max(start, cStartByte) + 1);
-      }
-
-      if (sliceStart < chunkBuffer.length) {
-        const toSend = chunkBuffer.subarray(sliceStart, Math.min(sliceEnd, chunkBuffer.length));
-        if (!rawRes.write(toSend)) {
+      for await (const chunk of upstreamRes.body) {
+        if (rawRes.destroyed) return;
+        if (!rawRes.write(chunk)) {
           await new Promise(r => rawRes.once('drain', r));
         }
       }
@@ -200,6 +198,11 @@ async function handleAbyssCTR(req, reply, upstreamRes, payload) {
 
   const decipher = crypto.createDecipheriv('aes-256-ctr', keyBytes, ivBytes);
 
+  // If seeking within the first 64KB, advance decipher keystream to rangeStart
+  if (rangeStart > 0) {
+    decipher.update(Buffer.alloc(rangeStart));
+  }
+
   let encBytesRemaining = 65536 - rangeStart;
 
   const transform = new Transform({
@@ -227,6 +230,7 @@ async function handleAbyssCTR(req, reply, upstreamRes, payload) {
 
 async function registerProxyRoutes(fastify) {
   fastify.get('/p/*', async (req, reply) => {
+    req.raw.socket?.setNoDelay(true);
     setCORS(reply);
 
     const path = req.params['*'] || '';
