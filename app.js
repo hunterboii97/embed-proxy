@@ -60,18 +60,20 @@ app.setErrorHandler(async (error, req, reply) => {
   });
 });
 
-// Start Server if executed directly
-if (require.main === module) {
-  (async () => {
-    try {
+// Start Server (supports both Standalone and Phusion Passenger)
+(async () => {
+  try {
+    if (typeof PhusionPassenger !== 'undefined') {
+      await app.listen({ path: 'passenger' });
+    } else if (require.main === module || process.env.PORT) {
       const address = await app.listen({ port: PORT, host: '0.0.0.0' });
       console.log(`🚀 YumeZone Ultra Stream & Clean Embed Proxy running at: ${address}`);
-    } catch (err) {
-      console.error('Failed to start server:', err);
-      process.exit(1);
     }
-  })();
-}
+  } catch (err) {
+    console.error('Failed to start server:', err);
+    process.exit(1);
+  }
+})();
 
 // Export for cPanel Phusion Passenger
 module.exports = app;
