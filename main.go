@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -1219,6 +1220,14 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	if payload.Exp > 0 && time.Now().Unix() > payload.Exp {
 		http.Error(w, `{"error":"Token expired"}`, http.StatusGone)
 		return
+	}
+
+	if r.URL.Query().Get("dl") == "1" || r.URL.Query().Get("download") == "1" {
+		dlName := r.URL.Query().Get("filename")
+		if dlName == "" {
+			dlName = "video.mp4"
+		}
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, dlName))
 	}
 
 	if payload.Cipher == "abyss-chunked" {
@@ -5677,6 +5686,643 @@ func handleZokoSourceAPI(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// --- Real-Time Video Download Engine (MP4 / TS Remuxing & Chunk Piping) ---
+
+type M3U8VariantInfo struct {
+	Resolution string
+	Bandwidth  int
+	Height     int
+	URL        string
+}
+
+func parseM3U8Variants(masterText string, baseURL string) []M3U8VariantInfo {
+	var variants []M3U8VariantInfo
+	scanner := bufio.NewScanner(strings.NewReader(masterText))
+	var currentRes string
+	var currentBandwidth int
+	var currentHeight int
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "#EXT-X-STREAM-INF:") {
+			if strings.Contains(line, "RESOLUTION=") {
+				parts := strings.Split(line, "RESOLUTION=")
+				if len(parts) > 1 {
+					resStr := strings.Split(parts[1], ",")[0]
+					resStr = strings.Trim(resStr, "\" ")
+					currentRes = resStr
+					dims := strings.Split(resStr, "x")
+					if len(dims) == 2 {
+						if h, err := strconv.Atoi(dims[1]); err == nil {
+							currentHeight = h
+						}
+					}
+				}
+			}
+			if strings.Contains(line, "BANDWIDTH=") {
+				parts := strings.Split(line, "BANDWIDTH=")
+				if len(parts) > 1 {
+					bwStr := strings.Split(parts[1], ",")[0]
+					bwStr = strings.Trim(bwStr, "\" ")
+					if bw, err := strconv.Atoi(bwStr); err == nil {
+						currentBandwidth = bw
+					}
+				}
+			}
+		} else if line != "" && !strings.HasPrefix(line, "#") {
+			fullURL := resolveAbsoluteURL(line, baseURL)
+			variants = append(variants, M3U8VariantInfo{
+				Resolution: currentRes,
+				Bandwidth:  currentBandwidth,
+				Height:     currentHeight,
+				URL:        fullURL,
+			})
+			currentRes = ""
+			currentBandwidth = 0
+			currentHeight = 0
+		}
+	}
+	return variants
+}
+
+func resolveM3U8Quality(ctx context.Context, masterM3U8URL string, referer string, requestedQuality string) (string, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, masterM3U8URL, nil)
+	if err != nil {
+		return masterM3U8URL, "best", err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	if referer != "" {
+		req.Header.Set("Referer", referer)
+		if u, err := url.Parse(referer); err == nil {
+			req.Header.Set("Origin", fmt.Sprintf("%s://%s", u.Scheme, u.Host))
+		}
+	}
+
+	resp, err := streamHttpClient.Do(req)
+	if err != nil {
+		return masterM3U8URL, "best", err
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := readResponseBody(resp)
+	if err != nil {
+		return masterM3U8URL, "best", err
+	}
+
+	bodyStr := string(bodyBytes)
+	if !strings.Contains(bodyStr, "#EXT-X-STREAM-INF") {
+		return masterM3U8URL, "default", nil
+	}
+
+	variants := parseM3U8Variants(bodyStr, masterM3U8URL)
+	if len(variants) == 0 {
+		return masterM3U8URL, "default", nil
+	}
+
+	targetQuality := strings.ToLower(strings.TrimSpace(requestedQuality))
+	targetQuality = strings.TrimSuffix(targetQuality, "p")
+	var targetHeight int
+	if h, err := strconv.Atoi(targetQuality); err == nil && h > 0 {
+		targetHeight = h
+	}
+
+	// 1. Try exact resolution height match (e.g. 1080, 720, 480, 360)
+	if targetHeight > 0 {
+		for _, v := range variants {
+			if v.Height == targetHeight {
+				return v.URL, fmt.Sprintf("%dp", v.Height), nil
+			}
+		}
+		var closest *M3U8VariantInfo
+		minDiff := 99999
+		for _, v := range variants {
+			if v.Height > 0 {
+				diff := v.Height - targetHeight
+				if diff < 0 {
+					diff = -diff
+				}
+				if diff < minDiff {
+					minDiff = diff
+					c := v
+					closest = &c
+				}
+			}
+		}
+		if closest != nil {
+			return closest.URL, fmt.Sprintf("%dp", closest.Height), nil
+		}
+	}
+
+	// 2. Default to best (highest bandwidth or height)
+	best := variants[0]
+	for _, v := range variants {
+		if v.Height > best.Height || (v.Height == best.Height && v.Bandwidth > best.Bandwidth) {
+			best = v
+		}
+	}
+	label := "best"
+	if best.Height > 0 {
+		label = fmt.Sprintf("%dp", best.Height)
+	}
+	return best.URL, label, nil
+}
+
+func hasFFmpeg() bool {
+	_, err := exec.LookPath("ffmpeg")
+	return err == nil
+}
+
+func buildDownloadFilename(title string, ep int, quality string, lang string, ext string) string {
+	if title == "" {
+		title = "Anime"
+	}
+	reg := regexp.MustCompile(`[^a-zA-Z0-9_\-\.\s]`)
+	cleanTitle := reg.ReplaceAllString(title, "")
+	cleanTitle = strings.TrimSpace(cleanTitle)
+	cleanTitle = strings.ReplaceAll(cleanTitle, " ", "_")
+	for strings.Contains(cleanTitle, "__") {
+		cleanTitle = strings.ReplaceAll(cleanTitle, "__", "_")
+	}
+	if cleanTitle == "" {
+		cleanTitle = "Anime"
+	}
+
+	if quality == "" {
+		quality = "HD"
+	}
+	if !strings.HasSuffix(strings.ToLower(quality), "p") && quality != "HD" && quality != "best" {
+		quality = quality + "p"
+	}
+
+	langUpper := strings.ToUpper(lang)
+	if langUpper == "" {
+		langUpper = "SUB"
+	}
+
+	return fmt.Sprintf("[YumeZone]_%s_EP%02d_%s_%s.%s", cleanTitle, ep, langUpper, quality, ext)
+}
+
+func streamM3U8AsMP4(w http.ResponseWriter, r *http.Request, variantM3U8URL string, referer string, filename string) error {
+	ffmpegPath, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		log.Printf("[Download] FFmpeg not found in PATH, falling back to direct TS stream for: %s", filename)
+		tsFilename := strings.TrimSuffix(filename, ".mp4") + ".ts"
+		return streamM3U8AsTS(w, r, variantM3U8URL, referer, tsFilename)
+	}
+
+	ctx := r.Context()
+
+	// 1. Fetch variant playlist to get segment URLs
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, variantM3U8URL, nil)
+	if err != nil {
+		return err
+	}
+	if referer != "" {
+		req.Header.Set("Referer", referer)
+		if u, err := url.Parse(referer); err == nil {
+			req.Header.Set("Origin", fmt.Sprintf("%s://%s", u.Scheme, u.Host))
+		}
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+
+	resp, err := streamHttpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := readResponseBody(resp)
+	if err != nil {
+		return err
+	}
+
+	var chunkURLs []string
+	scanner := bufio.NewScanner(bytes.NewReader(bodyBytes))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" && !strings.HasPrefix(line, "#") {
+			chunkURLs = append(chunkURLs, resolveAbsoluteURL(line, variantM3U8URL))
+		}
+	}
+
+	if len(chunkURLs) == 0 {
+		return fmt.Errorf("no video segments found in playlist")
+	}
+
+	// 2. Setup FFmpeg stdin -> stdout pipe
+	args := []string{
+		"-loglevel", "error",
+		"-probesize", "1000000",
+		"-analyzeduration", "1500000",
+		"-f", "mpegts",
+		"-i", "pipe:0",
+		"-map", "0:v:0",
+		"-map", "0:a:0?",
+		"-sn",
+		"-dn",
+		"-avoid_negative_ts", "make_zero",
+		"-c", "copy",
+		"-bsf:a", "aac_adtstoasc",
+		"-movflags", "frag_keyframe+empty_moov+default_base_moof",
+		"-f", "mp4",
+		"pipe:1",
+	}
+
+	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("failed to open ffmpeg stdin: %w", err)
+	}
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to open ffmpeg stdout: %w", err)
+	}
+
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start ffmpeg: %w", err)
+	}
+
+	defer func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+	}()
+
+	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	w.Header().Set("Accept-Ranges", "none")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+	w.Header().Set("Connection", "keep-alive")
+
+	// 3. Goroutine to feed prefetched TS chunks into FFmpeg stdin
+	go func() {
+		defer stdin.Close()
+
+		type chunkResult struct {
+			index int
+			data  []byte
+			err   error
+		}
+
+		chunkChan := make(chan chunkResult, 4)
+
+		go func() {
+			defer close(chunkChan)
+			for idx, cURL := range chunkURLs {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				cReq, _ := http.NewRequestWithContext(ctx, http.MethodGet, cURL, nil)
+				if referer != "" {
+					cReq.Header.Set("Referer", referer)
+				}
+				cReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+
+				cResp, cErr := streamHttpClient.Do(cReq)
+				if cErr != nil {
+					chunkChan <- chunkResult{index: idx, err: cErr}
+					return
+				}
+
+				data, cErr := readResponseBody(cResp)
+				cResp.Body.Close()
+
+				if len(data) >= 253 && bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")) && data[252] == 0x47 {
+					data = data[252:]
+				}
+
+				select {
+				case <-ctx.Done():
+					return
+				case chunkChan <- chunkResult{index: idx, data: data, err: cErr}:
+				}
+			}
+		}()
+
+		for res := range chunkChan {
+			if res.err != nil {
+				break
+			}
+			if len(res.data) > 0 {
+				if _, wErr := stdin.Write(res.data); wErr != nil {
+					break
+				}
+			}
+		}
+	}()
+
+	// 4. Stream FFmpeg stdout MP4 directly to HTTP response
+	bufPtr := bufferPool.Get().(*[]byte)
+	defer bufferPool.Put(bufPtr)
+
+	copyErr := copyWithImmediateFlush(w, stdout, *bufPtr)
+	cmdErr := cmd.Wait()
+
+	if copyErr != nil {
+		return copyErr
+	}
+	if cmdErr != nil && ctx.Err() == nil {
+		log.Printf("[Download] FFmpeg note: %s", stderrBuf.String())
+	}
+	return nil
+}
+
+func streamM3U8AsTS(w http.ResponseWriter, r *http.Request, variantM3U8URL string, referer string, filename string) error {
+	ctx := r.Context()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, variantM3U8URL, nil)
+	if err != nil {
+		return err
+	}
+	if referer != "" {
+		req.Header.Set("Referer", referer)
+		if u, err := url.Parse(referer); err == nil {
+			req.Header.Set("Origin", fmt.Sprintf("%s://%s", u.Scheme, u.Host))
+		}
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+
+	resp, err := streamHttpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := readResponseBody(resp)
+	if err != nil {
+		return err
+	}
+
+	var chunkURLs []string
+	scanner := bufio.NewScanner(bytes.NewReader(bodyBytes))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" && !strings.HasPrefix(line, "#") {
+			chunkURLs = append(chunkURLs, resolveAbsoluteURL(line, variantM3U8URL))
+		}
+	}
+
+	if len(chunkURLs) == 0 {
+		return fmt.Errorf("no video segments found in playlist")
+	}
+
+	w.Header().Set("Content-Type", "video/mp2t")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, hasFlusher := w.(http.Flusher)
+
+	type chunkResult struct {
+		index int
+		data  []byte
+		err   error
+	}
+
+	chunkChan := make(chan chunkResult, 3)
+
+	go func() {
+		defer close(chunkChan)
+		for idx, cURL := range chunkURLs {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			cReq, _ := http.NewRequestWithContext(ctx, http.MethodGet, cURL, nil)
+			if referer != "" {
+				cReq.Header.Set("Referer", referer)
+			}
+			cReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+
+			cResp, cErr := streamHttpClient.Do(cReq)
+			if cErr != nil {
+				chunkChan <- chunkResult{index: idx, err: cErr}
+				return
+			}
+
+			data, cErr := readResponseBody(cResp)
+			cResp.Body.Close()
+
+			if len(data) >= 253 && bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")) && data[252] == 0x47 {
+				data = data[252:]
+			}
+
+			select {
+			case <-ctx.Done():
+				return
+			case chunkChan <- chunkResult{index: idx, data: data, err: cErr}:
+			}
+		}
+	}()
+
+	for res := range chunkChan {
+		if res.err != nil {
+			log.Printf("[Download] Error fetching segment %d: %v", res.index, res.err)
+			break
+		}
+		if len(res.data) > 0 {
+			if _, writeErr := w.Write(res.data); writeErr != nil {
+				return writeErr
+			}
+			if hasFlusher {
+				flusher.Flush()
+			}
+		}
+	}
+
+	return nil
+}
+
+func handleDownload(w http.ResponseWriter, r *http.Request) {
+	setCORS(w)
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	q := r.URL.Query()
+	server := strings.ToLower(strings.TrimSpace(q.Get("server")))
+	malStr := q.Get("mal")
+	aniStr := q.Get("ani")
+	if aniStr == "" {
+		aniStr = q.Get("anilist")
+	}
+	slug := q.Get("slug")
+	hash := q.Get("hash")
+	epStr := q.Get("ep")
+	if epStr == "" {
+		epStr = q.Get("episode")
+	}
+	seasonStr := q.Get("season")
+	if seasonStr == "" {
+		seasonStr = q.Get("s")
+	}
+	quality := strings.ToLower(strings.TrimSpace(q.Get("q")))
+	if quality == "" {
+		quality = strings.ToLower(strings.TrimSpace(q.Get("quality")))
+	}
+	if quality == "" {
+		quality = "best"
+	}
+	lang := strings.ToLower(strings.TrimSpace(q.Get("lang")))
+	format := strings.ToLower(strings.TrimSpace(q.Get("format")))
+	if format == "" {
+		format = "mp4"
+	}
+	customTitle := q.Get("title")
+
+	malID := 0
+	if m, err := strconv.Atoi(malStr); err == nil && m > 0 {
+		malID = m
+	}
+	aniID := 0
+	if a, err := strconv.Atoi(aniStr); err == nil && a > 0 {
+		aniID = a
+	}
+	ep := 1
+	if e, err := strconv.Atoi(epStr); err == nil && e > 0 {
+		ep = e
+	}
+	season := 1
+	if s, err := strconv.Atoi(seasonStr); err == nil && s > 0 {
+		season = s
+	}
+
+	if customTitle == "" && (malID > 0 || aniID > 0) {
+		customTitle = resolveAnimeTitle(aniID, malID)
+	}
+
+	if server == "" {
+		if slug != "" || hash != "" {
+			server = "animesalt"
+		} else {
+			server = "zoko"
+		}
+	}
+
+	var streamURL string
+	var referer string
+
+	switch server {
+	case "zoko":
+		if malID == 0 && aniID > 0 {
+			malID = resolveMalId(aniID)
+		}
+		if malID <= 0 {
+			http.Error(w, `{"error":"Missing or invalid mal or ani parameter for Zoko"}`, http.StatusBadRequest)
+			return
+		}
+		if lang == "" {
+			lang = "sub"
+		}
+		extractedURL, _, _, err := extractZokoHLS(r.Context(), malID, ep, lang)
+		if err != nil || extractedURL == "" {
+			http.Error(w, fmt.Sprintf(`{"error":"Stream extraction failed from Zoko: %v"}`, err), http.StatusNotFound)
+			return
+		}
+		streamURL = extractedURL
+		referer = "https://zokoanime.video/"
+
+	case "megaplay":
+		if lang == "" {
+			lang = "sub"
+		}
+		var targetPath string
+		if s2 := q.Get("s2"); s2 != "" {
+			targetPath = fmt.Sprintf("s-2/%s/%s", s2, lang)
+		} else if malID > 0 {
+			targetPath = fmt.Sprintf("mal/%d/%d/%s", malID, ep, lang)
+		} else if aniID > 0 {
+			targetPath = fmt.Sprintf("ani/%d/%d/%s", aniID, ep, lang)
+		} else {
+			http.Error(w, `{"error":"Missing mal or ani or s2 parameter for MegaPlay"}`, http.StatusBadRequest)
+			return
+		}
+		extractedURL, _, err := extractMegaplayHLSWithFallback(r.Context(), targetPath)
+		if err != nil || extractedURL == "" {
+			http.Error(w, fmt.Sprintf(`{"error":"Stream extraction failed from MegaPlay: %v"}`, err), http.StatusNotFound)
+			return
+		}
+		streamURL = extractedURL
+		referer = "https://megaplay.buzz/"
+
+	case "animesalt", "salt":
+		if lang == "" {
+			lang = "hin"
+		}
+		if slug == "" && aniID > 0 {
+			slug, _ = resolveAnimeSaltSlug(r.Context(), aniID, 0, "")
+		}
+		if slug == "" && malID > 0 {
+			slug, _ = resolveAnimeSaltSlug(r.Context(), 0, malID, "")
+		}
+
+		proxiedURL, _, _, resSlug, err := extractAnimeSaltStream(r.Context(), slug, season, ep, hash, lang)
+		if err != nil || proxiedURL == "" {
+			http.Error(w, fmt.Sprintf(`{"error":"Stream extraction failed from AnimeSalt: %v"}`, err), http.StatusNotFound)
+			return
+		}
+
+		if customTitle == "" && resSlug != "" {
+			customTitle = strings.Title(strings.ReplaceAll(resSlug, "-", " "))
+		}
+
+		if strings.HasPrefix(proxiedURL, "/p/") {
+			dlFilename := buildDownloadFilename(customTitle, ep, quality, lang, "mp4")
+			r.URL.Path = proxiedURL
+			newQ := r.URL.Query()
+			newQ.Set("dl", "1")
+			newQ.Set("filename", dlFilename)
+			r.URL.RawQuery = newQ.Encode()
+			handleProxy(w, r)
+			return
+		}
+
+		streamURL = proxiedURL
+		referer = "https://animesalt.cx/"
+
+	default:
+		http.Error(w, `{"error":"Unknown server provider. Use zoko, megaplay, or animesalt"}`, http.StatusBadRequest)
+		return
+	}
+
+	variantURL, resolvedQuality, err := resolveM3U8Quality(r.Context(), streamURL, referer, quality)
+	if err != nil || variantURL == "" {
+		variantURL = streamURL
+		resolvedQuality = quality
+	}
+
+	ext := "mp4"
+	if format == "ts" || !hasFFmpeg() {
+		ext = "ts"
+	}
+
+	dlFilename := buildDownloadFilename(customTitle, ep, resolvedQuality, lang, ext)
+
+	if ext == "mp4" && hasFFmpeg() {
+		if err := streamM3U8AsMP4(w, r, variantURL, referer, dlFilename); err != nil {
+			log.Printf("[Download] MP4 Stream error (%s): %v", dlFilename, err)
+		}
+	} else {
+		if err := streamM3U8AsTS(w, r, variantURL, referer, dlFilename); err != nil {
+			log.Printf("[Download] TS Stream error (%s): %v", dlFilename, err)
+		}
+	}
+}
+
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	setCORS(w)
 	w.Header().Set("Content-Type", "application/json")
@@ -7047,6 +7693,10 @@ func main() {
 	mux.HandleFunc("/lib/", handleMegaplayLib)
 	mux.HandleFunc("/images/", handleMegaplayLib)
 	mux.HandleFunc("/p/", handleProxy)
+	mux.HandleFunc("/api/download", handleDownload)
+	mux.HandleFunc("/api/download/", handleDownload)
+	mux.HandleFunc("/download", handleDownload)
+	mux.HandleFunc("/download/", handleDownload)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" || r.URL.Path == "" || r.URL.Path == "/docs" || r.URL.Path == "/api" {
 			handleDocs(w, r)
@@ -7086,6 +7736,10 @@ func main() {
 		}
 		if strings.HasPrefix(r.URL.Path, "/p") {
 			handleProxy(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/download") || strings.HasPrefix(r.URL.Path, "/download") {
+			handleDownload(w, r)
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

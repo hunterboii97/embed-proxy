@@ -1,0 +1,1666 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>YumeZone Player</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+        html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            background: #000000;
+            overflow: hidden;
+            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+        #yume-player-container {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            background: #000000;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            background: #000000;
+            outline: none;
+        }
+
+        /* Fullscreen Landscape Enforcement */
+        :fullscreen video, :-webkit-full-screen video {
+            width: 100vw !important;
+            height: 100vh !important;
+            object-fit: contain !important;
+        }
+
+        /* Dark Premium Center Play Button */
+        .yume-center-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 40;
+            background: rgba(0, 0, 0, 0.4);
+            cursor: pointer;
+            transition: opacity 0.25s ease;
+        }
+        .yume-center-overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        #yume-start-screen {
+            background: #000000 !important;
+            z-index: 100 !important;
+        }
+        .yume-big-play-btn {
+            width: 78px;
+            height: 78px;
+            background: rgba(14, 14, 18, 0.78);
+            border-radius: 50%;
+            border: 1.5px solid rgba(255, 255, 255, 0.25);
+            box-shadow: 0 14px 40px rgba(0, 0, 0, 0.9);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s ease, border-color 0.2s ease;
+        }
+        .yume-center-overlay:hover .yume-big-play-btn {
+            transform: scale(1.12);
+            background: rgba(22, 22, 28, 0.9);
+            border-color: rgba(255, 255, 255, 0.45);
+        }
+        .yume-big-play-btn svg {
+            width: 32px;
+            height: 32px;
+            fill: #ffffff;
+            margin-left: 4px;
+        }
+
+        /* Top Bar Floating Time (Mobile) */
+        #yume-top-bar {
+            position: absolute;
+            top: 14px;
+            left: 14px;
+            display: none;
+            z-index: 45;
+            pointer-events: none;
+        }
+        .yume-time-badge {
+            background: rgba(13, 13, 16, 0.75);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 8px;
+            padding: 4px 10px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #ffffff;
+            letter-spacing: 0.5px;
+        }
+
+        /* Anime Subtitle Layer */
+        #yume-subtitle-display {
+            position: absolute;
+            bottom: 68px;
+            left: 5%;
+            right: 5%;
+            text-align: center;
+            pointer-events: none;
+            z-index: 35;
+            transition: bottom 0.25s ease;
+        }
+        #yume-player-container.controls-hidden #yume-subtitle-display {
+            bottom: 24px;
+        }
+        .yume-sub-text {
+            display: inline-block;
+            font-family: 'Outfit', sans-serif;
+            font-weight: 600;
+            font-size: clamp(20px, 3.2vw, 36px);
+            color: #ffffff;
+            text-shadow: -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000, 0 3px 6px rgba(0,0,0,0.95);
+            line-height: 1.35;
+            padding: 2px 10px;
+        }
+        :fullscreen .yume-sub-text {
+            font-size: clamp(24px, 4vw, 48px);
+        }
+
+        /* Flash Effect on Screenshot */
+        #yume-flash {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #ffffff;
+            opacity: 0;
+            pointer-events: none;
+            z-index: 2000;
+            transition: opacity 0.15s ease-out;
+        }
+        #yume-flash.flash {
+            opacity: 0.8;
+            transition: none;
+        }
+
+        /* Bottom Controls Bar */
+        #yume-controls-bar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(to top, rgba(0, 0, 0, 0.94) 0%, rgba(0, 0, 0, 0.6) 60%, transparent 100%);
+            padding: 24px 16px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            z-index: 50;
+            transition: opacity 0.25s ease, transform 0.25s ease;
+        }
+        #yume-player-container.controls-hidden #yume-controls-bar {
+            opacity: 0;
+            pointer-events: none;
+            transform: translateY(10px);
+        }
+
+        /* Progress Timeline Bar */
+        .yume-progress-container {
+            position: relative;
+            width: 100%;
+            height: 16px;
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            touch-action: none;
+        }
+        .yume-progress-bg {
+            position: relative;
+            width: 100%;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 2px;
+            overflow: hidden;
+            transition: height 0.15s ease;
+        }
+        .yume-progress-container:hover .yume-progress-bg,
+        .yume-progress-container.scrubbing .yume-progress-bg {
+            height: 6px;
+        }
+        .yume-progress-buffered {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            width: 0%;
+            background: rgba(255, 255, 255, 0.4);
+            border-radius: 2px;
+            pointer-events: none;
+        }
+        .yume-progress-played {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            width: 0%;
+            background: #ffffff;
+            border-radius: 2px;
+            pointer-events: none;
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.8);
+        }
+        .yume-progress-thumb {
+            position: absolute;
+            left: 0%;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #ffffff;
+            transform: translate(-50%, 0) scale(0);
+            transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+            pointer-events: none;
+            box-shadow: 0 0 8px rgba(0, 0, 0, 0.8);
+        }
+        .yume-progress-container:hover .yume-progress-thumb,
+        .yume-progress-container.scrubbing .yume-progress-thumb {
+            transform: translate(-50%, 0) scale(1);
+        }
+
+        /* Hover Time Tooltip */
+        #yume-hover-time {
+            position: absolute;
+            bottom: 22px;
+            left: 0%;
+            transform: translateX(-50%);
+            background: rgba(13, 13, 16, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 6px;
+            padding: 3px 8px;
+            font-size: 11px;
+            font-weight: 600;
+            color: #ffffff;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.15s ease;
+            white-space: nowrap;
+        }
+        .yume-progress-container:hover #yume-hover-time {
+            opacity: 1;
+        }
+
+        /* Controls Row */
+        .yume-controls-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .yume-controls-left, .yume-controls-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* Control Buttons */
+        .yume-btn {
+            background: transparent;
+            border: none;
+            color: #e4e4e7;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 6px;
+            border-radius: 8px;
+            outline: none;
+            transition: color 0.15s ease, transform 0.15s ease, background 0.15s ease;
+        }
+        .yume-btn:hover {
+            color: #ffffff;
+            background: rgba(255, 255, 255, 0.1);
+            transform: scale(1.08);
+        }
+        .yume-btn:active {
+            transform: scale(0.94);
+        }
+        #yume-btn-cc.active {
+            color: #818cf8;
+            background: rgba(99, 102, 241, 0.18);
+        }
+        #yume-btn-cc.active svg {
+            stroke: #a5b4fc;
+            filter: drop-shadow(0 0 6px rgba(99, 102, 241, 0.8));
+        }
+
+        /* Modern Touch-Friendly Volume Slider */
+        .yume-vol-wrap {
+            display: flex;
+            align-items: center;
+            position: relative;
+        }
+        .yume-vol-slider-wrap {
+            width: 0;
+            overflow: hidden;
+            transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease;
+            opacity: 0;
+            display: flex;
+            align-items: center;
+            padding: 8px 0;
+        }
+        .yume-vol-wrap:hover .yume-vol-slider-wrap,
+        .yume-vol-slider-wrap:focus-within,
+        .yume-vol-wrap.active .yume-vol-slider-wrap {
+            width: 80px;
+            opacity: 1;
+        }
+        .yume-vol-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 70px;
+            height: 6px;
+            background: linear-gradient(to right, #ffffff 0%, #ffffff var(--vol-pct, 100%), rgba(255, 255, 255, 0.3) var(--vol-pct, 100%), rgba(255, 255, 255, 0.3) 100%);
+            border-radius: 3px;
+            outline: none;
+            cursor: pointer;
+            touch-action: none;
+        }
+        .yume-vol-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #ffffff;
+            box-shadow: 0 0 6px rgba(0,0,0,0.7);
+            cursor: pointer;
+        }
+        .yume-vol-slider::-moz-range-thumb {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #ffffff;
+            border: none;
+            box-shadow: 0 0 6px rgba(0,0,0,0.7);
+            cursor: pointer;
+        }
+
+        /* Time Text */
+        .yume-time-text {
+            font-family: 'Outfit', sans-serif;
+            font-size: 13px;
+            font-weight: 600;
+            color: #e4e4e7;
+            letter-spacing: 0.5px;
+            margin-left: 2px;
+        }
+
+        /* Floating Settings Popover Elevated Above Timeline */
+        #yume-settings-popover {
+            position: absolute;
+            bottom: 70px;
+            right: 16px;
+            width: 230px;
+            max-height: 280px;
+            background: rgba(13, 13, 16, 0.96);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 14px;
+            box-shadow: 0 14px 44px rgba(0, 0, 0, 0.9);
+            z-index: 1000;
+            overflow: hidden;
+            color: #ffffff;
+            font-family: 'Outfit', sans-serif;
+            transition: opacity 0.18s ease, transform 0.18s ease;
+        }
+        #yume-settings-popover.hidden {
+            opacity: 0;
+            pointer-events: none;
+            transform: translateY(8px) scale(0.96);
+        }
+        .yume-menu-view {
+            padding: 6px 0;
+            max-height: 280px;
+            overflow-y: auto;
+        }
+        .yume-menu-view.hidden {
+            display: none;
+        }
+        .yume-menu-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 14px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 700;
+            color: #e4e4e7;
+        }
+        .yume-menu-header:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
+        .yume-menu-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 14px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #e4e4e7;
+            cursor: pointer;
+            transition: background 0.15s ease;
+        }
+        .yume-menu-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: #ffffff;
+        }
+        .yume-item-val {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 12px;
+            color: #a1a1aa;
+            font-weight: 600;
+        }
+        .yume-option {
+            padding: 9px 14px;
+            font-size: 13px;
+            font-weight: 500;
+            color: #a1a1aa;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .yume-option:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: #ffffff;
+        }
+        .yume-option.active {
+            color: #ffffff !important;
+            font-weight: 700 !important;
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        /* Volume Boost Sub-Setting UI - Pure B&W Theme */
+        .yume-boost-panel {
+            padding: 14px 16px 18px 16px;
+        }
+        .yume-boost-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 14px;
+        }
+        .yume-boost-title {
+            font-size: 13px;
+            font-weight: 500;
+            color: #a1a1aa;
+            letter-spacing: 0.2px;
+        }
+        .yume-boost-val {
+            font-size: 14px;
+            font-weight: 700;
+            color: #ffffff;
+            letter-spacing: 0.3px;
+            font-variant-numeric: tabular-nums;
+        }
+        .yume-boost-slider-wrap {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            position: relative;
+            padding: 4px 0;
+        }
+        .yume-boost-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 6px;
+            background: linear-gradient(to right, #ffffff 0%, #ffffff var(--boost-pct, 0%), rgba(255, 255, 255, 0.3) var(--boost-pct, 0%), rgba(255, 255, 255, 0.3) 100%);
+            border-radius: 3px;
+            outline: none;
+            cursor: pointer;
+            margin: 0;
+            padding: 0;
+            touch-action: none;
+        }
+        .yume-boost-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #ffffff;
+            box-shadow: 0 0 6px rgba(0, 0, 0, 0.7);
+            cursor: pointer;
+        }
+        .yume-boost-slider::-moz-range-thumb {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #ffffff;
+            border: none;
+            box-shadow: 0 0 6px rgba(0, 0, 0, 0.7);
+            cursor: pointer;
+        }
+        .yume-boost-ticks {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 12px;
+            padding: 0 2px;
+            user-select: none;
+        }
+        .yume-boost-tick {
+            font-size: 12px;
+            font-weight: 500;
+            color: #a1a1aa;
+            cursor: pointer;
+            padding: 3px 8px;
+            border-radius: 6px;
+            transition: all 0.15s ease;
+        }
+        .yume-boost-tick:hover {
+            color: #ffffff;
+            background: rgba(255, 255, 255, 0.1);
+        }
+        .yume-boost-tick.active {
+            color: #ffffff !important;
+            font-weight: 700 !important;
+            background: rgba(255, 255, 255, 0.12);
+        }
+
+        /* Mobile Responsiveness */
+        @media (max-width: 640px) {
+            #yume-top-bar {
+                display: block;
+            }
+            .yume-time-text {
+                display: none;
+            }
+            .yume-sub-text {
+                font-size: clamp(16px, 4.5vw, 24px);
+            }
+            #yume-controls-bar {
+                padding: 6px 10px 10px 10px;
+            }
+            .yume-big-play-btn {
+                width: 64px;
+                height: 64px;
+            }
+            .yume-big-play-btn svg {
+                width: 26px;
+                height: 26px;
+            }
+            .yume-vol-wrap:hover .yume-vol-slider-wrap,
+            .yume-vol-wrap.active .yume-vol-slider-wrap {
+                width: 65px;
+            }
+            .yume-vol-slider {
+                width: 58px;
+            }
+            #yume-settings-popover {
+                right: 8px;
+                bottom: 64px;
+                width: 210px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="yume-player-container">
+        <!-- Main HTML5 Video Element -->
+        <video id="yume-video" playsinline preload="auto"></video>
+
+        <!-- Flash Effect for Screenshot -->
+        <div id="yume-flash"></div>
+
+        <!-- Floating Top Time for Mobile -->
+        <div id="yume-top-bar">
+            <span class="yume-time-badge" id="yume-top-time">00:00 / 00:00</span>
+        </div>
+
+        <!-- Bespoke Anime Subtitles Display -->
+        <div id="yume-subtitle-display">
+            <span class="yume-sub-text" id="yume-sub-content"></span>
+        </div>
+
+        <!-- Initial Start Screen (Clean OLED click to unmute & play) -->
+        <div id="yume-start-screen" class="yume-center-overlay">
+            <div class="yume-big-play-btn">
+                <svg viewBox="0 0 24 24"><path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86a1 1 0 0 0-1.5.86z"/></svg>
+            </div>
+        </div>
+
+        <!-- Pause Center Overlay -->
+        <div id="yume-pause-overlay" class="yume-center-overlay hidden">
+            <div class="yume-big-play-btn">
+                <svg viewBox="0 0 24 24"><path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86a1 1 0 0 0-1.5.86z"/></svg>
+            </div>
+        </div>
+
+        <!-- Floating Settings Popover Elevated Above Timeline -->
+        <div id="yume-settings-popover" class="hidden">
+            <div id="yume-menu-main" class="yume-menu-view">
+                <div class="yume-menu-item" id="yume-row-audio" style="display: none;">
+                    <span>Audio Track</span>
+                    <span class="yume-item-val" id="yume-val-audio">Default <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg></span>
+                </div>
+                <div class="yume-menu-item" id="yume-row-quality">
+                    <span>Quality</span>
+                    <span class="yume-item-val" id="yume-val-quality">Auto <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg></span>
+                </div>
+                <div class="yume-menu-item" id="yume-row-subtitles">
+                    <span>Subtitles</span>
+                    <span class="yume-item-val" id="yume-val-subtitles">Off <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg></span>
+                </div>
+                <div class="yume-menu-item" id="yume-row-speed">
+                    <span>Speed</span>
+                    <span class="yume-item-val" id="yume-val-speed">Normal <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg></span>
+                </div>
+                <div class="yume-menu-item" id="yume-row-boost">
+                    <span>Volume Boost</span>
+                    <span class="yume-item-val" id="yume-val-boost">100% <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg></span>
+                </div>
+            </div>
+
+            <div id="yume-menu-audio" class="yume-menu-view hidden">
+                <div class="yume-menu-header" id="yume-back-audio">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                    <span>Audio Track</span>
+                </div>
+                <div id="yume-audio-list"></div>
+            </div>
+
+            <div id="yume-menu-quality" class="yume-menu-view hidden">
+                <div class="yume-menu-header" id="yume-back-quality">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                    <span>Quality</span>
+                </div>
+                <div id="yume-quality-list"></div>
+            </div>
+
+            <div id="yume-menu-subtitles" class="yume-menu-view hidden">
+                <div class="yume-menu-header" id="yume-back-subtitles">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                    <span>Subtitles</span>
+                </div>
+                <div id="yume-subtitles-list"></div>
+            </div>
+
+            <div id="yume-menu-speed" class="yume-menu-view hidden">
+                <div class="yume-menu-header" id="yume-back-speed">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                    <span>Speed</span>
+                </div>
+                <div id="yume-speed-list"></div>
+            </div>
+
+            <div id="yume-menu-boost" class="yume-menu-view hidden">
+                <div class="yume-menu-header" id="yume-back-boost">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                    <span>Volume Boost</span>
+                </div>
+                <div class="yume-boost-panel">
+                    <div class="yume-boost-header">
+                        <span class="yume-boost-title">Level</span>
+                        <span class="yume-boost-val" id="yume-boost-val-text">100%</span>
+                    </div>
+                    <div class="yume-boost-slider-wrap">
+                        <input type="range" class="yume-boost-slider" id="yume-boost-range" min="100" max="200" step="1" value="100">
+                    </div>
+                    <div class="yume-boost-ticks">
+                        <span class="yume-boost-tick active" data-val="100">100%</span>
+                        <span class="yume-boost-tick" data-val="150">150%</span>
+                        <span class="yume-boost-tick" data-val="200">200%</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Controls Bar -->
+        <div id="yume-controls-bar">
+            <!-- Progress Timeline -->
+            <div class="yume-progress-container" id="yume-progress-wrap">
+                <div id="yume-hover-time">00:00</div>
+                <div class="yume-progress-bg">
+                    <div class="yume-progress-buffered" id="yume-prog-buf"></div>
+                    <div class="yume-progress-played" id="yume-prog-play"></div>
+                </div>
+                <div class="yume-progress-thumb" id="yume-prog-thumb"></div>
+            </div>
+
+            <!-- Controls Row -->
+            <div class="yume-controls-row">
+                <div class="yume-controls-left">
+                    <!-- Play / Pause -->
+                    <button class="yume-btn" id="yume-btn-play" title="Play / Pause">
+                        <svg id="yume-icon-play" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11-6.86a1 1 0 0 0 0-1.72l-11-6.86a1 1 0 0 0-1.5.86z"/></svg>
+                        <svg id="yume-icon-pause" width="22" height="22" viewBox="0 0 24 24" fill="currentColor" style="display:none;"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                    </button>
+
+                    <!-- Rewind -->
+                    <button class="yume-btn" id="yume-btn-rewind" title="Rewind 10s">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                            <path d="M12.5 3a9 9 0 1 0 7.8 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                            <path d="M12.5 1v4l4-2z" fill="currentColor"/>
+                            <text x="12" y="15.5" font-size="7.5" font-weight="700" fill="currentColor" text-anchor="middle" font-family="Outfit, sans-serif">10</text>
+                        </svg>
+                    </button>
+
+                    <!-- Forward -->
+                    <button class="yume-btn" id="yume-btn-forward" title="Forward 10s">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                            <path d="M11.5 3a9 9 0 1 1-7.8 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                            <path d="M11.5 1v4l-4-2z" fill="currentColor"/>
+                            <text x="12" y="15.5" font-size="7.5" font-weight="700" fill="currentColor" text-anchor="middle" font-family="Outfit, sans-serif">10</text>
+                        </svg>
+                    </button>
+
+                    <!-- Volume -->
+                    <div class="yume-vol-wrap" id="yume-vol-wrap-box">
+                        <button class="yume-btn" id="yume-btn-vol" title="Mute / Unmute">
+                            <svg id="yume-icon-vol-high" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path></svg>
+                            <svg id="yume-icon-vol-mute" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>
+                        </button>
+                        <div class="yume-vol-slider-wrap">
+                            <input type="range" class="yume-vol-slider" id="yume-vol-range" min="0" max="1" step="0.05" value="1">
+                        </div>
+                    </div>
+
+                    <!-- Time Text -->
+                    <span class="yume-time-text" id="yume-time-display">00:00 / 00:00</span>
+                </div>
+
+                <div class="yume-controls-right">
+                    <!-- CC Subtitle Button -->
+                    <button class="yume-btn" id="yume-btn-cc" title="Toggle Subtitles (CC)">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 10a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2"/><path d="M16 10a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2"/></svg>
+                    </button>
+
+                    <!-- Screenshot Button -->
+                    <button class="yume-btn" id="yume-btn-snap" title="Screenshot">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+                    </button>
+
+                    <!-- Settings Gear -->
+                    <button class="yume-btn" id="yume-btn-settings" title="Settings">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                    </button>
+
+                    <!-- Fullscreen -->
+                    <button class="yume-btn" id="yume-btn-fs" title="Fullscreen">
+                        <svg id="yume-icon-fs-enter" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg>
+                        <svg id="yume-icon-fs-exit" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"></path></svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const streamURL = '{{STREAM_URL}}';
+        const rawTracks = {{RAW_TRACKS}} || [];
+        const preferredLang = '{{PREFERRED_LANG}}';
+        const episodeKey = '{{EPISODE_KEY}}';
+        const rawAudioOptions = {{RAW_AUDIO_OPTIONS}} || [];
+
+        const container = document.getElementById('yume-player-container');
+        const video = document.getElementById('yume-video');
+        const startScreen = document.getElementById('yume-start-screen');
+        const pauseOverlay = document.getElementById('yume-pause-overlay');
+        const progWrap = document.getElementById('yume-progress-wrap');
+        const progBuf = document.getElementById('yume-prog-buf');
+        const progPlay = document.getElementById('yume-prog-play');
+        const progThumb = document.getElementById('yume-prog-thumb');
+        const hoverTime = document.getElementById('yume-hover-time');
+
+        const btnSettings = document.getElementById('yume-btn-settings');
+        const settingsPopover = document.getElementById('yume-settings-popover');
+        const btnFs = document.getElementById('yume-btn-fs');
+        const iconFsEnter = document.getElementById('yume-icon-fs-enter');
+        const iconFsExit = document.getElementById('yume-icon-fs-exit');
+
+        const subDisplay = document.getElementById('yume-subtitle-display');
+        const subContent = document.getElementById('yume-sub-content');
+
+        let hlsInstance = null;
+        let isScrubbing = false;
+        let hideControlsTimeout = null;
+
+        // Web Audio API Volume Boost
+        let audioCtx = null;
+        let gainNode = null;
+        let compressorNode = null;
+
+        function initAudioBoost() {
+            if (audioCtx) {
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume().catch(() => {});
+                }
+                return;
+            }
+            try {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const source = audioCtx.createMediaElementSource(video);
+                gainNode = audioCtx.createGain();
+                gainNode.gain.value = 1.0;
+                compressorNode = audioCtx.createDynamicsCompressor();
+                compressorNode.threshold.setValueAtTime(-3, audioCtx.currentTime);
+                compressorNode.knee.setValueAtTime(6, audioCtx.currentTime);
+                compressorNode.ratio.setValueAtTime(20, audioCtx.currentTime);
+                compressorNode.attack.setValueAtTime(0.003, audioCtx.currentTime);
+                compressorNode.release.setValueAtTime(0.25, audioCtx.currentTime);
+                source.connect(gainNode);
+                gainNode.connect(compressorNode);
+                compressorNode.connect(audioCtx.destination);
+                // Restore saved boost level
+                try {
+                    const sb = localStorage.getItem('yume_volume_boost');
+                    if (sb) {
+                        const parsed = parseFloat(sb);
+                        let boostVal = 100;
+                        if (parsed >= 100 && parsed <= 200) boostVal = parsed;
+                        else if (parsed >= 1.0 && parsed <= 2.0) boostVal = parsed * 100;
+                        gainNode.gain.value = boostVal / 100.0;
+                    }
+                } catch(e) {}
+            } catch(e) { console.warn('AudioBoost init failed:', e); }
+        }
+
+        // Continue Watching - Seamless Exact Position Tracking
+        const RESUME_TTL = 4 * 60 * 60 * 1000; // 4 hours
+        let resumeTime = 0;
+        let resumeApplied = false;
+        let lastSaveTime = 0;
+        let saveProgressTimer = null;
+
+        function clearProgress() {
+            if (!episodeKey) return;
+            try { localStorage.removeItem('yume_resume_' + episodeKey); } catch(e) {}
+        }
+
+        function loadResumeTime() {
+            if (!episodeKey) return 0;
+            try {
+                const raw = localStorage.getItem('yume_resume_' + episodeKey);
+                if (!raw) return 0;
+                const data = JSON.parse(raw);
+                if (!data.ts || (Date.now() - data.ts > RESUME_TTL)) {
+                    clearProgress();
+                    return 0;
+                }
+                const savedTime = typeof data.time === 'number' ? data.time : parseFloat(data.time);
+                if (isNaN(savedTime) || savedTime < 5) return 0;
+
+                if (data.duration && isFinite(data.duration) && data.duration > 30) {
+                    if ((data.duration - savedTime < 15) || (savedTime / data.duration) > 0.98) {
+                        clearProgress();
+                        return 0;
+                    }
+                }
+                return savedTime;
+            } catch(e) { return 0; }
+        }
+
+        function saveProgress(force) {
+            if (!episodeKey) return;
+            // Never overwrite saved position before initial resume has applied
+            if (!resumeApplied && resumeTime > 0) return;
+            const cur = video.currentTime;
+            const dur = video.duration;
+            if (!dur || !isFinite(dur) || dur < 30 || isNaN(cur) || video.seeking) return;
+
+            const now = Date.now();
+            if (!force && (now - lastSaveTime < 1000)) return;
+            lastSaveTime = now;
+
+            if (cur < 5) return;
+
+            if (dur - cur < 15 || (cur / dur) > 0.98) {
+                clearProgress();
+                return;
+            }
+
+            try {
+                localStorage.setItem('yume_resume_' + episodeKey, JSON.stringify({
+                    time: Math.round(cur * 10) / 10,
+                    duration: Math.round(dur),
+                    ts: now
+                }));
+            } catch(e) {}
+        }
+
+        function applyResume() {
+            if (resumeApplied || resumeTime <= 0) return;
+            try {
+                if (Math.abs(video.currentTime - resumeTime) > 0.5) {
+                    video.currentTime = resumeTime;
+                }
+                if (Math.abs(video.currentTime - resumeTime) <= 1.5) {
+                    resumeApplied = true;
+                }
+            } catch(e) {}
+        }
+
+        resumeTime = loadResumeTime();
+        let activeCues = [];
+
+        // Time Formatter (HH:MM:SS or MM:SS)
+        function formatTime(seconds) {
+            if (isNaN(seconds) || seconds < 0) return '00:00';
+            const sec = Math.floor(seconds);
+            const h = Math.floor(sec / 3600);
+            const m = Math.floor((sec % 3600) / 60);
+            const s = sec % 60;
+            if (h > 0) {
+                return (h < 10 ? '0' + h : h) + ':' + (m < 10 ? '0' + m : m) + ':' + (s < 10 ? '0' + s : s);
+            }
+            return (m < 10 ? '0' + m : m) + ':' + (s < 10 ? '0' + s : s);
+        }
+
+        // Video Stream Initialization (HLS for MegaPlay/Zoko or Native MP4 for AnimeSalt)
+        const isHls = streamURL.indexOf('.mp4') === -1 && streamURL.indexOf('video.mp4') === -1;
+        if (isHls && Hls.isSupported()) {
+            hlsInstance = new Hls({
+                maxBufferLength: 30,
+                maxMaxBufferLength: 60,
+                enableWorker: true,
+                startPosition: resumeTime > 0 ? resumeTime : -1
+            });
+            hlsInstance.loadSource(streamURL);
+            hlsInstance.attachMedia(video);
+
+            hlsInstance.on(Hls.Events.MANIFEST_PARSED, function () {
+                if (hlsInstance.levels && hlsInstance.levels.length > 0) {
+                    hlsInstance.currentLevel = hlsInstance.levels.length - 1;
+                }
+                initQualityMenu(hlsInstance);
+                initAudioMenu(hlsInstance, preferredLang);
+                applyResume();
+            });
+
+            hlsInstance.on(Hls.Events.AUDIO_TRACKS_UPDATED, function () {
+                initAudioMenu(hlsInstance, preferredLang);
+            });
+
+            hlsInstance.on(Hls.ErrorTypes.NETWORK_ERROR, () => hlsInstance.startLoad());
+            hlsInstance.on(Hls.ErrorTypes.MEDIA_ERROR, () => hlsInstance.recoverMediaError());
+        } else if (isHls && video.canPlayType('application/vnd.apple.mpegurl')) {
+            video.src = streamURL;
+        } else {
+            // Direct MP4 playback (AnimeSalt, etc.)
+            video.src = streamURL;
+            initQualityMenu(null);
+            initAudioMenu(null, preferredLang);
+            if (resumeTime > 0) {
+                video.currentTime = resumeTime;
+            }
+        }
+
+        video.addEventListener('loadedmetadata', () => {
+            if (video.duration && isFinite(video.duration)) {
+                const curTime = resumeTime > 0 ? resumeTime : video.currentTime;
+                const pct = (curTime / video.duration) * 100;
+                updateTimelineUI(pct);
+                document.getElementById('yume-time-display').textContent = formatTime(curTime) + ' / ' + formatTime(video.duration);
+                document.getElementById('yume-top-time').textContent = formatTime(curTime) + ' / ' + formatTime(video.duration);
+            }
+            applyResume();
+        });
+
+        video.addEventListener('canplay', applyResume);
+
+        // Play / Pause Logic
+        function togglePlay() {
+            if (video.paused || video.ended) {
+                video.play();
+            } else {
+                video.pause();
+            }
+        }
+
+        video.addEventListener('play', () => {
+            initAudioBoost();
+            applyResume();
+            document.getElementById('yume-icon-play').style.display = 'none';
+            document.getElementById('yume-icon-pause').style.display = 'block';
+            pauseOverlay.classList.add('hidden');
+            resetHideControlsTimer();
+            if (!saveProgressTimer) saveProgressTimer = setInterval(() => saveProgress(false), 5000);
+        });
+
+        video.addEventListener('playing', () => {
+            applyResume();
+            resumeApplied = true;
+        });
+
+        video.addEventListener('pause', () => {
+            saveProgress(true);
+            document.getElementById('yume-icon-play').style.display = 'block';
+            document.getElementById('yume-icon-pause').style.display = 'none';
+            if (!startScreen || startScreen.classList.contains('hidden')) {
+                pauseOverlay.classList.remove('hidden');
+            }
+            container.classList.remove('controls-hidden');
+            if (hideControlsTimeout) clearTimeout(hideControlsTimeout);
+        });
+
+        video.addEventListener('seeked', () => {
+            if (resumeTime > 0 && Math.abs(video.currentTime - resumeTime) <= 2) {
+                resumeApplied = true;
+            }
+            saveProgress(true);
+        });
+
+        document.getElementById('yume-btn-play').addEventListener('click', togglePlay);
+        pauseOverlay.addEventListener('click', togglePlay);
+        video.addEventListener('click', (e) => {
+            if (!settingsPopover.contains(e.target) && !e.target.closest('#yume-btn-settings')) {
+                togglePlay();
+            }
+        });
+
+        // Start Screen Click-to-Play
+        startScreen.addEventListener('click', () => {
+            startScreen.classList.add('hidden');
+            video.volume = 1.0;
+            video.muted = false;
+            initAudioBoost();
+            applyResume();
+            video.play().catch(() => {});
+            if (!saveProgressTimer) saveProgressTimer = setInterval(() => saveProgress(false), 5000);
+            setTimeout(() => { if (startScreen.parentNode) startScreen.parentNode.removeChild(startScreen); }, 350);
+        });
+
+        // Rewind & Forward
+        document.getElementById('yume-btn-rewind').addEventListener('click', () => {
+            video.currentTime = Math.max(0, video.currentTime - 10);
+            resetHideControlsTimer();
+            saveProgress(true);
+        });
+        document.getElementById('yume-btn-forward').addEventListener('click', () => {
+            video.currentTime = Math.min(video.duration || 9999, video.currentTime + 10);
+            resetHideControlsTimer();
+            saveProgress(true);
+        });
+
+        // Screenshot
+        document.getElementById('yume-btn-snap').addEventListener('click', () => {
+            try {
+                if (!video.videoWidth) return;
+                const canvas = document.createElement('canvas');
+                canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+                canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+                document.getElementById('yume-flash').classList.add('flash');
+                setTimeout(() => document.getElementById('yume-flash').classList.remove('flash'), 150);
+                const a = document.createElement('a'); a.href = canvas.toDataURL('image/png'); a.download = 'YumeZone_Snapshot.png';
+                document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            } catch(e) {}
+            resetHideControlsTimer();
+        });
+
+        // Volume Controller
+        const volWrapBox = document.getElementById('yume-vol-wrap-box');
+        const volRange = document.getElementById('yume-vol-range');
+        function updateVolumeUI(val, isMuted) {
+            volRange.value = isMuted ? 0 : val;
+            volRange.style.setProperty('--vol-pct', (isMuted ? 0 : val) * 100 + '%');
+            document.getElementById('yume-icon-vol-high').style.display = (isMuted || val == 0) ? 'none' : 'block';
+            document.getElementById('yume-icon-vol-mute').style.display = (isMuted || val == 0) ? 'block' : 'none';
+        }
+        volRange.addEventListener('input', (e) => { video.volume = parseFloat(e.target.value); video.muted = (video.volume === 0); updateVolumeUI(video.volume, video.muted); });
+        document.getElementById('yume-btn-vol').addEventListener('click', (e) => {
+            e.stopPropagation();
+            video.muted = !video.muted;
+            updateVolumeUI(video.volume, video.muted);
+        });
+
+        // Timeline Progress Tracking & Time Code Updates
+        video.addEventListener('timeupdate', () => {
+            // Safety fallback for resume
+            if (!resumeApplied && resumeTime > 0) {
+                if (video.currentTime < 2 && video.readyState >= 1) {
+                    applyResume();
+                } else if (video.currentTime >= 2 && Math.abs(video.currentTime - resumeTime) < 5) {
+                    resumeApplied = true;
+                }
+            }
+
+            // Continuously track exact position (throttled to 1s)
+            saveProgress(false);
+
+            if (!isScrubbing && video.duration) {
+                const pct = (video.currentTime / video.duration) * 100;
+                updateTimelineUI(pct);
+            }
+            const cur = formatTime(video.currentTime);
+            const dur = formatTime(video.duration || 0);
+            document.getElementById('yume-time-display').textContent = cur + ' / ' + dur;
+            document.getElementById('yume-top-time').textContent = cur + ' / ' + dur;
+            updateSubtitles();
+            try {
+                window.parent.postMessage({ type: 'time', currentTime: video.currentTime, duration: video.duration || 0 }, '*');
+            } catch(e) {}
+        });
+
+        video.addEventListener('ended', () => {
+            clearProgress();
+            resumeApplied = true;
+            if (saveProgressTimer) { clearInterval(saveProgressTimer); saveProgressTimer = null; }
+            try { window.parent.postMessage({ type: 'complete' }, '*'); } catch(e) {}
+        });
+
+        // Lifecycle save progress flushes
+        window.addEventListener('beforeunload', () => saveProgress(true));
+        window.addEventListener('pagehide', () => saveProgress(true));
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') saveProgress(true);
+        });
+
+        video.addEventListener('progress', () => {
+            if (video.duration && video.buffered.length > 0) {
+                const bufEnd = video.buffered.end(video.buffered.length - 1);
+                const pct = (bufEnd / video.duration) * 100;
+                progBuf.style.width = pct + '%';
+            }
+        });
+
+        function updateTimelineUI(pct) {
+            progPlay.style.width = pct + '%';
+            progThumb.style.left = pct + '%';
+        }
+
+        // Seeking & Scrubbing Gestures
+        function getScrubPos(e) {
+            const rect = progWrap.getBoundingClientRect();
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
+            return x / rect.width;
+        }
+
+        function onScrubStart(e) {
+            isScrubbing = true;
+            progWrap.classList.add('scrubbing');
+            const pos = getScrubPos(e);
+            updateTimelineUI(pos * 100);
+            hoverTime.textContent = formatTime(pos * (video.duration || 0));
+            hoverTime.style.left = (pos * 100) + '%';
+            window.addEventListener('mousemove', onScrubMove);
+            window.addEventListener('touchmove', onScrubMove);
+            window.addEventListener('mouseup', onScrubEnd);
+            window.addEventListener('touchend', onScrubEnd);
+        }
+
+        function onScrubMove(e) {
+            if (!isScrubbing) return;
+            const pos = getScrubPos(e);
+            requestAnimationFrame(() => {
+                updateTimelineUI(pos * 100);
+                hoverTime.textContent = formatTime(pos * (video.duration || 0));
+                hoverTime.style.left = (pos * 100) + '%';
+            });
+        }
+
+        function onScrubEnd(e) {
+            if (!isScrubbing) return;
+            isScrubbing = false;
+            progWrap.classList.remove('scrubbing');
+            const pos = getScrubPos(e);
+            if (video.duration) {
+                video.currentTime = pos * video.duration;
+                saveProgress(true);
+            }
+            window.removeEventListener('mousemove', onScrubMove);
+            window.removeEventListener('touchmove', onScrubMove);
+            window.removeEventListener('mouseup', onScrubEnd);
+            window.removeEventListener('touchend', onScrubEnd);
+        }
+
+        progWrap.addEventListener('mousedown', onScrubStart);
+        progWrap.addEventListener('touchstart', onScrubStart, { passive: false });
+        progWrap.addEventListener('mousemove', (e) => {
+            if (isScrubbing) return;
+            const pos = getScrubPos(e);
+            hoverTime.style.left = (pos * 100) + '%';
+            hoverTime.textContent = formatTime(pos * (video.duration || 0));
+        });
+
+        // Mobile Landscape Lock & Fullscreen Controller
+        async function lockLandscape() {
+            try {
+                if (screen.orientation && screen.orientation.lock) {
+                    await screen.orientation.lock('landscape');
+                } else if (screen.lockOrientation) {
+                    screen.lockOrientation('landscape');
+                } else if (screen.mozLockOrientation) {
+                    screen.mozLockOrientation('landscape');
+                } else if (screen.msLockOrientation) {
+                    screen.msLockOrientation('landscape');
+                }
+            } catch(e) {}
+        }
+
+        async function unlockOrientation() {
+            try {
+                if (screen.orientation && screen.orientation.unlock) {
+                    screen.orientation.unlock();
+                } else if (screen.unlockOrientation) {
+                    screen.unlockOrientation();
+                } else if (screen.mozUnlockOrientation) {
+                    screen.mozUnlockOrientation();
+                } else if (screen.msUnlockOrientation) {
+                    screen.msUnlockOrientation();
+                }
+            } catch(e) {}
+        }
+
+        async function toggleFullscreen() {
+            const isFs = Boolean(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+            if (!isFs) {
+                try {
+                    if (container.requestFullscreen) {
+                        await container.requestFullscreen();
+                    } else if (container.webkitRequestFullscreen) {
+                        await container.webkitRequestFullscreen();
+                    } else if (container.mozRequestFullScreen) {
+                        await container.mozRequestFullScreen();
+                    } else if (container.msRequestFullscreen) {
+                        await container.msRequestFullscreen();
+                    } else if (video.webkitEnterFullscreen) {
+                        video.webkitEnterFullscreen();
+                    }
+                    await lockLandscape();
+                } catch(e) {
+                    if (video.webkitEnterFullscreen) {
+                        try { video.webkitEnterFullscreen(); } catch(err) {}
+                    }
+                }
+            } else {
+                unlockOrientation();
+                try {
+                    if (document.exitFullscreen) {
+                        await document.exitFullscreen();
+                    } else if (document.webkitExitFullscreen) {
+                        await document.webkitExitFullscreen();
+                    } else if (document.mozCancelFullScreen) {
+                        await document.mozCancelFullScreen();
+                    } else if (document.msExitFullscreen) {
+                        await document.msExitFullscreen();
+                    }
+                } catch(e) {}
+            }
+        }
+
+        function onFullscreenChange() {
+            const isFs = Boolean(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+            iconFsEnter.style.display = isFs ? 'none' : 'block';
+            iconFsExit.style.display = isFs ? 'block' : 'none';
+            if (isFs) {
+                lockLandscape();
+            } else {
+                unlockOrientation();
+            }
+        }
+
+        btnFs.addEventListener('click', toggleFullscreen);
+        document.addEventListener('fullscreenchange', onFullscreenChange);
+        document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+        document.addEventListener('mozfullscreenchange', onFullscreenChange);
+        document.addEventListener('MSFullscreenChange', onFullscreenChange);
+        video.addEventListener('webkitendfullscreen', () => {
+            unlockOrientation();
+            iconFsEnter.style.display = 'block';
+            iconFsExit.style.display = 'none';
+        });
+
+        // Auto-Hide Controls
+        function resetHideControlsTimer() {
+            container.classList.remove('controls-hidden');
+            if (hideControlsTimeout) clearTimeout(hideControlsTimeout);
+            if (!video.paused) {
+                hideControlsTimeout = setTimeout(() => {
+                    if (!settingsPopover.classList.contains('hidden') || isScrubbing) return;
+                    container.classList.add('controls-hidden');
+                }, 2500);
+            }
+        }
+        container.addEventListener('mousemove', resetHideControlsTimer);
+        container.addEventListener('touchstart', resetHideControlsTimer);
+
+        // Settings Popover Controller
+        const menuMain = document.getElementById('yume-menu-main');
+        const menuAudio = document.getElementById('yume-menu-audio');
+        const menuQuality = document.getElementById('yume-menu-quality');
+        const menuSubtitles = document.getElementById('yume-menu-subtitles');
+        const menuSpeed = document.getElementById('yume-menu-speed');
+        const menuBoost = document.getElementById('yume-menu-boost');
+
+        function toggleSettings() {
+            if (settingsPopover.classList.contains('hidden')) {
+                showMenu('main');
+                settingsPopover.classList.remove('hidden');
+            } else {
+                settingsPopover.classList.add('hidden');
+            }
+        }
+
+        function showMenu(name) {
+            [menuMain, menuAudio, menuQuality, menuSubtitles, menuSpeed, menuBoost].forEach(m => m && m.classList.add('hidden'));
+            if (name === 'main' && menuMain) menuMain.classList.remove('hidden');
+            if (name === 'audio' && menuAudio) menuAudio.classList.remove('hidden');
+            if (name === 'quality' && menuQuality) menuQuality.classList.remove('hidden');
+            if (name === 'subtitles' && menuSubtitles) menuSubtitles.classList.remove('hidden');
+            if (name === 'speed' && menuSpeed) menuSpeed.classList.remove('hidden');
+            if (name === 'boost' && menuBoost) menuBoost.classList.remove('hidden');
+        }
+
+        btnSettings.addEventListener('click', (e) => { e.stopPropagation(); toggleSettings(); });
+
+        document.getElementById('yume-row-audio').addEventListener('click', () => showMenu('audio'));
+        document.getElementById('yume-row-quality').addEventListener('click', () => showMenu('quality'));
+        document.getElementById('yume-row-subtitles').addEventListener('click', () => showMenu('subtitles'));
+        document.getElementById('yume-row-speed').addEventListener('click', () => showMenu('speed'));
+        document.getElementById('yume-row-boost').addEventListener('click', () => showMenu('boost'));
+
+        document.getElementById('yume-back-audio').addEventListener('click', () => showMenu('main'));
+        document.getElementById('yume-back-quality').addEventListener('click', () => showMenu('main'));
+        document.getElementById('yume-back-subtitles').addEventListener('click', () => showMenu('main'));
+        document.getElementById('yume-back-speed').addEventListener('click', () => showMenu('main'));
+        document.getElementById('yume-back-boost').addEventListener('click', () => showMenu('main'));
+
+        document.addEventListener('click', (e) => {
+            if (!settingsPopover.contains(e.target) && !e.target.closest('#yume-btn-settings')) settingsPopover.classList.add('hidden');
+            if (!volWrapBox.contains(e.target)) volWrapBox.classList.remove('active');
+        });
+
+        // Audio Track Menu Setup with Preferred Language (e.g. Hindi Dub) Auto-Selection
+        function initAudioMenu(hls, pref) {
+            const list = document.getElementById('yume-audio-list');
+            const rowAudio = document.getElementById('yume-row-audio');
+            if (!list || !rowAudio) return;
+
+            if (!hls) {
+                if (!rawAudioOptions || rawAudioOptions.length <= 1) {
+                    rowAudio.style.display = 'none';
+                    return;
+                }
+                rowAudio.style.display = 'flex';
+                list.innerHTML = '';
+                const targetLang = (pref || 'hin').toLowerCase();
+                let curLabel = rawAudioOptions[0].label;
+
+                rawAudioOptions.forEach(opt => {
+                    const oLang = (opt.langCode || '').toLowerCase();
+                    const isActive = oLang === targetLang ||
+                                     ((targetLang === 'sub' || targetLang === 'jpn') && (oLang === 'sub' || oLang === 'jpn')) ||
+                                     ((targetLang === 'dub' || targetLang === 'eng') && (oLang === 'dub' || oLang === 'eng'));
+                    if (isActive) curLabel = opt.label;
+                    const div = document.createElement('div');
+                    div.className = 'yume-option' + (isActive ? ' active' : '');
+                    div.textContent = opt.label;
+                    div.onclick = () => {
+                        const u = new URL(window.location.href);
+                        u.searchParams.set('lang', opt.langCode);
+                        window.location.href = u.toString();
+                    };
+                    list.appendChild(div);
+                });
+
+                document.getElementById('yume-val-audio').innerHTML = curLabel + ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+                return;
+            }
+
+            if (!hls.audioTracks || hls.audioTracks.length <= 1) {
+                rowAudio.style.display = 'none';
+                return;
+            }
+            rowAudio.style.display = 'flex';
+            list.innerHTML = '';
+
+            const tracks = hls.audioTracks;
+            let selectedIdx = hls.audioTrack >= 0 ? hls.audioTrack : 0;
+            const targetLang = (pref || 'sub').toLowerCase();
+
+            // Auto-select preferred language on manifest load if not already manually set
+            if (!window.__userSelectedAudio) {
+                for (let i = 0; i < tracks.length; i++) {
+                    const tName = (tracks[i].name || '').toLowerCase();
+                    const tLang = (tracks[i].lang || '').toLowerCase();
+                    if (targetLang === 'hin' && (tName.includes('hin') || tLang.includes('hin') || tName.includes('hindi'))) {
+                        selectedIdx = i;
+                        break;
+                    } else if ((targetLang === 'dub' || targetLang === 'eng') && (tName.includes('eng') || tLang.includes('eng') || tName.includes('english'))) {
+                        selectedIdx = i;
+                        break;
+                    } else if ((targetLang === 'sub' || targetLang === 'jpn') && (tName.includes('jpn') || tLang.includes('jpn') || tName.includes('jap'))) {
+                        selectedIdx = i;
+                        break;
+                    }
+                }
+                try { hls.audioTrack = selectedIdx; } catch(e) {}
+            }
+
+            const currentLabel = tracks[selectedIdx]?.name || ('Audio ' + (selectedIdx + 1));
+            document.getElementById('yume-val-audio').innerHTML = currentLabel + ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+
+            tracks.forEach((t, idx) => {
+                const div = document.createElement('div');
+                div.className = 'yume-option' + (idx === selectedIdx ? ' active' : '');
+                div.textContent = t.name || ('Track ' + (idx + 1));
+                div.onclick = () => {
+                    window.__userSelectedAudio = true;
+                    hls.audioTrack = idx;
+                    list.querySelectorAll('.yume-option').forEach(el => el.classList.remove('active'));
+                    div.classList.add('active');
+                    document.getElementById('yume-val-audio').innerHTML = (t.name || ('Track ' + (idx + 1))) + ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+                    showMenu('main');
+                };
+                list.appendChild(div);
+            });
+        }
+
+        // Quality Menu Setup
+        function initQualityMenu(hls) {
+            const list = document.getElementById('yume-quality-list');
+            if (!list) return;
+            if (!hls || !hls.levels) {
+                document.getElementById('yume-val-quality').innerHTML = '1080P <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+                list.innerHTML = '<div class="yume-option active">1080P (FHD)</div>';
+                return;
+            }
+            list.innerHTML = '';
+            const levels = hls.levels;
+            const highestLabel = (levels[levels.length - 1]?.height || '1080') + 'P';
+            document.getElementById('yume-val-quality').innerHTML = highestLabel + ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+            const options = [{ label: 'Auto (' + highestLabel + ')', level: -1 }];
+            for (let i = levels.length - 1; i >= 0; i--) options.push({ label: (levels[i].height || 'Quality ' + (i+1)) + 'P', level: i });
+            options.forEach((opt, idx) => {
+                const div = document.createElement('div');
+                div.className = 'yume-option' + (idx === 1 ? ' active' : '');
+                div.textContent = opt.label;
+                div.onclick = () => {
+                    hls.currentLevel = opt.level;
+                    list.querySelectorAll('.yume-option').forEach(el => el.classList.remove('active'));
+                    div.classList.add('active');
+                    document.getElementById('yume-val-quality').innerHTML = opt.label.split(' ')[0] + ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+                    showMenu('main');
+                };
+                list.appendChild(div);
+            });
+        }
+
+        // Subtitles Parser
+        function parseVTT(text) {
+            const cues = []; const lines = text.split(/\r?\n/);
+            for (let i = 0; i < lines.length; i++) {
+                if (lines[i].includes('-->')) {
+                    const parts = lines[i].split('-->');
+                    const start = parseVTTTime(parts[0].trim());
+                    const end = parseVTTTime(parts[1].trim().split(' ')[0]);
+                    let content = ''; i++;
+                    while (i < lines.length && lines[i].trim() !== '') { content += (content ? '<br>' : '') + lines[i].trim(); i++; }
+                    cues.push({ start, end, text: content });
+                }
+            }
+            return cues;
+        }
+        function parseVTTTime(str) {
+            const parts = str.split(':');
+            return parts.length === 3 ? parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]) : parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
+        }
+        function updateSubtitles() {
+            if (!activeCues.length) { subContent.innerHTML = ''; return; }
+            const currentCue = activeCues.find(c => video.currentTime >= c.start && video.currentTime <= c.end);
+            subContent.innerHTML = currentCue ? currentCue.text : '';
+        }
+        function initSubtitlesMenu() {
+            const list = document.getElementById('yume-subtitles-list');
+            const ccBtn = document.getElementById('yume-btn-cc');
+            if (!list) return;
+            list.innerHTML = '';
+
+            const offDiv = document.createElement('div');
+            offDiv.className = 'yume-option active';
+            offDiv.textContent = 'Off';
+            offDiv.onclick = () => {
+                activeCues = [];
+                subContent.innerHTML = '';
+                list.querySelectorAll('.yume-option').forEach(el => el.classList.remove('active'));
+                offDiv.classList.add('active');
+                if (ccBtn) ccBtn.classList.remove('active');
+                document.getElementById('yume-val-subtitles').innerHTML = 'Off <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+                showMenu('main');
+            };
+            list.appendChild(offDiv);
+
+            rawTracks.forEach((t, idx) => {
+                const div = document.createElement('div');
+                div.className = 'yume-option';
+                const label = t.label || ('Subtitle ' + (idx + 1));
+                div.textContent = label;
+                
+                const activateTrack = () => {
+                    fetch(t.file)
+                        .then(r => r.text())
+                        .then(vtt => {
+                            activeCues = parseVTT(vtt);
+                            if (ccBtn) ccBtn.classList.add('active');
+                        })
+                        .catch(() => {
+                            activeCues = [];
+                            if (ccBtn) ccBtn.classList.remove('active');
+                        });
+                    list.querySelectorAll('.yume-option').forEach(el => el.classList.remove('active'));
+                    div.classList.add('active');
+                    document.getElementById('yume-val-subtitles').innerHTML = label + ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+                };
+
+                div.onclick = () => {
+                    activateTrack();
+                    showMenu('main');
+                };
+                list.appendChild(div);
+            });
+
+            if (ccBtn) {
+                if (rawTracks.length === 0) {
+                    ccBtn.style.opacity = '0.35';
+                    ccBtn.title = 'No Subtitles Available';
+                } else {
+                    ccBtn.style.opacity = '1';
+                    ccBtn.onclick = () => {
+                        if (activeCues.length > 0) {
+                            activeCues = [];
+                            subContent.innerHTML = '';
+                            ccBtn.classList.remove('active');
+                            list.querySelectorAll('.yume-option').forEach(el => el.classList.remove('active'));
+                            offDiv.classList.add('active');
+                            document.getElementById('yume-val-subtitles').innerHTML = 'Off <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+                        } else {
+                            const firstTrack = list.querySelectorAll('.yume-option')[1];
+                            if (firstTrack) firstTrack.click();
+                        }
+                    };
+                }
+            }
+        }
+        function initSpeedMenu() {
+            const list = document.getElementById('yume-speed-list');
+            if (!list) return;
+            [0.5, 0.75, 1.0, 1.25, 1.5, 2.0].forEach(s => {
+                const div = document.createElement('div');
+                div.className = 'yume-option' + (s === 1.0 ? ' active' : '');
+                div.textContent = s === 1.0 ? 'Normal' : s + 'x';
+                div.onclick = () => {
+                    video.playbackRate = s;
+                    list.querySelectorAll('.yume-option').forEach(el => el.classList.remove('active'));
+                    div.classList.add('active');
+                    document.getElementById('yume-val-speed').innerHTML = div.textContent + ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+                    showMenu('main');
+                };
+                list.appendChild(div);
+            });
+        }
+        initSubtitlesMenu();
+        initSpeedMenu();
+
+        // Volume Boost Menu
+        function initBoostMenu() {
+            const range = document.getElementById('yume-boost-range');
+            const valText = document.getElementById('yume-boost-val-text');
+            const mainVal = document.getElementById('yume-val-boost');
+            const ticks = document.querySelectorAll('.yume-boost-tick');
+            if (!range || !valText || !mainVal) return;
+
+            const chevron = ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+
+            let currentBoostVal = 100; // Default 100% (1.0x gain), ranges to 200% (2.0x gain)
+            try {
+                const sb = localStorage.getItem('yume_volume_boost');
+                if (sb) {
+                    const parsed = parseFloat(sb);
+                    if (parsed >= 100 && parsed <= 200) {
+                        currentBoostVal = Math.round(parsed);
+                    } else if (parsed >= 1.0 && parsed <= 2.0) {
+                        currentBoostVal = Math.round(parsed * 100);
+                    }
+                }
+            } catch(e) {}
+
+            function updateBoost(val, persist) {
+                currentBoostVal = Math.max(100, Math.min(200, Math.round(val)));
+                range.value = currentBoostVal;
+
+                // Fill percentage (0% at 100, 100% at 200)
+                const pct = currentBoostVal - 100;
+                range.style.setProperty('--boost-pct', pct + '%');
+
+                const label = currentBoostVal + '%';
+                valText.textContent = label;
+                mainVal.innerHTML = label + chevron;
+
+                ticks.forEach(t => {
+                    const tVal = parseInt(t.getAttribute('data-val'), 10);
+                    if (tVal === currentBoostVal) {
+                        t.classList.add('active');
+                    } else {
+                        t.classList.remove('active');
+                    }
+                });
+
+                if (gainNode) {
+                    gainNode.gain.value = currentBoostVal / 100.0;
+                }
+
+                if (persist) {
+                    try { localStorage.setItem('yume_volume_boost', String(currentBoostVal)); } catch(e) {}
+                }
+            }
+
+            range.addEventListener('input', (e) => {
+                initAudioBoost();
+                updateBoost(parseFloat(e.target.value), false);
+            });
+
+            range.addEventListener('change', () => {
+                try { localStorage.setItem('yume_volume_boost', String(currentBoostVal)); } catch(e) {}
+            });
+
+            range.addEventListener('click', (e) => e.stopPropagation());
+
+            ticks.forEach(t => {
+                t.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const targetVal = parseInt(t.getAttribute('data-val'), 10);
+                    if (!isNaN(targetVal)) {
+                        initAudioBoost();
+                        updateBoost(targetVal, true);
+                    }
+                });
+            });
+
+            // Initial apply
+            updateBoost(currentBoostVal, false);
+        }
+        initBoostMenu();
+    </script>
+</body>
+</html>

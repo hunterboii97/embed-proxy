@@ -1,0 +1,20 @@
+{
+  "name": "embed-proxy",
+  "version": "1.0.0",
+  "description": "High-performance streaming reverse proxy and clean embed player for MegaPlay, AnimeSalt, and Zoko",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "node --watch app.js"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.3.0",
+    "dotenv": "^18.0.5",
+    "fastify": "^5.12.5",
+    "lru-cache": "^11.5.3",
+    "undici": "^8.11.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
