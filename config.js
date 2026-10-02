@@ -12,30 +12,132 @@ const allowedOrigins = originsStr.split(',').map(s => s.trim().toLowerCase()).fi
 let embedStr = process.env.ALLOWED_EMBED_DOMAINS || process.env.ALLOWED_ORIGINS || 'yumezone.live,*.yumezone.live,localhost,127.0.0.1';
 const allowedEmbedDomains = embedStr.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 
-// CDN Rules with specific Referer / Origin header spoofing
+// Comprehensive CDN Rules matching main.go with exact Referer / Origin header spoofing
 const cdnRules = [
   {
-    matches: (h) => h.endsWith('.aniwatchtv.uk') || h === 'aniwatchtv.uk' || h.endsWith('.zokoanime.video') || h === 'zokoanime.video',
-    referer: 'https://aniwatchtv.uk/',
-    origin: 'https://aniwatchtv.uk',
+    matches: (h) => h.endsWith('.aniwatchtv.uk') || h === 'aniwatchtv.uk' ||
+      h.endsWith('.zokoanime.video') || h === 'zokoanime.video' ||
+      h.endsWith('.dramahot.top') || h === 'dramahot.top' ||
+      h.endsWith('.otaku-stream.site') || h === 'otaku-stream.site',
+    referer: 'https://zokoanime.video/',
+    origin: 'https://zokoanime.video',
     secSite: 'cross-site'
   },
   {
-    matches: (h) => h.includes('abyssplayer.com') || h.includes('sssrr.org') || h.includes('abyss'),
-    referer: 'https://abyssplayer.com/',
-    origin: 'https://abyssplayer.com',
+    matches: (h) => h.endsWith('.shiora.site') || h === 'shiora.site' ||
+      h.endsWith('.shiora.top') || h === 'shiora.top' ||
+      h.endsWith('.imgnex.top') || h === 'imgnex.top' ||
+      h.endsWith('.nexabloom.top') || h === 'nexabloom.top' ||
+      h.endsWith('.quavex.top') || h === 'quavex.top' ||
+      h.endsWith('.qeltrix.top') || h === 'qeltrix.top' ||
+      h.endsWith('.tiktokcdn.com') || h === 'tiktokcdn.com' ||
+      h.endsWith('.ipstatp.com') || h === 'ipstatp.com' ||
+      h.endsWith('.streamzone1.site') || h === 'streamzone1.site' ||
+      h.endsWith('.cinewave2.site') || h === 'cinewave2.site' ||
+      h.endsWith('.watching.onl') || h === 'watching.onl' ||
+      h.endsWith('.mewstream.buzz') || h === 'mewstream.buzz' ||
+      h.endsWith('.lostproject.club') || h === 'lostproject.club' ||
+      h.endsWith('.nekostream.site') || h === 'nekostream.site' ||
+      h.endsWith('.megaplay.buzz') || h === 'megaplay.buzz',
+    referer: 'https://megaplay.buzz/',
+    origin: 'https://megaplay.buzz',
     secSite: 'cross-site'
   },
   {
-    matches: (h) => h.includes('animesalt.cx') || h.includes('animesalt'),
+    matches: (h) => h.endsWith('.otakuu.se') || h === 'otakuu.se' ||
+      h.endsWith('.fast4speed.rsvp') || h === 'fast4speed.rsvp' ||
+      h.endsWith('.24stream.xyz') || h === '24stream.xyz',
+    referer: 'https://animex.one/',
+    origin: 'https://animex.one',
+    secSite: 'cross-site'
+  },
+  {
+    matches: (h) => h.endsWith('.vibeplayer.site') || h === 'vibeplayer.site',
+    referer: 'https://vibeplayer.site/',
+    origin: 'https://vibeplayer.site',
+    secSite: 'same-origin'
+  },
+  {
+    matches: (h) => h.endsWith('.mofl.pro') || h === 'mofl.pro' ||
+      h.endsWith('.vidhosters.com') || h === 'vidhosters.com',
+    referer: 'https://kem.clvd.xyz/',
+    origin: 'https://kem.clvd.xyz',
+    secSite: 'cross-site'
+  },
+  {
+    matches: (h) => h.endsWith('.zencloudz.cc') || h === 'zencloudz.cc',
+    referer: 'https://aniwave.at/',
+    origin: 'https://aniwave.at',
+    secSite: 'cross-site'
+  },
+  {
+    matches: (h) => h.endsWith('.ibyteimg.com') || h === 'ibyteimg.com' ||
+      h.endsWith('.byteimg.com') || h === 'byteimg.com' ||
+      h.endsWith('.byteoversea.com') || h === 'byteoversea.com' ||
+      h.endsWith('.vivibebe.site') || h === 'vivibebe.site',
+    referer: 'https://vivibebe.site/',
+    origin: 'https://vivibebe.site',
+    secSite: 'cross-site'
+  },
+  {
+    matches: (h) => h.endsWith('.krussdomi.com') || h === 'krussdomi.com',
+    referer: 'https://krussdomi.com/',
+    origin: 'https://krussdomi.com',
+    secSite: 'same-origin'
+  },
+  {
+    matches: (h) => h.endsWith('.owocdn.top') || h === 'owocdn.top' ||
+      h.endsWith('.kwik.cx') || h === 'kwik.cx' ||
+      h.endsWith('.uwucdn.top') || h === 'uwucdn.top',
+    referer: 'https://kwik.cx/',
+    origin: 'https://kwik.cx',
+    secSite: 'cross-site'
+  },
+  {
+    matches: (h) => h.endsWith('.anime-dunya.com') || h === 'anime-dunya.com',
+    referer: 'https://anime-dunya.com/',
+    origin: 'https://anime-dunya.com',
+    secSite: 'same-origin'
+  },
+  {
+    matches: (h) => h.startsWith('rrr.') || h === 'megaup.nl' || h.endsWith('.megaup.nl') ||
+      h === 'hub26link.site' || h.endsWith('.hub26link.site'),
+    referer: 'https://megaup.nl/',
+    origin: 'https://megaup.nl',
+    secSite: 'cross-site'
+  },
+  {
+    matches: (h) => h.endsWith('.as-cdn26.top') || h === 'as-cdn26.top' ||
+      h.endsWith('.as-cdn28.top') || h === 'as-cdn28.top' ||
+      h.endsWith('.as-cdn31.top') || h === 'as-cdn31.top' ||
+      h.endsWith('.as-cdn.top') || h === 'as-cdn.top' ||
+      h.includes('as-cdn') ||
+      h.endsWith('.vexal.top') || h === 'vexal.top' ||
+      h.endsWith('.animesalt.cx') || h === 'animesalt.cx',
     referer: 'https://animesalt.cx/',
     origin: 'https://animesalt.cx',
     secSite: 'cross-site'
   },
   {
-    matches: (h) => h.includes('megaplay.buzz') || h.includes('anikoto.cz') || h.includes('megaplay'),
-    referer: 'https://anikoto.cz/',
-    origin: 'https://anikoto.cz',
+    matches: (h) => h.endsWith('.sssrr.org') || h === 'sssrr.org' ||
+      h.endsWith('.abyssplayer.com') || h === 'abyssplayer.com',
+    referer: 'https://abyssplayer.com/',
+    origin: 'https://abyssplayer.com',
+    secSite: 'cross-site'
+  },
+  {
+    matches: (h) => h.endsWith('.allanime.uns.bio') || h === 'allanime.uns.bio' ||
+      h.endsWith('.allanime.day') || h === 'allanime.day' ||
+      h.endsWith('.ecotechshop.cfd') || h === 'ecotechshop.cfd',
+    referer: 'https://allanime.day/',
+    origin: 'https://allanime.day',
+    secSite: 'cross-site'
+  },
+  {
+    matches: (h) => h.endsWith('.slopnet.site') || h === 'slopnet.site' ||
+      h.endsWith('.flixcloud.cc') || h === 'flixcloud.cc',
+    referer: 'https://flixcloud.cc/',
+    origin: 'https://flixcloud.cc',
     secSite: 'cross-site'
   }
 ];

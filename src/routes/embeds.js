@@ -47,7 +47,7 @@ async function registerEmbedRoutes(fastify) {
       const data = await extractZokoHLS(malId, ep, lang);
       const streamToken = encryptToken({
         url: data.streamFile,
-        ref: 'https://aniwatchtv.uk/',
+        ref: 'https://zokoanime.video/',
         exp: Math.floor(Date.now() / 1000) + 86400
       });
       const proxiedM3U8 = `/p/${streamToken}/master.m3u8`;
@@ -207,7 +207,7 @@ async function registerEmbedRoutes(fastify) {
       const data = await extractMegaplayHLSWithFallback(targetPath);
       const streamToken = encryptToken({
         url: data.streamFile,
-        ref: 'https://anikoto.cz/',
+        ref: 'https://megaplay.buzz/',
         exp: Math.floor(Date.now() / 1000) + 86400
       });
       const proxiedM3U8 = `/p/${streamToken}/master.m3u8`;

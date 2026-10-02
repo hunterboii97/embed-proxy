@@ -54,23 +54,36 @@ async function handleAbyssChunked(req, reply, payload) {
   if (chunkEnd >= totalSize) chunkEnd = totalSize - 1;
   if (end > chunkEnd) end = chunkEnd;
 
+  reply.hijack();
+  const rawRes = reply.raw;
+
   if (start > end || start >= totalSize) {
-    reply.header('Content-Range', `bytes */${totalSize}`);
-    return reply.code(416).send('Requested range not satisfiable');
+    rawRes.writeHead(416, {
+      'Content-Range': `bytes */${totalSize}`,
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+      'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization, X-Requested-With',
+      'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Content-Type, Accept-Ranges'
+    });
+    rawRes.end('Requested range not satisfiable');
+    return;
   }
 
   const contentLength = end - start + 1;
-  reply.code(206);
-  reply.header('Content-Type', 'video/mp4');
-  reply.header('Accept-Ranges', 'bytes');
-  reply.header('Content-Length', String(contentLength));
-  reply.header('Content-Range', `bytes ${start}-${end}/${totalSize}`);
-  reply.header('Cache-Control', 'public, max-age=86400, immutable');
+  rawRes.writeHead(206, {
+    'Content-Type': 'video/mp4',
+    'Accept-Ranges': 'bytes',
+    'Content-Length': String(contentLength),
+    'Content-Range': `bytes ${start}-${end}/${totalSize}`,
+    'Cache-Control': 'public, max-age=86400, immutable',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+    'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization, X-Requested-With',
+    'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Content-Type, Accept-Ranges'
+  });
 
   const startChunkIdx = Math.floor(start / chunkSize);
   const endChunkIdx = Math.floor(end / chunkSize);
-
-  const rawRes = reply.raw;
 
   for (let idx = startChunkIdx; idx <= endChunkIdx; idx++) {
     if (rawRes.destroyed) return;
@@ -133,17 +146,26 @@ async function handleAbyssChunked(req, reply, payload) {
  * Handles Abyss CTR Decryption (first 64KB decrypted with AES-256-CTR)
  */
 async function handleAbyssCTR(req, reply, upstreamRes, payload) {
-  reply.header('Content-Type', 'video/mp4');
-  reply.header('Accept-Ranges', 'bytes');
+  reply.hijack();
+  const rawRes = reply.raw;
+
+  const headers = {
+    'Content-Type': 'video/mp4',
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'public, max-age=86400, immutable',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+    'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization, X-Requested-With',
+    'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Content-Type, Accept-Ranges'
+  };
   if (upstreamRes.headers['content-length']) {
-    reply.header('Content-Length', upstreamRes.headers['content-length']);
+    headers['Content-Length'] = upstreamRes.headers['content-length'];
   }
   if (upstreamRes.headers['content-range']) {
-    reply.header('Content-Range', upstreamRes.headers['content-range']);
+    headers['Content-Range'] = upstreamRes.headers['content-range'];
   }
-  reply.code(upstreamRes.statusCode);
+  rawRes.writeHead(upstreamRes.statusCode, headers);
 
-  const rawRes = reply.raw;
   let rangeStart = 0;
   const cr = upstreamRes.headers['content-range'];
   const reqRange = req.headers['range'];
@@ -163,7 +185,7 @@ async function handleAbyssCTR(req, reply, upstreamRes, payload) {
 
   // If beyond 64KB, stream directly as plaintext
   if (rangeStart >= 65536) {
-    Readable.fromWeb(upstreamRes.body).pipe(rawRes);
+    upstreamRes.body.pipe(rawRes);
     return;
   }
 
@@ -200,7 +222,7 @@ async function handleAbyssCTR(req, reply, upstreamRes, payload) {
     }
   });
 
-  Readable.fromWeb(upstreamRes.body).pipe(transform).pipe(rawRes);
+  upstreamRes.body.pipe(transform).pipe(rawRes);
 }
 
 async function registerProxyRoutes(fastify) {
@@ -373,73 +395,88 @@ async function registerProxyRoutes(fastify) {
     }
 
     // 4. Binary Streaming (TS segments, MP4, VTT, WebVTT)
+    reply.hijack();
+    const rawRes = reply.raw;
+
+    const outHeaders = {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+      'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization, X-Requested-With',
+      'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Content-Type, Accept-Ranges',
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'public, max-age=86400, immutable'
+    };
+
+    if (req.query.dl === '1' || req.query.download === '1') {
+      const dlName = req.query.filename || 'video.mp4';
+      outHeaders['Content-Disposition'] = `attachment; filename="${dlName}"`;
+    }
+
     const isVTT = cleanPath.endsWith('.vtt') || cleanPath.includes('/subtitles/');
     const isSRT = cleanPath.endsWith('.srt');
 
     if (isVTT) {
-      reply.header('Content-Type', 'text/vtt; charset=utf-8');
+      outHeaders['Content-Type'] = 'text/vtt; charset=utf-8';
     } else if (isSRT) {
-      reply.header('Content-Type', 'application/x-subrip');
+      outHeaders['Content-Type'] = 'application/x-subrip';
     } else if (contentType) {
-      reply.header('Content-Type', contentType);
+      outHeaders['Content-Type'] = contentType;
     } else {
-      reply.header('Content-Type', 'application/octet-stream');
+      outHeaders['Content-Type'] = 'application/octet-stream';
     }
 
-    reply.header('Cache-Control', 'public, max-age=86400, immutable');
-    if (upstreamRes.headers['content-length']) {
-      reply.header('Content-Length', upstreamRes.headers['content-length']);
+    const cl = upstreamRes.headers['content-length'];
+    if (cl) {
+      outHeaders['Content-Length'] = cl;
     }
     if (upstreamRes.headers['content-range']) {
-      reply.header('Content-Range', upstreamRes.headers['content-range']);
+      outHeaders['Content-Range'] = upstreamRes.headers['content-range'];
     }
 
-    reply.code(upstreamRes.statusCode);
+    const iterator = upstreamRes.body[Symbol.asyncIterator]();
+    const first = await iterator.next();
 
-    const rawRes = reply.raw;
-    const bodyStream = Readable.fromWeb(upstreamRes.body);
+    if (first.done) {
+      rawRes.writeHead(upstreamRes.statusCode, outHeaders);
+      rawRes.end();
+      return;
+    }
 
-    // PNG Header Stripping Transform Stream
-    let firstChunkChecked = false;
-    let isFakePNG = false;
+    let firstChunk = Buffer.from(first.value);
 
-    const pngStripper = new Transform({
-      transform(chunk, encoding, callback) {
-        if (!firstChunkChecked) {
-          firstChunkChecked = true;
-          // Check for PNG magic: \x89PNG\r\n\x1a\n and byte 252 == 0x47 (TS sync byte)
-          if (
-            chunk.length >= 253 &&
-            chunk[0] === 0x89 && chunk[1] === 0x50 && chunk[2] === 0x4E && chunk[3] === 0x47 &&
-            chunk[4] === 0x0D && chunk[5] === 0x0A && chunk[6] === 0x1A && chunk[7] === 0x0A &&
-            chunk[252] === 0x47
-          ) {
-            isFakePNG = true;
-            if (!rawRes.headersSent) {
-              rawRes.setHeader('Content-Type', 'video/mp2t');
-              const cl = upstreamRes.headers['content-length'];
-              if (cl) {
-                const total = parseInt(cl, 10);
-                if (!isNaN(total) && total >= 252) {
-                  rawRes.setHeader('Content-Length', String(total - 252));
-                }
-              }
-            }
-            callback(null, chunk.subarray(252));
-            return;
-          }
-
-          if (chunk.length > 0 && chunk[0] === 0x47) {
-            if (!rawRes.headersSent) {
-              rawRes.setHeader('Content-Type', 'video/mp2t');
-            }
+    if (upstreamRes.statusCode === 200 && !isVTT && !isSRT) {
+      // Fake PNG header check (252 bytes)
+      if (
+        firstChunk.length >= 253 &&
+        firstChunk[0] === 0x89 && firstChunk[1] === 0x50 && firstChunk[2] === 0x4E && firstChunk[3] === 0x47 &&
+        firstChunk[4] === 0x0D && firstChunk[5] === 0x0A && firstChunk[6] === 0x1A && firstChunk[7] === 0x0A &&
+        firstChunk[252] === 0x47
+      ) {
+        outHeaders['Content-Type'] = 'video/mp2t';
+        if (cl) {
+          const total = parseInt(cl, 10);
+          if (!isNaN(total) && total >= 252) {
+            outHeaders['Content-Length'] = String(total - 252);
           }
         }
-        callback(null, chunk);
+        firstChunk = firstChunk.subarray(252);
+      } else if (firstChunk.length > 0 && firstChunk[0] === 0x47) {
+        outHeaders['Content-Type'] = 'video/mp2t';
       }
-    });
+    }
 
-    bodyStream.pipe(pngStripper).pipe(rawRes);
+    rawRes.writeHead(upstreamRes.statusCode, outHeaders);
+    if (firstChunk.length > 0) {
+      rawRes.write(firstChunk);
+    }
+
+    for await (const chunk of { [Symbol.asyncIterator]: () => iterator }) {
+      if (rawRes.destroyed) break;
+      if (!rawRes.write(chunk)) {
+        await new Promise(r => rawRes.once('drain', r));
+      }
+    }
+    rawRes.end();
   });
 }
 

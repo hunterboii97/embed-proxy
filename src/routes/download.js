@@ -25,6 +25,7 @@ function buildDownloadFilename(title, ep, quality, lang, ext = 'mp4') {
 }
 
 async function streamM3U8AsMP4(reply, variantM3U8URL, referer, filename) {
+  reply.hijack();
   const rawRes = reply.raw;
   reply.header('Content-Type', 'video/mp4');
   reply.header('Content-Disposition', `attachment; filename="${filename}"`);
@@ -134,6 +135,7 @@ async function streamM3U8AsMP4(reply, variantM3U8URL, referer, filename) {
 }
 
 async function streamM3U8AsTS(reply, chunkURLs, referer, filename) {
+  reply.hijack();
   const rawRes = reply.raw;
   if (!rawRes.headersSent) {
     reply.header('Content-Type', 'video/mp2t');
