@@ -60,20 +60,35 @@ app.setErrorHandler(async (error, req, reply) => {
   });
 });
 
-// Start Server (supports both Standalone and Phusion Passenger)
-(async () => {
-  try {
-    if (typeof PhusionPassenger !== 'undefined') {
-      await app.listen({ path: 'passenger' });
-    } else if (require.main === module || process.env.PORT) {
+// Compatibility wrapper for LiteSpeed lsnode.js and Passenger
+const origListen = app.listen.bind(app);
+app.listen = function (opt, ...args) {
+  if (typeof opt === 'number' || (typeof opt === 'string' && !isNaN(opt))) {
+    const listenOpts = { port: Number(opt) };
+    let cb = undefined;
+    if (typeof args[0] === 'string') {
+      listenOpts.host = args[0];
+      cb = typeof args[1] === 'function' ? args[1] : undefined;
+    } else if (typeof args[0] === 'function') {
+      cb = args[0];
+    }
+    return origListen(listenOpts, cb);
+  }
+  return origListen(opt, ...args);
+};
+
+// Start Server in standalone mode
+if (require.main === module) {
+  (async () => {
+    try {
       const address = await app.listen({ port: PORT, host: '0.0.0.0' });
       console.log(`🚀 YumeZone Ultra Stream & Clean Embed Proxy running at: ${address}`);
+    } catch (err) {
+      console.error('Failed to start server:', err);
+      process.exit(1);
     }
-  } catch (err) {
-    console.error('Failed to start server:', err);
-    process.exit(1);
-  }
-})();
+  })();
+}
 
-// Export for cPanel Phusion Passenger
+// Export for LiteSpeed / Phusion Passenger
 module.exports = app;
