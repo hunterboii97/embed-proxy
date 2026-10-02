@@ -9,9 +9,12 @@ const { registerApiRoutes } = require('./src/routes/api');
 const { registerDownloadRoutes } = require('./src/routes/download');
 
 const app = Fastify({
-  logger: false, // Disabled for extreme throughput and zero console I/O blocking
-  connectionTimeout: 120000,
-  keepAliveTimeout: 120000,
+  logger: false,           // Disabled for max throughput (zero console I/O overhead)
+  trustProxy: true,        // Trust X-Forwarded-For from Cloudflare & LiteSpeed
+  connectionTimeout: 0,    // Let OS manage idle connections (LiteSpeed handles this)
+  keepAliveTimeout: 5000,  // Match Cloudflare's default keep-alive timeout (5s)
+  bodyLimit: 1048576,      // 1MB max body (proxy only streams, never buffers large bodies)
+  http2: false,            // Explicitly disable HTTP/2 (Passenger is HTTP/1.1 only)
   routerOptions: {
     maxParamLength: 4096
   }

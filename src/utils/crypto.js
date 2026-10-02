@@ -9,9 +9,46 @@ const pathKeyRegex = /\/([a-f0-9]{32})\/([a-f0-9]{32})\//i;
 const zokoObfKey = Buffer.from('otaku-embed-v1', 'utf8');
 
 /**
+ * Token cache: same URL + same expiry = same token, no need to re-encrypt
+ * Key: JSON.stringify(payload), Value: {token, exp}
+ */
+const tokenCache = new Map();
+const TOKEN_CACHE_MAX = 5000;
+let tokenCacheLastPurge = Date.now();
+
+function purgeTokenCache() {
+  const now = Date.now();
+  if (now - tokenCacheLastPurge < 60000) return;
+  tokenCacheLastPurge = now;
+  for (const [k, v] of tokenCache) {
+    if (v.cachedAt + 300000 < now) tokenCache.delete(k);
+  }
+}
+
+/**
  * Encrypts token payload using AES-256-GCM (12-byte IV + ciphertext + 16-byte AuthTag)
+ * Uses an in-memory cache to avoid re-encrypting the same URL within 5 minutes.
  */
 function encryptToken(payload, key = proxySecretKey) {
+  // Only cache when a stable expiry is present (prevents unbounded growth)
+  if (payload.exp) {
+    const cacheKey = JSON.stringify(payload);
+    const cached = tokenCache.get(cacheKey);
+    if (cached) return cached.token;
+
+    const plaintext = Buffer.from(cacheKey, 'utf8');
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    const token = Buffer.concat([iv, ciphertext, tag]).toString('base64url');
+
+    if (tokenCache.size >= TOKEN_CACHE_MAX) tokenCache.clear();
+    tokenCache.set(cacheKey, { token, cachedAt: Date.now() });
+    purgeTokenCache();
+    return token;
+  }
+
   const plaintext = Buffer.from(JSON.stringify(payload), 'utf8');
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);

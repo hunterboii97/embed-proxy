@@ -1,15 +1,24 @@
 const { request, Agent, setGlobalDispatcher } = require('undici');
 
-// Ultra high-performance Global Agent with 10,000 pooled keep-alive connections
+// Ultra high-performance Global Agent
+// - pipelining:10 sends multiple requests per TCP connection (HTTP/1.1)
+// - connections:128 per origin (cPanel shared hosting is single-server, no need for 10k)
+// - keepAliveTimeout/MaxTimeout: keep sockets alive between requests
+// - DNS cache TTL 30s: avoid repeated DNS lookups for the same CDN origins
 const globalAgent = new Agent({
-  keepAliveTimeout: 120000,
+  keepAliveTimeout: 60000,
   keepAliveMaxTimeout: 300000,
-  connections: 10000,
-  pipelining: 1,
+  connections: 128,
+  pipelining: 10,
+  maxResponseSize: -1,
+  headersTimeout: 10000,
+  bodyTimeout: 0,
   connect: {
-    timeout: 8000,
+    timeout: 6000,
     keepAlive: true,
-    noDelay: true
+    keepAliveInitialDelay: 0,
+    noDelay: true,
+    rejectUnauthorized: false
   }
 });
 

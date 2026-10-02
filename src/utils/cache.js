@@ -16,6 +16,16 @@ const m3u8PlaylistCache = new LRUCache({
   updateAgeOnGet: true
 });
 
+// 6. HLS TS Segment Cache (10 min TTL, max 50MB total)
+// Caches binary .ts segment buffers to serve repeat requests (seek, buffer)
+// without re-fetching upstream. Uses maxSize (byte-counted) for memory safety.
+const tsSegmentCache = new LRUCache({
+  maxSize: 50 * 1024 * 1024, // 50 MB
+  ttl: 10 * 60 * 1000,       // 10 minutes
+  sizeCalculation: (buf) => buf.length,
+  updateAgeOnGet: true
+});
+
 // 2. Zoko Stream Cache (3 Hours TTL)
 const zokoStreamCache = new LRUCache({
   max: 5000,
@@ -65,6 +75,7 @@ const malIdCache = new LRUCache({
 module.exports = {
   stats,
   m3u8PlaylistCache,
+  tsSegmentCache,
   zokoStreamCache,
   animeSaltStreamCache,
   animeSaltAudioLinksCache,

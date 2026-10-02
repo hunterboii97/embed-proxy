@@ -6,7 +6,7 @@ const { pipeline } = require('node:stream/promises');
 const { cdnRules, isPrivateHost } = require('../../config');
 const { decryptToken, encryptPlaylistResponse, genSoraToken } = require('../utils/crypto');
 const { rewriteM3U8 } = require('../utils/m3u8');
-const { m3u8PlaylistCache, stats } = require('../utils/cache');
+const { m3u8PlaylistCache, tsSegmentCache, stats } = require('../utils/cache');
 const { globalAgent, DEFAULT_UA } = require('../utils/http');
 
 function getClientIP(req) {
@@ -402,6 +402,26 @@ async function registerProxyRoutes(fastify) {
     reply.hijack();
     const rawRes = reply.raw;
 
+    const isVTT = cleanPath.endsWith('.vtt') || cleanPath.includes('/subtitles/');
+    const isSRT = cleanPath.endsWith('.srt');
+    const isTSSegment = cleanPath.endsWith('.ts') && !req.headers['range'];
+
+    // FAST PATH: Serve TS segment from cache (0ms - memory hit)
+    if (isTSSegment) {
+      const cached = tsSegmentCache.get(targetURL);
+      if (cached) {
+        rawRes.writeHead(200, {
+          'Content-Type': 'video/mp2t',
+          'Content-Length': String(cached.length),
+          'Cache-Control': 'public, max-age=600, immutable',
+          'Access-Control-Allow-Origin': '*',
+          'Accept-Ranges': 'bytes'
+        });
+        rawRes.end(cached);
+        return;
+      }
+    }
+
     const outHeaders = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
@@ -415,9 +435,6 @@ async function registerProxyRoutes(fastify) {
       const dlName = req.query.filename || 'video.mp4';
       outHeaders['Content-Disposition'] = `attachment; filename="${dlName}"`;
     }
-
-    const isVTT = cleanPath.endsWith('.vtt') || cleanPath.includes('/subtitles/');
-    const isSRT = cleanPath.endsWith('.srt');
 
     if (isVTT) {
       outHeaders['Content-Type'] = 'text/vtt; charset=utf-8';
@@ -470,10 +487,33 @@ async function registerProxyRoutes(fastify) {
     }
 
     rawRes.writeHead(upstreamRes.statusCode, outHeaders);
-    if (firstChunk.length > 0) {
-      rawRes.write(firstChunk);
+
+    // For TS segments: collect into buffer so we can cache AND stream simultaneously
+    if (isTSSegment && upstreamRes.statusCode === 200) {
+      const chunks = [firstChunk];
+      let totalBytes = firstChunk.length;
+      if (firstChunk.length > 0) rawRes.write(firstChunk);
+
+      for await (const chunk of { [Symbol.asyncIterator]: () => iterator }) {
+        if (rawRes.destroyed) break;
+        chunks.push(chunk);
+        totalBytes += chunk.length;
+        if (!rawRes.write(chunk)) {
+          await new Promise(r => rawRes.once('drain', r));
+        }
+      }
+      rawRes.end();
+
+      // Cache if reasonable segment size (<= 10MB)
+      if (totalBytes > 0 && totalBytes <= 10 * 1024 * 1024) {
+        const full = Buffer.concat(chunks, totalBytes);
+        tsSegmentCache.set(targetURL, full);
+      }
+      return;
     }
 
+    // Standard streaming for MP4, VTT, SRT etc.
+    if (firstChunk.length > 0) rawRes.write(firstChunk);
     for await (const chunk of { [Symbol.asyncIterator]: () => iterator }) {
       if (rawRes.destroyed) break;
       if (!rawRes.write(chunk)) {
