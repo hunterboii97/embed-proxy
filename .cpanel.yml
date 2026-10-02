@@ -1,0 +1,15 @@
+---
+deployment:
+  tasks:
+    - export DEPLOYPATH=/home/hianimez/embed-proxy/
+    - echo "=== WHICH NODE ===" > /home/hianimez/node_info.txt
+    - which node >> /home/hianimez/node_info.txt 2>&1 || true
+    - echo "=== FIND NODE ===" >> /home/hianimez/node_info.txt
+    - find /opt -name "node" >> /home/hianimez/node_info.txt 2>&1 || true
+    - find /usr -name "node" >> /home/hianimez/node_info.txt 2>&1 || true
+    - echo "=== CLOUDLINUX NODE ===" >> /home/hianimez/node_info.txt
+    - ls -la /opt/alt/ >> /home/hianimez/node_info.txt 2>&1 || true
+    - ls -la /opt/cpanel/ >> /home/hianimez/node_info.txt 2>&1 || true
+    - echo "=== PATH ===" >> /home/hianimez/node_info.txt
+    - echo $PATH >> /home/hianimez/node_info.txt
+    - /bin/cp -a * $DEPLOYPATH
