@@ -1993,14 +1993,23 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>YumeZone Player</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+        *, *::before, *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-tap-highlight-color: transparent !important;
+            -webkit-touch-callout: none !important;
+            outline: none;
+        }
         html, body {
             width: 100%%;
             height: 100%%;
@@ -2008,6 +2017,10 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             padding: 0;
             background: #000000;
             overflow: hidden;
+            position: fixed;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent !important;
+            -webkit-touch-callout: none !important;
             font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             -webkit-font-smoothing: antialiased;
         }
@@ -2017,16 +2030,28 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             position: relative;
             background: #000000;
             overflow: hidden;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent !important;
         }
         video {
+            position: absolute;
+            top: 0;
+            left: 0;
             width: 100%%;
             height: 100%%;
             object-fit: contain;
             background: #000000;
             outline: none;
+            border: none;
+            transform: translateZ(0);
+            will-change: transform;
+            -webkit-tap-highlight-color: transparent !important;
+        }
+        video::-webkit-media-controls,
+        video::-webkit-media-controls-enclosure,
+        video::-webkit-media-controls-panel {
+            display: none !important;
+            -webkit-appearance: none !important;
         }
 
         /* Fullscreen Landscape Enforcement */
@@ -2049,7 +2074,9 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             z-index: 40;
             background: rgba(0, 0, 0, 0.4);
             cursor: pointer;
-            transition: opacity 0.25s ease;
+            transition: opacity 0.12s ease;
+            -webkit-tap-highlight-color: transparent !important;
+            -webkit-touch-callout: none !important;
         }
         .yume-center-overlay.hidden {
             opacity: 0;
@@ -2071,7 +2098,8 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             display: flex;
             align-items: center;
             justify-content: center;
-            transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s ease, border-color 0.2s ease;
+            transition: transform 0.12s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.12s ease, border-color 0.12s ease;
+            -webkit-tap-highlight-color: transparent !important;
         }
         .yume-center-overlay:hover .yume-big-play-btn {
             transform: scale(1.12);
@@ -2083,6 +2111,32 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             height: 32px;
             fill: #ffffff;
             margin-left: 4px;
+        }
+
+        /* Clean, Minimalist Buffering Indicator */
+        .yume-spinner-wrap {
+            position: absolute;
+            top: 50%%;
+            left: 50%%;
+            transform: translate(-50%%, -50%%);
+            z-index: 38;
+            pointer-events: none;
+            transition: opacity 0.2s ease;
+        }
+        .yume-spinner-wrap.hidden {
+            opacity: 0;
+            display: none;
+        }
+        .yume-spinner-ring {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%%;
+            border: 3px solid rgba(255, 255, 255, 0.15);
+            border-top-color: #ffffff;
+            animation: yumeSpin 0.75s linear infinite;
+        }
+        @keyframes yumeSpin {
+            to { transform: rotate(360deg); }
         }
 
         /* Top Bar Floating Time (Mobile) */
@@ -2166,6 +2220,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             gap: 8px;
             z-index: 50;
             transition: opacity 0.25s ease, transform 0.25s ease;
+            -webkit-tap-highlight-color: transparent !important;
         }
         #yume-player-container.controls-hidden #yume-controls-bar {
             opacity: 0;
@@ -2181,7 +2236,19 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             display: flex;
             align-items: center;
             cursor: pointer;
-            touch-action: none;
+            touch-action: none !important;
+            -webkit-tap-highlight-color: transparent !important;
+            -webkit-touch-callout: none !important;
+        }
+        /* Invisible expanded touch hit area (40px) for mobile fingers */
+        .yume-progress-container::before {
+            content: '';
+            position: absolute;
+            top: -12px;
+            bottom: -12px;
+            left: 0;
+            right: 0;
+            z-index: 1;
         }
         .yume-progress-bg {
             position: relative;
@@ -2191,6 +2258,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             border-radius: 2px;
             overflow: hidden;
             transition: height 0.15s ease;
+            z-index: 2;
         }
         .yume-progress-container:hover .yume-progress-bg,
         .yume-progress-container.scrubbing .yume-progress-bg {
@@ -2225,13 +2293,15 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             border-radius: 50%%;
             background: #ffffff;
             transform: translate(-50%%, 0) scale(0);
-            transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+            transition: transform 0.12s cubic-bezier(0.34, 1.56, 0.64, 1);
             pointer-events: none;
             box-shadow: 0 0 8px rgba(0, 0, 0, 0.8);
+            z-index: 3;
+            will-change: left, transform;
         }
         .yume-progress-container:hover .yume-progress-thumb,
         .yume-progress-container.scrubbing .yume-progress-thumb {
-            transform: translate(-50%%, 0) scale(1);
+            transform: translate(-50%%, 0) scale(1.15);
         }
 
         /* Hover Time Tooltip */
@@ -2251,8 +2321,10 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             opacity: 0;
             transition: opacity 0.15s ease;
             white-space: nowrap;
+            z-index: 10;
         }
-        .yume-progress-container:hover #yume-hover-time {
+        .yume-progress-container:hover #yume-hover-time,
+        .yume-progress-container.scrubbing #yume-hover-time {
             opacity: 1;
         }
 
@@ -2282,6 +2354,8 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             border-radius: 8px;
             outline: none;
             transition: color 0.15s ease, transform 0.15s ease, background 0.15s ease;
+            -webkit-tap-highlight-color: transparent !important;
+            -webkit-touch-callout: none !important;
         }
         .yume-btn:hover {
             color: #ffffff;
@@ -2305,6 +2379,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             display: flex;
             align-items: center;
             position: relative;
+            -webkit-tap-highlight-color: transparent !important;
         }
         .yume-vol-slider-wrap {
             width: 0;
@@ -2330,7 +2405,8 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             border-radius: 3px;
             outline: none;
             cursor: pointer;
-            touch-action: none;
+            touch-action: none !important;
+            -webkit-tap-highlight-color: transparent !important;
         }
         .yume-vol-slider::-webkit-slider-thumb {
             -webkit-appearance: none;
@@ -2380,6 +2456,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             color: #ffffff;
             font-family: 'Outfit', sans-serif;
             transition: opacity 0.18s ease, transform 0.18s ease;
+            -webkit-tap-highlight-color: transparent !important;
         }
         #yume-settings-popover.hidden {
             opacity: 0;
@@ -2418,6 +2495,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             color: #e4e4e7;
             cursor: pointer;
             transition: background 0.15s ease;
+            -webkit-tap-highlight-color: transparent !important;
         }
         .yume-menu-item:hover {
             background: rgba(255, 255, 255, 0.1);
@@ -2438,6 +2516,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             color: #a1a1aa;
             cursor: pointer;
             transition: all 0.15s ease;
+            -webkit-tap-highlight-color: transparent !important;
         }
         .yume-option:hover {
             background: rgba(255, 255, 255, 0.1);
@@ -2490,7 +2569,8 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             cursor: pointer;
             margin: 0;
             padding: 0;
-            touch-action: none;
+            touch-action: none !important;
+            -webkit-tap-highlight-color: transparent !important;
         }
         .yume-boost-slider::-webkit-slider-thumb {
             -webkit-appearance: none;
@@ -2527,6 +2607,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             padding: 3px 8px;
             border-radius: 6px;
             transition: all 0.15s ease;
+            -webkit-tap-highlight-color: transparent !important;
         }
         .yume-boost-tick:hover {
             color: #ffffff;
@@ -2578,7 +2659,12 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
 <body>
     <div id="yume-player-container">
         <!-- Main HTML5 Video Element -->
-        <video id="yume-video" playsinline preload="auto"></video>
+        <video id="yume-video" playsinline webkit-playsinline x5-playsinline preload="auto"></video>
+
+        <!-- Clean Buffering Spinner -->
+        <div id="yume-buffering-spinner" class="yume-spinner-wrap hidden">
+            <div class="yume-spinner-ring"></div>
+        </div>
 
         <!-- Flash Effect for Screenshot -->
         <div id="yume-flash"></div>
@@ -2782,6 +2868,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
         const progPlay = document.getElementById('yume-prog-play');
         const progThumb = document.getElementById('yume-prog-thumb');
         const hoverTime = document.getElementById('yume-hover-time');
+        const bufferingSpinner = document.getElementById('yume-buffering-spinner');
 
         const btnSettings = document.getElementById('yume-btn-settings');
         const settingsPopover = document.getElementById('yume-settings-popover');
@@ -2794,7 +2881,26 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
 
         let hlsInstance = null;
         let isScrubbing = false;
+        let scrubRaf = null;
         let hideControlsTimeout = null;
+
+        // Buffering Indicator Controller
+        function showBuffering() {
+            if (!video.paused && !video.ended) {
+                bufferingSpinner.classList.remove('hidden');
+            }
+        }
+        function hideBuffering() {
+            bufferingSpinner.classList.add('hidden');
+        }
+
+        video.addEventListener('waiting', showBuffering);
+        video.addEventListener('stalled', showBuffering);
+        video.addEventListener('seeking', showBuffering);
+        video.addEventListener('seeked', hideBuffering);
+        video.addEventListener('playing', hideBuffering);
+        video.addEventListener('canplay', hideBuffering);
+        video.addEventListener('pause', hideBuffering);
 
         // Web Audio API Volume Boost
         let audioCtx = null;
@@ -2873,7 +2979,6 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
 
         function saveProgress(force) {
             if (!episodeKey) return;
-            // Never overwrite saved position before initial resume has applied
             if (!resumeApplied && resumeTime > 0) return;
             const cur = video.currentTime;
             const dur = video.duration;
@@ -2933,6 +3038,12 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             hlsInstance = new Hls({
                 maxBufferLength: 30,
                 maxMaxBufferLength: 60,
+                maxBufferSize: 60 * 1000 * 1000,
+                backBufferLength: 90,
+                maxBufferHole: 0.5,
+                highBufferWatchdogPeriod: 2,
+                nudgeOffset: 0.1,
+                nudgeMaxRetry: 5,
                 enableWorker: true,
                 startPosition: resumeTime > 0 ? resumeTime : -1
             });
@@ -2952,8 +3063,21 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
                 initAudioMenu(hlsInstance, preferredLang);
             });
 
-            hlsInstance.on(Hls.ErrorTypes.NETWORK_ERROR, () => hlsInstance.startLoad());
-            hlsInstance.on(Hls.ErrorTypes.MEDIA_ERROR, () => hlsInstance.recoverMediaError());
+            hlsInstance.on(Hls.Events.ERROR, function (event, data) {
+                if (data.fatal) {
+                    switch (data.type) {
+                        case Hls.ErrorTypes.NETWORK_ERROR:
+                            hlsInstance.startLoad();
+                            break;
+                        case Hls.ErrorTypes.MEDIA_ERROR:
+                            hlsInstance.recoverMediaError();
+                            break;
+                        default:
+                            hlsInstance.destroy();
+                            break;
+                    }
+                }
+            });
         } else if (isHls && video.canPlayType('application/vnd.apple.mpegurl')) {
             video.src = streamURL;
         } else {
@@ -2977,18 +3101,37 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             applyResume();
         });
 
-        video.addEventListener('canplay', applyResume);
+        video.addEventListener('canplay', () => {
+            applyResume();
+            hideBuffering();
+        });
 
-        // Play / Pause Logic
+        // Play / Pause Logic with smooth micro-delay on pause (feels organic, not abrupt)
+        let pauseTimeout = null;
         function togglePlay() {
+            if (pauseTimeout) {
+                clearTimeout(pauseTimeout);
+                pauseTimeout = null;
+                return;
+            }
             if (video.paused || video.ended) {
-                video.play();
+                video.play().catch(() => {});
             } else {
-                video.pause();
+                // Subtle 80ms micro-delay so pause feels smooth & natural
+                pauseTimeout = setTimeout(() => {
+                    pauseTimeout = null;
+                    if (!video.paused && !video.ended) {
+                        video.pause();
+                    }
+                }, 80);
             }
         }
 
         video.addEventListener('play', () => {
+            if (pauseTimeout) {
+                clearTimeout(pauseTimeout);
+                pauseTimeout = null;
+            }
             initAudioBoost();
             applyResume();
             document.getElementById('yume-icon-play').style.display = 'none';
@@ -3001,10 +3144,16 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
         video.addEventListener('playing', () => {
             applyResume();
             resumeApplied = true;
+            hideBuffering();
         });
 
         video.addEventListener('pause', () => {
+            if (pauseTimeout) {
+                clearTimeout(pauseTimeout);
+                pauseTimeout = null;
+            }
             saveProgress(true);
+            hideBuffering();
             document.getElementById('yume-icon-play').style.display = 'block';
             document.getElementById('yume-icon-pause').style.display = 'none';
             if (!startScreen || startScreen.classList.contains('hidden')) {
@@ -3018,15 +3167,25 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             if (resumeTime > 0 && Math.abs(video.currentTime - resumeTime) <= 2) {
                 resumeApplied = true;
             }
+            hideBuffering();
             saveProgress(true);
         });
 
-        document.getElementById('yume-btn-play').addEventListener('click', togglePlay);
-        pauseOverlay.addEventListener('click', togglePlay);
+        document.getElementById('yume-btn-play').addEventListener('click', (e) => {
+            e.stopPropagation();
+            togglePlay();
+        });
+        pauseOverlay.addEventListener('click', (e) => {
+            e.stopPropagation();
+            togglePlay();
+        });
+
+        // Instant Video Tap / Click to Play & Pause (Zero lag, instantaneous response)
         video.addEventListener('click', (e) => {
-            if (!settingsPopover.contains(e.target) && !e.target.closest('#yume-btn-settings')) {
-                togglePlay();
+            if (settingsPopover.contains(e.target) || e.target.closest('#yume-btn-settings') || e.target.closest('#yume-controls-bar')) {
+                return;
             }
+            togglePlay();
         });
 
         // Start Screen Click-to-Play
@@ -3041,20 +3200,23 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             setTimeout(() => { if (startScreen.parentNode) startScreen.parentNode.removeChild(startScreen); }, 350);
         });
 
-        // Rewind & Forward
-        document.getElementById('yume-btn-rewind').addEventListener('click', () => {
+        // Rewind & Forward Buttons
+        document.getElementById('yume-btn-rewind').addEventListener('click', (e) => {
+            e.stopPropagation();
             video.currentTime = Math.max(0, video.currentTime - 10);
             resetHideControlsTimer();
             saveProgress(true);
         });
-        document.getElementById('yume-btn-forward').addEventListener('click', () => {
+        document.getElementById('yume-btn-forward').addEventListener('click', (e) => {
+            e.stopPropagation();
             video.currentTime = Math.min(video.duration || 9999, video.currentTime + 10);
             resetHideControlsTimer();
             saveProgress(true);
         });
 
         // Screenshot
-        document.getElementById('yume-btn-snap').addEventListener('click', () => {
+        document.getElementById('yume-btn-snap').addEventListener('click', (e) => {
+            e.stopPropagation();
             try {
                 if (!video.videoWidth) return;
                 const canvas = document.createElement('canvas');
@@ -3077,16 +3239,25 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             document.getElementById('yume-icon-vol-high').style.display = (isMuted || val == 0) ? 'none' : 'block';
             document.getElementById('yume-icon-vol-mute').style.display = (isMuted || val == 0) ? 'block' : 'none';
         }
-        volRange.addEventListener('input', (e) => { video.volume = parseFloat(e.target.value); video.muted = (video.volume === 0); updateVolumeUI(video.volume, video.muted); });
+        volRange.addEventListener('input', (e) => {
+            video.volume = parseFloat(e.target.value);
+            video.muted = (video.volume === 0);
+            updateVolumeUI(video.volume, video.muted);
+        });
         document.getElementById('yume-btn-vol').addEventListener('click', (e) => {
             e.stopPropagation();
+            if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+                if (!volWrapBox.classList.contains('active')) {
+                    volWrapBox.classList.add('active');
+                    return;
+                }
+            }
             video.muted = !video.muted;
             updateVolumeUI(video.volume, video.muted);
         });
 
         // Timeline Progress Tracking & Time Code Updates
         video.addEventListener('timeupdate', () => {
-            // Safety fallback for resume
             if (!resumeApplied && resumeTime > 0) {
                 if (video.currentTime < 2 && video.readyState >= 1) {
                     applyResume();
@@ -3095,7 +3266,6 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
                 }
             }
 
-            // Continuously track exact position (throttled to 1s)
             saveProgress(false);
 
             if (!isScrubbing && video.duration) {
@@ -3119,7 +3289,6 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             try { window.parent.postMessage({ type: 'complete' }, '*'); } catch(e) {}
         });
 
-        // Lifecycle save progress flushes
         window.addEventListener('beforeunload', () => saveProgress(true));
         window.addEventListener('pagehide', () => saveProgress(true));
         document.addEventListener('visibilitychange', () => {
@@ -3139,54 +3308,89 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             progThumb.style.left = pct + '%%';
         }
 
-        // Seeking & Scrubbing Gestures
+        // Seeking & Scrubbing Gestures - High Precision Mobile & Desktop
         function getScrubPos(e) {
             const rect = progWrap.getBoundingClientRect();
-            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            if (!rect.width) return 0;
+            let clientX = e.clientX;
+            if (e.touches && e.touches.length > 0) {
+                clientX = e.touches[0].clientX;
+            } else if (e.changedTouches && e.changedTouches.length > 0) {
+                clientX = e.changedTouches[0].clientX;
+            }
+            if (typeof clientX !== 'number' || isNaN(clientX)) return 0;
             const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
             return x / rect.width;
         }
 
         function onScrubStart(e) {
+            if (e.button && e.button !== 0) return;
+            if (e.cancelable) e.preventDefault();
+            e.stopPropagation();
+
+            if (pauseTimeout) {
+                clearTimeout(pauseTimeout);
+                pauseTimeout = null;
+            }
+
             isScrubbing = true;
             progWrap.classList.add('scrubbing');
+
             const pos = getScrubPos(e);
             updateTimelineUI(pos * 100);
-            hoverTime.textContent = formatTime(pos * (video.duration || 0));
-            hoverTime.style.left = (pos * 100) + '%%';
+            if (video.duration) {
+                hoverTime.textContent = formatTime(pos * video.duration);
+                hoverTime.style.left = (pos * 100) + '%%';
+            }
+
+            window.addEventListener('pointermove', onScrubMove, { passive: false });
+            window.addEventListener('pointerup', onScrubEnd, { passive: false });
+            window.addEventListener('pointercancel', onScrubEnd, { passive: false });
+            window.addEventListener('touchmove', onScrubMove, { passive: false });
+            window.addEventListener('touchend', onScrubEnd, { passive: false });
             window.addEventListener('mousemove', onScrubMove);
-            window.addEventListener('touchmove', onScrubMove);
             window.addEventListener('mouseup', onScrubEnd);
-            window.addEventListener('touchend', onScrubEnd);
         }
 
         function onScrubMove(e) {
             if (!isScrubbing) return;
+            if (e.cancelable) e.preventDefault();
             const pos = getScrubPos(e);
-            requestAnimationFrame(() => {
+            if (scrubRaf) cancelAnimationFrame(scrubRaf);
+            scrubRaf = requestAnimationFrame(() => {
                 updateTimelineUI(pos * 100);
-                hoverTime.textContent = formatTime(pos * (video.duration || 0));
-                hoverTime.style.left = (pos * 100) + '%%';
+                if (video.duration) {
+                    hoverTime.textContent = formatTime(pos * video.duration);
+                    hoverTime.style.left = (pos * 100) + '%%';
+                }
             });
         }
 
         function onScrubEnd(e) {
             if (!isScrubbing) return;
+            if (e.cancelable) e.preventDefault();
             isScrubbing = false;
             progWrap.classList.remove('scrubbing');
+            if (scrubRaf) { cancelAnimationFrame(scrubRaf); scrubRaf = null; }
+
             const pos = getScrubPos(e);
-            if (video.duration) {
+            if (video.duration && isFinite(video.duration)) {
                 video.currentTime = pos * video.duration;
                 saveProgress(true);
             }
-            window.removeEventListener('mousemove', onScrubMove);
+
+            window.removeEventListener('pointermove', onScrubMove);
+            window.removeEventListener('pointerup', onScrubEnd);
+            window.removeEventListener('pointercancel', onScrubEnd);
             window.removeEventListener('touchmove', onScrubMove);
-            window.removeEventListener('mouseup', onScrubEnd);
             window.removeEventListener('touchend', onScrubEnd);
+            window.removeEventListener('mousemove', onScrubMove);
+            window.removeEventListener('mouseup', onScrubEnd);
         }
 
-        progWrap.addEventListener('mousedown', onScrubStart);
+        progWrap.addEventListener('pointerdown', onScrubStart, { passive: false });
         progWrap.addEventListener('touchstart', onScrubStart, { passive: false });
+        progWrap.addEventListener('mousedown', onScrubStart);
         progWrap.addEventListener('mousemove', (e) => {
             if (isScrubbing) return;
             const pos = getScrubPos(e);
@@ -3271,7 +3475,10 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             }
         }
 
-        btnFs.addEventListener('click', toggleFullscreen);
+        btnFs.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleFullscreen();
+        });
         document.addEventListener('fullscreenchange', onFullscreenChange);
         document.addEventListener('webkitfullscreenchange', onFullscreenChange);
         document.addEventListener('mozfullscreenchange', onFullscreenChange);
@@ -3294,7 +3501,8 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             }
         }
         container.addEventListener('mousemove', resetHideControlsTimer);
-        container.addEventListener('touchstart', resetHideControlsTimer);
+        container.addEventListener('pointermove', resetHideControlsTimer);
+        container.addEventListener('touchstart', resetHideControlsTimer, { passive: true });
 
         // Settings Popover Controller
         const menuMain = document.getElementById('yume-menu-main');
@@ -3337,6 +3545,10 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
         document.getElementById('yume-back-speed').addEventListener('click', () => showMenu('main'));
         document.getElementById('yume-back-boost').addEventListener('click', () => showMenu('main'));
 
+        document.addEventListener('pointerdown', (e) => {
+            if (!settingsPopover.contains(e.target) && !e.target.closest('#yume-btn-settings')) settingsPopover.classList.add('hidden');
+            if (!volWrapBox.contains(e.target)) volWrapBox.classList.remove('active');
+        });
         document.addEventListener('click', (e) => {
             if (!settingsPopover.contains(e.target) && !e.target.closest('#yume-btn-settings')) settingsPopover.classList.add('hidden');
             if (!volWrapBox.contains(e.target)) volWrapBox.classList.remove('active');
@@ -3390,7 +3602,6 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
             let selectedIdx = hls.audioTrack >= 0 ? hls.audioTrack : 0;
             const targetLang = (pref || 'sub').toLowerCase();
 
-            // Auto-select preferred language on manifest load if not already manually set
             if (!window.__userSelectedAudio) {
                 for (let i = 0; i < tracks.length; i++) {
                     const tName = (tracks[i].name || '').toLowerCase();
@@ -3583,7 +3794,7 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
 
             const chevron = ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>';
 
-            let currentBoostVal = 100; // Default 100%% (1.0x gain), ranges to 200%% (2.0x gain)
+            let currentBoostVal = 100;
             try {
                 const sb = localStorage.getItem('yume_volume_boost');
                 if (sb) {
@@ -3600,7 +3811,6 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
                 currentBoostVal = Math.max(100, Math.min(200, Math.round(val)));
                 range.value = currentBoostVal;
 
-                // Fill percentage (0%% at 100, 100%% at 200)
                 const pct = currentBoostVal - 100;
                 range.style.setProperty('--boost-pct', pct + '%%');
 
@@ -3648,7 +3858,6 @@ func renderCleanArtplayer(streamURL string, subtitleTracks []SubtitleTrack, pref
                 });
             });
 
-            // Initial apply
             updateBoost(currentBoostVal, false);
         }
         initBoostMenu();
