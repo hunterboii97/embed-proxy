@@ -6,8 +6,9 @@
     <title>YumeZone Player</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.7.3/dist/hls.min.js"></script>
     <style>
         *, *::before, *::after {
             box-sizing: border-box;
@@ -52,8 +53,8 @@
             background: #000000;
             outline: none;
             border: none;
-            transform: translateZ(0);
-            will-change: transform;
+            /* Removed permanent translateZ/will-change to avoid a forced GPU layer
+               that causes tearing/frame-drops on mobile GPUs. */
             -webkit-tap-highlight-color: transparent !important;
         }
         video::-webkit-media-controls,
@@ -1027,6 +1028,7 @@
 
         resumeTime = loadResumeTime();
         let activeCues = [];
+        let lastProgressPost = -1; // timestamp of last throttled parent-frame sync
 
         // Time Formatter (HH:MM:SS or MM:SS)
         function formatTime(seconds) {
@@ -1045,24 +1047,32 @@
         const isHls = streamURL.indexOf('.mp4') === -1 && streamURL.indexOf('video.mp4') === -1;
         if (isHls && Hls.isSupported()) {
             hlsInstance = new Hls({
-                maxBufferLength: 30,
-                maxMaxBufferLength: 60,
-                maxBufferSize: 60 * 1000 * 1000,
-                backBufferLength: 90,
-                maxBufferHole: 0.5,
-                highBufferWatchdogPeriod: 2,
+                maxBufferLength: 15, // Reduced from 30s
+                maxMaxBufferLength: 30, // Reduced from 60s
+                maxBufferSize: 30 * 1000 * 1000, // Reduced from 60MB
+                backBufferLength: 15, // Reduced from 90s
+                maxBufferHole: 0.8, // Increased from 0.5
+                highBufferWatchdogPeriod: 3, // Increased from 2
                 nudgeOffset: 0.1,
                 nudgeMaxRetry: 5,
                 enableWorker: true,
+                lowLatencyMode: true, // Crucial for low-latency HLS
+                capLevelToPlayerSize: true, // Automatically adapt quality to player size
+                startLevel: -1, // Start with ABR (auto)
+                abrEwmaSlowLive: 10.0,
+                abrEwmaFastLive: 5.0,
+                maxStarvationDelay: 4,
+                maxLoadingDelay: 20,
+                fragLoadingMaxRetry: 6,
+                fragLoadingMaxDecryptRetry: 6,
+                fragLoadingRetryDelayMax: 4000,
                 startPosition: resumeTime > 0 ? resumeTime : -1
             });
             hlsInstance.loadSource(streamURL);
             hlsInstance.attachMedia(video);
 
             hlsInstance.on(Hls.Events.MANIFEST_PARSED, function () {
-                if (hlsInstance.levels && hlsInstance.levels.length > 0) {
-                    hlsInstance.currentLevel = hlsInstance.levels.length - 1;
-                }
+                // ABR (currentLevel = -1 / auto) now selects the best quality automatically.
                 initQualityMenu(hlsInstance);
                 initAudioMenu(hlsInstance, preferredLang);
                 applyResume();
@@ -1115,32 +1125,16 @@
             hideBuffering();
         });
 
-        // Play / Pause Logic with smooth micro-delay on pause (feels organic, not abrupt)
-        let pauseTimeout = null;
+        // Play / Pause logic (immediate, no artificial micro-delay so controls feel responsive)
         function togglePlay() {
-            if (pauseTimeout) {
-                clearTimeout(pauseTimeout);
-                pauseTimeout = null;
-                return;
-            }
             if (video.paused || video.ended) {
                 video.play().catch(() => {});
             } else {
-                // Subtle 80ms micro-delay so pause feels smooth & natural
-                pauseTimeout = setTimeout(() => {
-                    pauseTimeout = null;
-                    if (!video.paused && !video.ended) {
-                        video.pause();
-                    }
-                }, 80);
+                video.pause();
             }
         }
 
         video.addEventListener('play', () => {
-            if (pauseTimeout) {
-                clearTimeout(pauseTimeout);
-                pauseTimeout = null;
-            }
             initAudioBoost();
             applyResume();
             document.getElementById('yume-icon-play').style.display = 'none';
@@ -1157,10 +1151,6 @@
         });
 
         video.addEventListener('pause', () => {
-            if (pauseTimeout) {
-                clearTimeout(pauseTimeout);
-                pauseTimeout = null;
-            }
             saveProgress(true);
             hideBuffering();
             document.getElementById('yume-icon-play').style.display = 'block';
@@ -1286,9 +1276,13 @@
             document.getElementById('yume-time-display').textContent = cur + ' / ' + dur;
             document.getElementById('yume-top-time').textContent = cur + ' / ' + dur;
             updateSubtitles();
-            try {
-                window.parent.postMessage({ type: 'time', currentTime: video.currentTime, duration: video.duration || 0 }, '*');
-            } catch(e) {}
+            // Throttle parent-frame progress sync to at most 1/sec to reduce IPC chatter
+            if (!lastProgressPost || video.currentTime - lastProgressPost >= 1) {
+                lastProgressPost = video.currentTime;
+                try {
+                    window.parent.postMessage({ type: 'time', currentTime: video.currentTime, duration: video.duration || 0 }, '*');
+                } catch(e) {}
+            }
         });
 
         video.addEventListener('ended', () => {
@@ -1336,11 +1330,7 @@
             if (e.button && e.button !== 0) return;
             if (e.cancelable) e.preventDefault();
             e.stopPropagation();
-
-            if (pauseTimeout) {
-                clearTimeout(pauseTimeout);
-                pauseTimeout = null;
-            }
+            if (isScrubbing) return; // ignore duplicate pointer/touch/mouse start
 
             isScrubbing = true;
             progWrap.classList.add('scrubbing');
@@ -1665,7 +1655,8 @@
             for (let i = levels.length - 1; i >= 0; i--) options.push({ label: (levels[i].height || 'Quality ' + (i+1)) + 'P', level: i });
             options.forEach((opt, idx) => {
                 const div = document.createElement('div');
-                div.className = 'yume-option' + (idx === 1 ? ' active' : '');
+                // Default active state = Auto (idx 0) since ABR is enabled by default now.
+                div.className = 'yume-option' + (idx === 0 ? ' active' : '');
                 div.textContent = opt.label;
                 div.onclick = () => {
                     hls.currentLevel = opt.level;
@@ -1697,10 +1688,24 @@
             const parts = str.split(':');
             return parts.length === 3 ? parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]) : parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
         }
+        // Optimized subtitle renderer: only update the DOM when the cue actually
+        // changes, to avoid forcing layout/repaint on every 'timeupdate' (no thrashing).
+        let activeCueIndex = -1; // index into activeCues of the currently shown cue
         function updateSubtitles() {
-            if (!activeCues.length) { subContent.innerHTML = ''; return; }
-            const currentCue = activeCues.find(c => video.currentTime >= c.start && video.currentTime <= c.end);
-            subContent.innerHTML = currentCue ? currentCue.text : '';
+            if (!activeCues.length) {
+                if (subContent.textContent !== '') { subContent.textContent = ''; activeCueIndex = -1; }
+                return;
+            }
+            const t = video.currentTime;
+            const idx = activeCues.findIndex(c => t >= c.start && t <= c.end);
+            if (idx === activeCueIndex) return; // unchanged, skip DOM write
+            activeCueIndex = idx;
+            if (idx === -1) {
+                if (subContent.textContent !== '') subContent.textContent = '';
+                return;
+            }
+            const txt = activeCues[idx].text;
+            if (subContent.textContent !== txt) subContent.textContent = txt;
         }
         function initSubtitlesMenu() {
             const list = document.getElementById('yume-subtitles-list');
@@ -1713,7 +1718,8 @@
             offDiv.textContent = 'Off';
             offDiv.onclick = () => {
                 activeCues = [];
-                subContent.innerHTML = '';
+                activeCueIndex = -1;
+                subContent.textContent = '';
                 list.querySelectorAll('.yume-option').forEach(el => el.classList.remove('active'));
                 offDiv.classList.add('active');
                 if (ccBtn) ccBtn.classList.remove('active');
@@ -1733,10 +1739,12 @@
                         .then(r => r.text())
                         .then(vtt => {
                             activeCues = parseVTT(vtt);
+                            activeCueIndex = -1;
                             if (ccBtn) ccBtn.classList.add('active');
                         })
                         .catch(() => {
                             activeCues = [];
+                            activeCueIndex = -1;
                             if (ccBtn) ccBtn.classList.remove('active');
                         });
                     list.querySelectorAll('.yume-option').forEach(el => el.classList.remove('active'));
@@ -1760,7 +1768,8 @@
                     ccBtn.onclick = () => {
                         if (activeCues.length > 0) {
                             activeCues = [];
-                            subContent.innerHTML = '';
+                            activeCueIndex = -1;
+                            subContent.textContent = '';
                             ccBtn.classList.remove('active');
                             list.querySelectorAll('.yume-option').forEach(el => el.classList.remove('active'));
                             offDiv.classList.add('active');
