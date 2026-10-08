@@ -44,7 +44,10 @@ const docsHandler = async (req, reply) => {
   return renderDocs(baseURL);
 };
 
-app.get('/', docsHandler);
+// Redirect / to /docs
+app.get('/', async (req, reply) => {
+  return reply.redirect('/docs');
+});
 app.get('/docs', docsHandler);
 app.get('/api', docsHandler);
 
@@ -85,7 +88,7 @@ if (require.main === module) {
   (async () => {
     try {
       const address = await app.listen({ port: PORT, host: '0.0.0.0' });
-      console.log(`🚀 YumeZone Ultra Stream & Clean Embed Proxy running at: ${address}`);
+      console.log(`🚀 KaidoAPI running at: ${address}`);
     } catch (err) {
       console.error('Failed to start server:', err);
       process.exit(1);

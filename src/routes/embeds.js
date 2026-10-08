@@ -60,16 +60,18 @@ async function registerEmbedRoutes(fastify) {
     }
   }
 
-  // /embed/zoko/mal/:mal_id/:ep/:lang
-  fastify.get('/embed/zoko/mal/:mal_id/:ep/:lang', async (req, reply) => {
+  // /embed/naoka/mal/:mal_id/:ep/:lang & legacy /embed/zoko/mal/:mal_id/:ep/:lang
+  const handleZokoMal = async (req, reply) => {
     const malId = parseInt(req.params.mal_id, 10);
     const ep = parseInt(req.params.ep, 10) || 1;
     const lang = req.params.lang || 'sub';
     return handleZoko(req, reply, malId, ep, lang, `zoko_mal_${malId}_${ep}_${lang}`);
-  });
+  };
+  fastify.get('/embed/naoka/mal/:mal_id/:ep/:lang', handleZokoMal);
+  fastify.get('/embed/zoko/mal/:mal_id/:ep/:lang', handleZokoMal);
 
-  // /embed/zoko/ani/:anilist_id/:ep/:lang
-  fastify.get('/embed/zoko/ani/:anilist_id/:ep/:lang', async (req, reply) => {
+  // /embed/naoka/ani/:anilist_id/:ep/:lang & legacy /embed/zoko/ani/:anilist_id/:ep/:lang
+  const handleZokoAni = async (req, reply) => {
     const aniId = parseInt(req.params.anilist_id, 10);
     const ep = parseInt(req.params.ep, 10) || 1;
     const lang = req.params.lang || 'sub';
@@ -79,18 +81,16 @@ async function registerEmbedRoutes(fastify) {
       return reply.code(404).send(renderCustomProxy404(req.url, `Could not resolve MAL ID for AniList ID: ${aniId}`));
     }
     return handleZoko(req, reply, malId, ep, lang, `zoko_ani_${aniId}_${ep}_${lang}`);
-  });
+  };
+  fastify.get('/embed/naoka/ani/:anilist_id/:ep/:lang', handleZokoAni);
+  fastify.get('/embed/zoko/ani/:anilist_id/:ep/:lang', handleZokoAni);
 
-  // /embed/zoko/:mal_id/:ep/:lang
-  fastify.get('/embed/zoko/:mal_id/:ep/:lang', async (req, reply) => {
-    const malId = parseInt(req.params.mal_id, 10);
-    const ep = parseInt(req.params.ep, 10) || 1;
-    const lang = req.params.lang || 'sub';
-    return handleZoko(req, reply, malId, ep, lang, `zoko_mal_${malId}_${ep}_${lang}`);
-  });
+  // /embed/naoka/:mal_id/:ep/:lang & legacy /embed/zoko/:mal_id/:ep/:lang
+  fastify.get('/embed/naoka/:mal_id/:ep/:lang', handleZokoMal);
+  fastify.get('/embed/zoko/:mal_id/:ep/:lang', handleZokoMal);
 
-  // /player/zoko?mal=&ani=&ep=&lang=
-  fastify.get('/player/zoko', async (req, reply) => {
+  // /player/naoka and /player/zoko?mal=&ani=&ep=&lang=
+  const handleZokoPlayer = async (req, reply) => {
     let malId = parseInt(req.query.mal, 10) || 0;
     const aniId = parseInt(req.query.ani, 10) || 0;
     const ep = parseInt(req.query.ep, 10) || 1;
@@ -104,7 +104,9 @@ async function registerEmbedRoutes(fastify) {
       return reply.code(400).send(renderCustomProxy404(req.url, 'Missing or invalid mal ID'));
     }
     return handleZoko(req, reply, malId, ep, lang, `zoko_player_${malId}_${ep}_${lang}`);
-  });
+  };
+  fastify.get('/player/naoka', handleZokoPlayer);
+  fastify.get('/player/zoko', handleZokoPlayer);
 
   // --- ANIMESALT EMBEDS ---
   async function handleSalt(req, reply, slug, season, ep, hash, lang, episodeKey) {
@@ -126,8 +128,8 @@ async function registerEmbedRoutes(fastify) {
     }
   }
 
-  // /embed/animesalt/:spec (e.g. dan-da-dan-1x1?lang=hin)
-  fastify.get('/embed/animesalt/:spec', async (req, reply) => {
+  // /embed/haiku/:spec & legacy /embed/animesalt/:spec (e.g. dan-da-dan-1x1?lang=hin)
+  const handleSaltSpec = async (req, reply) => {
     const spec = req.params.spec;
     const lang = req.query.lang || 'hin';
 
@@ -143,10 +145,12 @@ async function registerEmbedRoutes(fastify) {
     const ep = parseInt(match[3], 10);
 
     return handleSalt(req, reply, slug, season, ep, '', lang, `salt_${slug}_${season}x${ep}_${lang}`);
-  });
+  };
+  fastify.get('/embed/haiku/:spec', handleSaltSpec);
+  fastify.get('/embed/animesalt/:spec', handleSaltSpec);
 
-  // /embed/animesalt/ani/:anilist_id/:ep/:lang
-  fastify.get('/embed/animesalt/ani/:anilist_id/:ep/:lang', async (req, reply) => {
+  // /embed/haiku/ani/:anilist_id/:ep/:lang & legacy /embed/animesalt/ani/...
+  const handleSaltAni = async (req, reply) => {
     const aniId = parseInt(req.params.anilist_id, 10);
     const ep = parseInt(req.params.ep, 10) || 1;
     const lang = req.params.lang || 'hin';
@@ -158,10 +162,12 @@ async function registerEmbedRoutes(fastify) {
       applyEmbedHeaders(req, reply);
       return reply.code(404).send(renderCustomProxy404(req.url, err.message));
     }
-  });
+  };
+  fastify.get('/embed/haiku/ani/:anilist_id/:ep/:lang', handleSaltAni);
+  fastify.get('/embed/animesalt/ani/:anilist_id/:ep/:lang', handleSaltAni);
 
-  // /embed/animesalt/mal/:mal_id/:ep/:lang
-  fastify.get('/embed/animesalt/mal/:mal_id/:ep/:lang', async (req, reply) => {
+  // /embed/haiku/mal/:mal_id/:ep/:lang & legacy /embed/animesalt/mal/...
+  const handleSaltMal = async (req, reply) => {
     const malId = parseInt(req.params.mal_id, 10);
     const ep = parseInt(req.params.ep, 10) || 1;
     const lang = req.params.lang || 'hin';
@@ -173,19 +179,23 @@ async function registerEmbedRoutes(fastify) {
       applyEmbedHeaders(req, reply);
       return reply.code(404).send(renderCustomProxy404(req.url, err.message));
     }
-  });
+  };
+  fastify.get('/embed/haiku/mal/:mal_id/:ep/:lang', handleSaltMal);
+  fastify.get('/embed/animesalt/mal/:mal_id/:ep/:lang', handleSaltMal);
 
-  // /embed/as-cdn/:hash and /player/as-cdn/:hash
+  // /embed/haiku-cdn/:hash, /embed/as-cdn/:hash and player equivalents
   const handleAsCdnHash = async (req, reply) => {
     const hash = req.params.hash;
     const lang = req.query.lang || 'hin';
     return handleSalt(req, reply, '', 1, 1, hash, lang, `salt_hash_${hash}_${lang}`);
   };
+  fastify.get('/embed/haiku-cdn/:hash', handleAsCdnHash);
+  fastify.get('/player/haiku-cdn/:hash', handleAsCdnHash);
   fastify.get('/embed/as-cdn/:hash', handleAsCdnHash);
   fastify.get('/player/as-cdn/:hash', handleAsCdnHash);
 
-  // /player/salt?slug=&ep=&lang=
-  fastify.get('/player/salt', async (req, reply) => {
+  // /player/haiku, /player/salt?slug=&ep=&lang=
+  const handleSaltPlayer = async (req, reply) => {
     const slug = req.query.slug || '';
     const season = parseInt(req.query.season || req.query.s, 10) || 1;
     const ep = parseInt(req.query.ep, 10) || 1;
@@ -198,9 +208,11 @@ async function registerEmbedRoutes(fastify) {
     }
 
     return handleSalt(req, reply, slug, season, ep, hash, lang, `salt_player_${slug || hash}_${ep}_${lang}`);
-  });
+  };
+  fastify.get('/player/haiku', handleSaltPlayer);
+  fastify.get('/player/salt', handleSaltPlayer);
 
-  // --- MEGAPLAY EMBEDS ---
+  // --- KIRA EMBEDS (formerly MegaPlay) ---
   async function handleMegaplay(req, reply, targetPath, lang, episodeKey) {
     applyEmbedHeaders(req, reply);
     try {
@@ -216,31 +228,52 @@ async function registerEmbedRoutes(fastify) {
       const html = renderCleanArtplayer(proxiedM3U8, proxiedTracks, lang, episodeKey);
       return reply.send(html);
     } catch (err) {
-      return reply.code(404).send(renderCustomProxy404(req.url, `MegaPlay stream error: ${err.message}`));
+      return reply.code(404).send(renderCustomProxy404(req.url, `Kira stream error: ${err.message}`));
     }
   }
 
-  // /embed/megaplay/mal/:mal_id/:ep/:lang
-  fastify.get('/embed/megaplay/mal/:mal_id/:ep/:lang', async (req, reply) => {
+  // /embed/kira/mal/:mal_id/:ep/:lang & legacy /embed/megaplay/mal/...
+  const handleMegaMal = async (req, reply) => {
     const malId = parseInt(req.params.mal_id, 10);
     const ep = parseInt(req.params.ep, 10) || 1;
     const lang = req.params.lang || 'sub';
     return handleMegaplay(req, reply, `mal/${malId}/${ep}/${lang}`, lang, `mega_mal_${malId}_${ep}_${lang}`);
-  });
+  };
+  fastify.get('/embed/kira/mal/:mal_id/:ep/:lang', handleMegaMal);
+  fastify.get('/embed/megaplay/mal/:mal_id/:ep/:lang', handleMegaMal);
 
-  // /embed/megaplay/ani/:anilist_id/:ep/:lang
-  fastify.get('/embed/megaplay/ani/:anilist_id/:ep/:lang', async (req, reply) => {
+  // /embed/kira/ani/:anilist_id/:ep/:lang & legacy /embed/megaplay/ani/...
+  const handleMegaAni = async (req, reply) => {
     const aniId = parseInt(req.params.anilist_id, 10);
     const ep = parseInt(req.params.ep, 10) || 1;
     const lang = req.params.lang || 'sub';
     return handleMegaplay(req, reply, `ani/${aniId}/${ep}/${lang}`, lang, `mega_ani_${aniId}_${ep}_${lang}`);
-  });
+  };
+  fastify.get('/embed/kira/ani/:anilist_id/:ep/:lang', handleMegaAni);
+  fastify.get('/embed/megaplay/ani/:anilist_id/:ep/:lang', handleMegaAni);
 
-  // /embed/megaplay/s-2/:id/:lang
-  fastify.get('/embed/megaplay/s-2/:id/:lang', async (req, reply) => {
+  // /embed/kira/s-2/:id/:lang & legacy /embed/megaplay/s-2/...
+  const handleMegaS2 = async (req, reply) => {
     const id = req.params.id;
     const lang = req.params.lang || 'sub';
     return handleMegaplay(req, reply, `s-2/${id}/${lang}`, lang, `mega_s2_${id}_${lang}`);
+  };
+  fastify.get('/embed/kira/s-2/:id/:lang', handleMegaS2);
+  fastify.get('/embed/megaplay/s-2/:id/:lang', handleMegaS2);
+
+  // /player/kira?mal=&ani=&ep=&lang=
+  fastify.get('/player/kira', async (req, reply) => {
+    const malId = parseInt(req.query.mal, 10) || 0;
+    const aniId = parseInt(req.query.ani, 10) || 0;
+    const ep = parseInt(req.query.ep, 10) || 1;
+    const lang = req.query.lang || 'sub';
+    if (malId > 0) {
+      return handleMegaplay(req, reply, `mal/${malId}/${ep}/${lang}`, lang, `mega_player_mal_${malId}_${ep}_${lang}`);
+    } else if (aniId > 0) {
+      return handleMegaplay(req, reply, `ani/${aniId}/${ep}/${lang}`, lang, `mega_player_ani_${aniId}_${ep}_${lang}`);
+    }
+    applyEmbedHeaders(req, reply);
+    return reply.code(400).send(renderCustomProxy404(req.url, 'Missing mal or ani query parameter'));
   });
 }
 

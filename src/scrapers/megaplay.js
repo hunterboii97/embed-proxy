@@ -8,7 +8,7 @@ const dataIdRegex = /data-id\s*=\s*["']([^"']+)["']/;
 
 function normalizeMegaplayPath(rawPath) {
   let clean = rawPath.replace(/^\/+/, '');
-  clean = clean.replace(/^(embed\/megaplay\/|embed\/|stream\/)/, '');
+  clean = clean.replace(/^(embed\/kira\/|embed\/megaplay\/|embed\/|stream\/)/, '');
   return clean;
 }
 

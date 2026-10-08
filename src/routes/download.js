@@ -21,7 +21,7 @@ function buildDownloadFilename(title, ep, quality, lang, ext = 'mp4') {
   const langUpper = (lang || 'SUB').toUpperCase();
   const epPad = String(ep).padStart(2, '0');
 
-  return `[YumeZone]_${cleanTitle}_EP${epPad}_${langUpper}_${q}.${ext}`;
+  return `[KaidoAPI]_${cleanTitle}_EP${epPad}_${langUpper}_${q}.${ext}`;
 }
 
 async function streamM3U8AsMP4(reply, variantM3U8URL, referer, filename) {
@@ -189,28 +189,28 @@ async function registerDownloadRoutes(fastify) {
     }
 
     if (!server) {
-      server = (slug || hash) ? 'animesalt' : 'zoko';
+      server = (slug || hash) ? 'haiku' : 'naoka';
     }
 
     let streamURL = '';
     let referer = '';
 
-    if (server === 'zoko') {
+    if (server === 'naoka' || server === 'zoko') {
       let resolvedMal = malId;
       if (!resolvedMal && aniId > 0) {
         resolvedMal = await resolveMalId(aniId);
       }
       if (!resolvedMal) {
-        return reply.code(400).send({ error: 'Missing or invalid mal or ani parameter for Zoko' });
+        return reply.code(400).send({ error: 'Missing or invalid mal or ani parameter for Naoka' });
       }
       try {
         const data = await extractZokoHLS(resolvedMal, ep, lang);
         streamURL = data.streamFile;
         referer = 'https://zokoanime.video/';
       } catch (err) {
-        return reply.code(404).send({ error: `Zoko extraction error: ${err.message}` });
+        return reply.code(404).send({ error: `Naoka extraction error: ${err.message}` });
       }
-    } else if (server === 'megaplay') {
+    } else if (server === 'kira' || server === 'megaplay') {
       let targetPath = '';
       if (q.s2) {
         targetPath = `s-2/${q.s2}/${lang}`;
@@ -219,16 +219,16 @@ async function registerDownloadRoutes(fastify) {
       } else if (aniId > 0) {
         targetPath = `ani/${aniId}/${ep}/${lang}`;
       } else {
-        return reply.code(400).send({ error: 'Missing s2, mal, or ani parameter for MegaPlay' });
+        return reply.code(400).send({ error: 'Missing s2, mal, or ani parameter for Kira' });
       }
       try {
         const data = await extractMegaplayHLSWithFallback(targetPath);
         streamURL = data.streamFile;
         referer = 'https://anikoto.cz/';
       } catch (err) {
-        return reply.code(404).send({ error: `MegaPlay extraction error: ${err.message}` });
+        return reply.code(404).send({ error: `Kira extraction error: ${err.message}` });
       }
-    } else if (server === 'animesalt' || server === 'salt') {
+    } else if (server === 'haiku' || server === 'animesalt' || server === 'salt') {
       let resolvedSlug = slug;
       if (!resolvedSlug && !hash && (aniId > 0 || malId > 0)) {
         try {
@@ -241,11 +241,11 @@ async function registerDownloadRoutes(fastify) {
         const data = await extractAnimeSaltStream(resolvedSlug, season, ep, hash, lang);
         const filename = buildDownloadFilename(customTitle || data.resolvedSlug || 'Anime', ep, quality, lang, 'mp4');
 
-        // AnimeSalt returns a proxied URL like /p/:token/video.mp4
+        // Haiku returns a proxied URL like /p/:token/video.mp4
         reply.header('Location', `${data.proxiedURL}?dl=1&filename=${encodeURIComponent(filename)}`);
         return reply.code(302).send();
       } catch (err) {
-        return reply.code(404).send({ error: `AnimeSalt extraction error: ${err.message}` });
+        return reply.code(404).send({ error: `Haiku extraction error: ${err.message}` });
       }
     } else {
       return reply.code(400).send({ error: `Unknown server: ${server}` });

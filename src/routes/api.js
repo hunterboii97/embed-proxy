@@ -12,7 +12,7 @@ async function registerApiRoutes(fastify) {
     const mem = process.memoryUsage();
     return {
       status: 'ok',
-      service: 'yume-proxy-node',
+      service: 'kaido-api',
       uptimeSeconds: Math.floor((Date.now() - startTime) / 1000),
       timestamp: new Date().toISOString(),
       memory: {
@@ -30,8 +30,8 @@ async function registerApiRoutes(fastify) {
     };
   });
 
-  // /api/zoko/source?mal=&ani=&ep=&lang=
-  fastify.get('/api/zoko/source', async (req, reply) => {
+  // /api/naoka/source & /api/zoko/source
+  const handleNaokaSource = async (req, reply) => {
     let malId = parseInt(req.query.mal, 10) || 0;
     const aniId = parseInt(req.query.ani, 10) || 0;
     const ep = parseInt(req.query.ep, 10) || 1;
@@ -47,7 +47,7 @@ async function registerApiRoutes(fastify) {
     try {
       const data = await extractZokoHLS(malId, ep, lang);
       return {
-        server: 'zoko',
+        server: 'naoka',
         malId,
         episode: ep,
         language: lang,
@@ -58,9 +58,11 @@ async function registerApiRoutes(fastify) {
     } catch (err) {
       return reply.code(404).send({ error: err.message });
     }
-  });
+  };
+  fastify.get('/api/naoka/source', handleNaokaSource);
+  fastify.get('/api/zoko/source', handleNaokaSource);
 
-  // /api/animesalt/source?slug=&season=&ep=&hash=&ani=&mal=
+  // /api/haiku/source & /api/animesalt/source
   const handleSaltSource = async (req, reply) => {
     let slug = req.query.slug || '';
     const season = parseInt(req.query.season || req.query.s, 10) || 1;
@@ -85,7 +87,7 @@ async function registerApiRoutes(fastify) {
     try {
       const data = await extractAnimeSaltStream(slug, season, ep, hash, lang);
       return {
-        server: 'animesalt',
+        server: 'haiku',
         slug: data.resolvedSlug || slug,
         season,
         episode: ep,
@@ -98,10 +100,12 @@ async function registerApiRoutes(fastify) {
     }
   };
 
+  fastify.get('/api/haiku/source', handleSaltSource);
   fastify.get('/api/animesalt/source', handleSaltSource);
+  fastify.get('/api/haiku-cdn/:hash', handleSaltSource);
   fastify.get('/api/as-cdn/:hash', handleSaltSource);
 
-  // /stream/getSources and /stream/getSourcesNew
+  // /api/kira/source, /stream/getSources and /stream/getSourcesNew
   const handleMegaplaySources = async (req, reply) => {
     const id = req.query.id || '';
     const malId = parseInt(req.query.mal, 10) || 0;
@@ -123,7 +127,7 @@ async function registerApiRoutes(fastify) {
     try {
       const data = await extractMegaplayHLSWithFallback(targetPath);
       return {
-        server: 'megaplay',
+        server: 'kira',
         path: targetPath,
         streamUrl: data.streamFile,
         subtitles: data.tracks
@@ -133,6 +137,7 @@ async function registerApiRoutes(fastify) {
     }
   };
 
+  fastify.get('/api/kira/source', handleMegaplaySources);
   fastify.get('/stream/getSources', handleMegaplaySources);
   fastify.get('/stream/getSourcesNew', handleMegaplaySources);
 }

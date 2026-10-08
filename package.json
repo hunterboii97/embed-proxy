@@ -1,7 +1,7 @@
 {
-  "name": "embed-proxy",
+  "name": "kaido-api",
   "version": "1.0.0",
-  "description": "High-performance streaming reverse proxy and clean embed player for MegaPlay, AnimeSalt, and Zoko",
+  "description": "Professional anime streaming API with ad-free embed player, multi-server support, and real-time events",
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
