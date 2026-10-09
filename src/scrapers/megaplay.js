@@ -1,10 +1,12 @@
 const { fetchText, fetchJSON } = require('../utils/http');
 const { decryptMegaplayEnc } = require('../utils/crypto');
 const { megaplayStreamCache, stats } = require('../utils/cache');
+const { resolveMalId } = require('./resolver');
 
 const cidRegex = /cid\s*:\s*['"]([^'"]+)['"]/;
 const ciduRegex = /cidu\s*:\s*['"]([^'"]+)['"]/;
 const dataIdRegex = /data-id\s*=\s*["']([^"']+)["']/;
+const aniPathRegex = /^ani\/(\d+)\/(\d+)\/(.+)$/;
 
 function normalizeMegaplayPath(rawPath) {
   let clean = rawPath.replace(/^\/+/, '');
@@ -114,9 +116,34 @@ async function extractMegaplayHLS(targetPath) {
   return result;
 }
 
+async function extractMegaplayHLSAniFirst(path) {
+  const normPath = normalizeMegaplayPath(path);
+  const match = normPath.match(aniPathRegex);
+  if (!match) {
+    return extractMegaplayHLS(path);
+  }
+
+  const [, aniId, ep, lang] = match;
+
+  // AniList shelf stays primary; MAL mirror races in the background so a dead
+  // AniList entry swaps to its MAL id with no extra client-visible latency.
+  const aniFetch = extractMegaplayHLS(path);
+  const malFetch = resolveMalId(parseInt(aniId, 10))
+    .then(malId => (malId > 0 ? extractMegaplayHLS(`mal/${malId}/${ep}/${lang}`) : null))
+    .catch(() => null);
+
+  try {
+    return await aniFetch;
+  } catch (aniErr) {
+    const malResult = await malFetch;
+    if (malResult) return malResult;
+    throw aniErr;
+  }
+}
+
 async function extractMegaplayHLSWithFallback(originalPath) {
   try {
-    return await extractMegaplayHLS(originalPath);
+    return await extractMegaplayHLSAniFirst(originalPath);
   } catch (err) {
     // If language was dub or sub, try fallback language
     const parts = originalPath.split('/');
@@ -124,7 +151,7 @@ async function extractMegaplayHLSWithFallback(originalPath) {
       const currentLang = parts[parts.length - 1];
       const fallbackLang = currentLang === 'dub' ? 'sub' : 'dub';
       const fallbackPath = [...parts.slice(0, -1), fallbackLang].join('/');
-      return await extractMegaplayHLS(fallbackPath);
+      return await extractMegaplayHLSAniFirst(fallbackPath);
     }
     throw err;
   }
