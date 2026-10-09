@@ -1,6 +1,6 @@
 const { fetchText, fetchJSON } = require('../utils/http');
 const { decryptMegaplayEnc } = require('../utils/crypto');
-const { megaplayStreamCache, stats } = require('../utils/cache');
+const { megaplayStreamCache, megaplayGapCache, stats } = require('../utils/cache');
 const { resolveMalId } = require('./resolver');
 
 const cidRegex = /cid\s*:\s*['"]([^'"]+)['"]/;
@@ -125,18 +125,30 @@ async function extractMegaplayHLSAniFirst(path) {
 
   const [, aniId, ep, lang] = match;
 
-  // AniList shelf stays primary; MAL mirror races in the background so a dead
-  // AniList entry swaps to its MAL id with no extra client-visible latency.
-  const aniFetch = extractMegaplayHLS(path);
-  const malFetch = resolveMalId(parseInt(aniId, 10))
-    .then(malId => (malId > 0 ? extractMegaplayHLS(`mal/${malId}/${ep}/${lang}`) : null))
-    .catch(() => null);
+  // Known AniList-shelf gap: go straight to the mapped MAL path, skipping
+  // the dead upstream probe and the resolver round-trip entirely.
+  const knownMalId = megaplayGapCache.get(normPath);
+  if (knownMalId) {
+    try {
+      return await extractMegaplayHLS(`mal/${knownMalId}/${ep}/${lang}`);
+    } catch {
+      megaplayGapCache.delete(normPath);
+    }
+  }
 
+  // AniList shelf stays primary; the MAL resolve + fetch only happens when
+  // AniList actually misses, so healthy paths waste zero upstream work.
   try {
-    return await aniFetch;
+    return await extractMegaplayHLS(path);
   } catch (aniErr) {
-    const malResult = await malFetch;
-    if (malResult) return malResult;
+    const malId = await resolveMalId(parseInt(aniId, 10));
+    if (malId > 0) {
+      try {
+        const result = await extractMegaplayHLS(`mal/${malId}/${ep}/${lang}`);
+        megaplayGapCache.set(normPath, malId);
+        return result;
+      } catch {}
+    }
     throw aniErr;
   }
 }

@@ -59,6 +59,15 @@ const megaplayStreamCache = new LRUCache({
   updateAgeOnGet: true
 });
 
+// 4b. MegaPlay AniList-shelf Gap Memo (2 Hours TTL)
+// When ani/{id}/{ep}/{lang} misses upstream, remembers the working mal/{idMal}
+// route so repeat requests skip the dead probe + resolver round-trip entirely.
+const megaplayGapCache = new LRUCache({
+  max: 5000,
+  ttl: 2 * 60 * 60 * 1000,
+  updateAgeOnGet: true
+});
+
 // 5. Anime Title & MAL/AniList Mapping Cache (24 Hours TTL)
 const animeTitleCache = new LRUCache({
   max: 5000,
@@ -82,5 +91,6 @@ module.exports = {
   animeSaltSlugCache,
   megaplayStreamCache,
   animeTitleCache,
-  malIdCache
+  malIdCache,
+  megaplayGapCache
 };
