@@ -81,6 +81,7 @@ async function fetchStream(url, options = {}) {
 module.exports = {
   globalAgent,
   DEFAULT_UA,
+  request,
   fetchText,
   fetchJSON,
   fetchStream

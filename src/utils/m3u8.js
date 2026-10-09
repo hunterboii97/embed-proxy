@@ -1,14 +1,66 @@
 const { encryptToken } = require('./crypto');
-const { fetchText } = require('./http');
+const { fetchText, DEFAULT_UA } = require('./http');
+const { cdnRules } = require('../../config');
 
 const uriRegex = /URI="([^"]+)"/g;
 
 function resolveAbsoluteURL(rel, base) {
   try {
-    return new URL(rel, base).href;
+    const abs = new URL(rel, base);
+    // Carry over master/media playlist query (e.g. ?token=) when relative URL has none
+    try {
+      const baseURL = new URL(base);
+      if (!abs.search && baseURL.search) {
+        abs.search = baseURL.search;
+      }
+    } catch {}
+    return abs.href;
   } catch {
     return rel;
   }
+}
+
+/**
+ * Build upstream headers using CDN spoofing rules (same as /p proxy).
+ */
+function buildCdnHeaders(targetURL, fallbackReferer = '') {
+  const headers = {
+    'user-agent': DEFAULT_UA,
+    'sec-fetch-dest': 'empty',
+    'sec-fetch-mode': 'cors'
+  };
+
+  let host = '';
+  try {
+    host = new URL(targetURL).hostname.toLowerCase();
+  } catch {}
+
+  let matched = false;
+  for (const rule of cdnRules) {
+    if (host && rule.matches(host)) {
+      headers['referer'] = rule.referer;
+      headers['origin'] = rule.origin;
+      headers['sec-fetch-site'] = rule.secSite || 'cross-site';
+      matched = true;
+      break;
+    }
+  }
+
+  if (!matched) {
+    const ref = fallbackReferer || (host ? `https://${host}/` : '');
+    if (ref) {
+      headers['referer'] = ref;
+      try {
+        const u = new URL(ref);
+        headers['origin'] = `${u.protocol}//${u.host}`;
+      } catch {
+        headers['origin'] = ref.replace(/\/$/, '');
+      }
+    }
+    headers['sec-fetch-site'] = 'cross-site';
+  }
+
+  return headers;
 }
 
 function rewriteM3U8(text, targetURL, referer, clientIP, expires, playlistKey, pkParam, isEncrypted) {
@@ -118,23 +170,17 @@ function parseM3U8Variants(masterText, baseURL) {
 }
 
 async function resolveM3U8Quality(masterM3U8URL, referer, requestedQuality = 'best') {
-  const headers = {};
-  if (referer) {
-    headers['referer'] = referer;
-    try {
-      const u = new URL(referer);
-      headers['origin'] = `${u.protocol}//${u.host}`;
-    } catch {}
-  }
+  const headers = buildCdnHeaders(masterM3U8URL, referer);
+  const effectiveReferer = headers['referer'] || referer || '';
 
   const { body: masterText, statusCode } = await fetchText(masterM3U8URL, { headers });
-  if (statusCode !== 200 || !masterText) {
-    return { selectedURL: masterM3U8URL, referer };
+  if (statusCode !== 200 || !masterText || !masterText.includes('#EXTM3U')) {
+    return { selectedURL: masterM3U8URL, referer: effectiveReferer, statusCode };
   }
 
   const variants = parseM3U8Variants(masterText, masterM3U8URL);
   if (variants.length === 0) {
-    return { selectedURL: masterM3U8URL, referer };
+    return { selectedURL: masterM3U8URL, referer: effectiveReferer, statusCode };
   }
 
   const cleanQ = requestedQuality.toLowerCase().trim();
@@ -145,11 +191,9 @@ async function resolveM3U8Quality(masterM3U8URL, referer, requestedQuality = 'be
   else if (cleanQ.includes('360')) targetHeight = 360;
 
   if (targetHeight > 0) {
-    // Exact match
     const exact = variants.find(v => v.height === targetHeight);
-    if (exact) return { selectedURL: exact.url, referer };
+    if (exact) return { selectedURL: exact.url, referer: effectiveReferer, statusCode };
 
-    // Closest match
     let closest = variants[0];
     let minDiff = Math.abs(variants[0].height - targetHeight);
     for (const v of variants) {
@@ -159,17 +203,17 @@ async function resolveM3U8Quality(masterM3U8URL, referer, requestedQuality = 'be
         closest = v;
       }
     }
-    return { selectedURL: closest.url, referer };
+    return { selectedURL: closest.url, referer: effectiveReferer, statusCode };
   }
 
-  // Best / Default: pick highest resolution or highest bandwidth
   variants.sort((a, b) => (b.height || 0) - (a.height || 0) || (b.bandwidth || 0) - (a.bandwidth || 0));
-  return { selectedURL: variants[0].url, referer };
+  return { selectedURL: variants[0].url, referer: effectiveReferer, statusCode };
 }
 
 module.exports = {
   resolveAbsoluteURL,
   rewriteM3U8,
   parseM3U8Variants,
-  resolveM3U8Quality
+  resolveM3U8Quality,
+  buildCdnHeaders
 };
