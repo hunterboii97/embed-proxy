@@ -8,11 +8,11 @@ const { rewriteM3U8, resolveAbsoluteURL } = require('../utils/m3u8');
 const { m3u8PlaylistCache, tsSegmentCache, abyssChunkCache, segmentIndex, stats } = require('../utils/cache');
 const { globalAgent, DEFAULT_UA } = require('../utils/http');
 
-// Segment engine tunables - ULTRA AGGRESSIVE for maximum speed
-const SEGMENT_BUFFER_CAP = 50 * 1024 * 1024;   // Cache segments up to 50MB (was 16MB)
-const ABYSS_MAX_CACHED_CHUNK = 50 * 1024 * 1024; // Cache abyss chunks up to 50MB (was 12MB)
-const PREFETCH_LOOKAHEAD = 20;                  // Prefetch next 20 segments (was 12)
-const PREFETCH_MAX_INFLIGHT = 32;               // Max 32 concurrent prefetches (was 16)
+// Segment engine tunables
+const SEGMENT_BUFFER_CAP = 16 * 1024 * 1024;   // Cache segments up to 16MB; larger = passthrough stream
+const ABYSS_MAX_CACHED_CHUNK = 12 * 1024 * 1024; // Only cache abyss chunks up to 12MB
+const PREFETCH_LOOKAHEAD = 6;                   // Prefetch next N segments of a playlist
+const PREFETCH_MAX_INFLIGHT = 8;                // Global concurrent prefetch cap
 
 const segFlight = new Map();   // Dedupe concurrent fetches (segments + abyss chunks, prefixed keys)
 const prefetchSet = new Set(); // Prefetch de-dup guard
@@ -88,19 +88,11 @@ function normalizeSegmentBody(buf, upstreamHeaders) {
 }
 
 async function fetchSegmentRaw(targetURL, headers) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000); // 5s timeout for slow CDNs
-
-  try {
-    return await request(targetURL, {
-      method: 'GET',
-      headers,
-      dispatcher: globalAgent,
-      signal: controller.signal
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
+  return request(targetURL, {
+    method: 'GET',
+    headers,
+    dispatcher: globalAgent
+  });
 }
 
 /**
@@ -131,8 +123,10 @@ async function bufferSegment(upstreamRes) {
 }
 
 /**
- * Ultra-fast tee streaming: direct zero-copy streaming to client
- * Buffering simplified for maximum throughput
+ * Streams the upstream segment to the client WHILE filling the buffer pool:
+ * the player receives bytes progressively (fast start / fast seeks) and the
+ * full body lands in tsSegmentCache when done. Oversized bodies (> cap) stop
+ * accumulating and become a plain passthrough stream.
  */
 async function teeSegmentToClient(upstreamRes, tee) {
   const rawRes = tee.rawRes;
@@ -336,13 +330,11 @@ async function handleSegmentRequest(req, reply, targetURL, upstreamHeaders, dlNa
   }
 
   clientInflight++;
-  stats.clientInflight = clientInflight;
   let notifyURL = null;
-  const requestStart = Date.now();
   try {
-    // REMOVED: Singleflight check for ULTRA speed - go directly to fetch
-    // Cache will handle duplicates after first completes
-    const flight = startSegmentFlight(targetURL, targetURL, upstreamHeaders, {
+    const existing = segFlight.get(targetURL);
+    const isCreator = !existing;
+    const flight = existing || startSegmentFlight(targetURL, targetURL, upstreamHeaders, {
       rawRes: reply.raw,
       extraHeaders
     });
@@ -361,8 +353,9 @@ async function handleSegmentRequest(req, reply, targetURL, upstreamHeaders, dlNa
     }
 
     if (result.kind === 'buffered') {
-      // Streamed during fetch, now serve the cached entry
-      if (result.entry) {
+      // Creator already streamed its copy during the fetch; waiters serve the
+      // shared buffer the moment the flight completes.
+      if (!isCreator && result.entry) {
         const entry = result.entry;
         reply.hijack();
         const rawRes = reply.raw;
@@ -381,7 +374,8 @@ async function handleSegmentRequest(req, reply, targetURL, upstreamHeaders, dlNa
 
     // Oversized stream result
     if (result.streamConsumed) {
-      return true; // already proxied by the tee
+      if (isCreator) return true; // already proxied by the tee
+      return passthroughSegment(targetURL, upstreamHeaders, reply, extraHeaders);
     }
     if (!result.claimed) {
       result.claimed = true;
@@ -396,9 +390,6 @@ async function handleSegmentRequest(req, reply, targetURL, upstreamHeaders, dlNa
     return passthroughSegment(targetURL, upstreamHeaders, reply, extraHeaders);
   } finally {
     clientInflight--;
-    stats.clientInflight = clientInflight;
-    const elapsed = Date.now() - requestStart;
-    console.log(`[TIMING] Segment request to ${targetURL.substring(0, 50)}... took ${elapsed}ms`);
     if (notifyURL) notifySegmentServed(notifyURL);
   }
 }
@@ -452,11 +443,9 @@ function extractSegmentURLs(text, baseURL) {
 function prefetchSegment(url, headers) {
   if (!url || !headers) return;
   if (tsSegmentCache.has(url) || prefetchSet.has(url)) return;
-  // REMOVED: if (clientInflight > 0) return; // player traffic has priority
-  // Aggressive prefetch: always prefetch, even during client traffic
+  if (clientInflight > 0) return; // player traffic has priority
   if (prefetchInflight >= PREFETCH_MAX_INFLIGHT) return;
   prefetchInflight++;
-  stats.prefetchInflight = prefetchInflight;
   prefetchSet.add(url);
   stats.segmentPrefetch++;
 
@@ -472,7 +461,6 @@ function prefetchSegment(url, headers) {
     }
   }).catch(() => {}).finally(() => {
     prefetchInflight--;
-    stats.prefetchInflight = prefetchInflight;
     prefetchSet.delete(url);
   });
 }
@@ -631,11 +619,9 @@ function notifyAbyssServed(payload, totalSize, chunkSize, idx) {
   if (nextIdx * chunkSize >= totalSize) return;
   const key = abyssChunkCacheKey(payload, totalSize, chunkSize, nextIdx);
   if (abyssChunkCache.has(key) || segFlight.has(key) || prefetchSet.has(key)) return;
-  // REMOVED: if (clientInflight > 0) return; // player traffic has priority
-  // Aggressive prefetch: always prefetch
+  if (clientInflight > 0) return; // player traffic has priority
   if (prefetchInflight >= PREFETCH_MAX_INFLIGHT) return;
   prefetchInflight++;
-  stats.prefetchInflight = prefetchInflight;
   prefetchSet.add(key);
   stats.segmentPrefetch++;
 
@@ -651,7 +637,6 @@ function notifyAbyssServed(payload, totalSize, chunkSize, idx) {
     }
   }).catch(() => {}).finally(() => {
     prefetchInflight--;
-    stats.prefetchInflight = prefetchInflight;
     prefetchSet.delete(key);
   });
 }
@@ -778,7 +763,6 @@ async function handleAbyssChunked(req, reply, payload) {
   }
 
   clientInflight++;
-  stats.clientInflight = clientInflight;
   let served = false;
   try {
     const existing = segFlight.get(key);
@@ -805,7 +789,6 @@ async function handleAbyssChunked(req, reply, payload) {
     }
   } finally {
     clientInflight--;
-    stats.clientInflight = clientInflight;
     if (served) notifyAbyssServed(payload, totalSize, chunkSize, idx);
     if (!rawRes.destroyed && !rawRes.writableEnded) rawRes.end();
   }
@@ -1088,8 +1071,7 @@ async function registerProxyRoutes(fastify) {
         for (let i = 0; i < segURLs.length; i++) {
           segmentIndex.set(segURLs[i], { playlistKey: m3u8CacheKey, idx: i });
         }
-        // ULTRA: Prefetch ALL segments immediately for instant seeking
-        warmSegments(playlistEntry, segURLs.length);
+        warmSegments(playlistEntry, 2);
       }
 
       reply.header('Content-Type', responseContentType);

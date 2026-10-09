@@ -1,7 +1,6 @@
-// Dynamic thread pool scaling based on CPU cores for better hardware utilization
-const os = require('node:os');
-const cpuCount = os.cpus().length;
-process.env.UV_THREADPOOL_SIZE = String(Math.max(16, cpuCount * 4)); // 4x CPU cores, min 16
+// 16-thread libuv pool: dns.lookup, zlib, crypto offload — must be set before
+// any async work starts. cPanel box has plenty of CPU for this.
+process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '16';
 
 const fs = require('node:fs');
 const path = require('node:path');

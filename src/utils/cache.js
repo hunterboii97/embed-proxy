@@ -9,32 +9,30 @@ const stats = {
   animeSaltMisses: 0,
   segmentHits: 0,
   segmentUpstream: 0,
-  segmentPrefetch: 0,
-  prefetchInflight: 0,
-  clientInflight: 0
+  segmentPrefetch: 0
 };
 
 // 1. M3U8 Master & Variant Playlist Cache (6 Hours TTL, 25K entries)
 const m3u8PlaylistCache = new LRUCache({
-  max: 25000,
-  ttl: 6 * 60 * 60 * 1000,
+  max: 15000,
+  ttl: 2 * 60 * 60 * 1000,
   updateAgeOnGet: true
 });
 
-// 6. Segment Cache (45 min TTL, max 1.5GB total) — content-agnostic: works for
+// 6. Segment Cache (30 min TTL, max 2GB total) — content-agnostic: works for
 // disguised .jpg/.html TS chunks from kira as well as plain .ts from zoko.
 // Entries are { body: Buffer, contentType: string }.
 const tsSegmentCache = new LRUCache({
-  maxSize: 1.5 * 1024 * 1024 * 1024, // 1.5 GB
-  ttl: 45 * 60 * 1000,
+  maxSize: 2 * 1024 * 1024 * 1024, // 2 GB
+  ttl: 30 * 60 * 1000,
   sizeCalculation: (entry) => entry.body.length,
   updateAgeOnGet: true
 });
 
-// 6b. Abyss (haiku) 5MB chunk cache — 1GB, 45min TTL
+// 6b. Abyss (haiku) 5MB chunk cache — 768MB
 const abyssChunkCache = new LRUCache({
-  maxSize: 1 * 1024 * 1024 * 1024, // 1 GB
-  ttl: 45 * 60 * 1000,
+  maxSize: 768 * 1024 * 1024,
+  ttl: 30 * 60 * 1000,
   sizeCalculation: (buf) => buf.length,
   updateAgeOnGet: true
 });
@@ -43,6 +41,20 @@ const abyssChunkCache = new LRUCache({
 // Used to look ahead in the playlist and prefetch upcoming segments.
 const segmentIndex = new LRUCache({
   max: 100000,
+  ttl: 2 * 60 * 60 * 1000,
+  updateAgeOnGet: true
+});
+
+// 2. Zoko Stream Cache (3 Hours TTL)
+const zokoStreamCache = new LRUCache({
+  max: 20000,
+  ttl: 3 * 60 * 60 * 1000,
+  updateAgeOnGet: true
+});
+
+// 3. AnimeSalt Stream & Audio Links Cache (2 Hours TTL)
+const animeSaltStreamCache = new LRUCache({
+  max: 20000,
   ttl: 2 * 60 * 60 * 1000,
   updateAgeOnGet: true
 });
@@ -75,8 +87,8 @@ const animeSaltSlugCache = new LRUCache({
 
 // 4. MegaPlay Stream Cache (4 Hours TTL, 40K entries)
 const megaplayStreamCache = new LRUCache({
-  max: 40000,
-  ttl: 4 * 60 * 60 * 1000,
+  max: 20000,
+  ttl: 2 * 60 * 60 * 1000,
   updateAgeOnGet: true
 });
 
