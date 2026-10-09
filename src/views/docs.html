@@ -1051,6 +1051,34 @@
             </div>
 
             <div class="doc-card">
+                <h3><i class="fas fa-download"></i> Episode Downloads</h3>
+                <p>Direct file download (Save dialog) — HLS remux to MP4 with FFmpeg <code>-c copy</code>, no UI. Default returns a complete regular MP4 (faststart + <code>Content-Length</code>) that plays in any player; add <code>stream=1</code> for instant fMP4 streaming. Use <code>format=ts</code> for raw segment concat.</p>
+                <div class="endpoint-list">
+                    <div class="endpoint-item">
+                        <span class="method">GET</span>
+                        <div class="endpoint-content">
+                            <h4>Download (MP4 / TS)</h4>
+                            <span class="endpoint-url">/api/download?server={kira|naoka|haiku}&mal={mal}&ep={ep}&q={quality}&lang={lang}&format={mp4|ts}&stream={0|1}</span>
+                        </div>
+                    </div>
+                    <div class="endpoint-item">
+                        <span class="method">GET</span>
+                        <div class="endpoint-content">
+                            <h4>Download Alias</h4>
+                            <span class="endpoint-url">/download?server=...&mal=...&ep=...</span>
+                        </div>
+                    </div>
+                </div>
+                <p style="margin-top:12px;opacity:.85;font-size:.9rem;">
+                    ~24 min @ 720p often finishes in under 1–2 min on a good link (bandwidth-bound, not remux-bound).
+                    Default mode shows no progress until the remux completes, then downloads with a real progress bar.
+                    Max 5 concurrent downloads per instance (<code>429</code> when saturated; override with <code>MAX_CONCURRENT_DOWNLOADS</code>).
+                    Prefer <code>stream=1</code> or the Railway/direct origin for long downloads if Cloudflare proxy timeouts cut transfers.
+                    Docker includes FFmpeg; cPanel needs a system FFmpeg install for MP4 (otherwise MP4 requests return 503 — use <code>format=ts</code> for raw segments).
+                </p>
+            </div>
+
+            <div class="doc-card">
                 <h3><i class="fas fa-heart-pulse"></i> System Endpoints</h3>
                 <div class="endpoint-list">
                     <div class="endpoint-item">

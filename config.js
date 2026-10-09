@@ -38,7 +38,8 @@ const cdnRules = [
       h.endsWith('.mewstream.buzz') || h === 'mewstream.buzz' ||
       h.endsWith('.lostproject.club') || h === 'lostproject.club' ||
       h.endsWith('.nekostream.site') || h === 'nekostream.site' ||
-      h.endsWith('.megaplay.buzz') || h === 'megaplay.buzz',
+      h.endsWith('.megaplay.buzz') || h === 'megaplay.buzz' ||
+      h.endsWith('.twilightharbor.space') || h === 'twilightharbor.space',
     referer: 'https://megaplay.buzz/',
     origin: 'https://megaplay.buzz',
     secSite: 'cross-site'
