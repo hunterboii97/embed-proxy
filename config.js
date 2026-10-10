@@ -38,6 +38,7 @@ const cdnRules = [
       h.endsWith('.mewstream.buzz') || h === 'mewstream.buzz' ||
       h.endsWith('.lostproject.club') || h === 'lostproject.club' ||
       h.endsWith('.nekostream.site') || h === 'nekostream.site' ||
+      h.endsWith('.broforgotsave.online') || h === 'broforgotsave.online' ||
       h.endsWith('.megaplay.buzz') || h === 'megaplay.buzz',
     referer: 'https://megaplay.buzz/',
     origin: 'https://megaplay.buzz',

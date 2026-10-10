@@ -13,13 +13,13 @@ function applyEmbedHeaders(req, reply) {
   reply.header('X-Content-Type-Options', 'nosniff');
 }
 
-function proxyTracks(tracks) {
+function proxyTracks(tracks, referer = '') {
   return (tracks || []).map(t => {
     if (!t.file) return t;
     if (t.file.startsWith('/p/')) return t;
     const token = encryptToken({
       url: t.file,
-      ref: '',
+      ref: referer,
       exp: Math.floor(Date.now() / 1000) + 86400
     });
     return {
@@ -51,7 +51,7 @@ async function registerEmbedRoutes(fastify) {
         exp: Math.floor(Date.now() / 1000) + 86400
       });
       const proxiedM3U8 = `/p/${streamToken}/master.m3u8`;
-      const proxiedTracks = proxyTracks(data.tracks);
+      const proxiedTracks = proxyTracks(data.tracks, 'https://zokoanime.video/');
 
       const html = renderCleanArtplayer(proxiedM3U8, proxiedTracks, lang, episodeKey);
       return reply.send(html);
@@ -113,7 +113,7 @@ async function registerEmbedRoutes(fastify) {
     applyEmbedHeaders(req, reply);
     try {
       const data = await extractAnimeSaltStream(slug, season, ep, hash, lang);
-      const proxiedTracks = proxyTracks(data.tracks);
+      const proxiedTracks = proxyTracks(data.tracks, 'https://abyssplayer.com/');
 
       const html = renderCleanArtplayer(
         data.proxiedURL,
@@ -223,7 +223,7 @@ async function registerEmbedRoutes(fastify) {
         exp: Math.floor(Date.now() / 1000) + 86400
       });
       const proxiedM3U8 = `/p/${streamToken}/master.m3u8`;
-      const proxiedTracks = proxyTracks(data.tracks);
+      const proxiedTracks = proxyTracks(data.tracks, 'https://megaplay.buzz/');
 
       const html = renderCleanArtplayer(proxiedM3U8, proxiedTracks, lang, episodeKey);
       return reply.send(html);
