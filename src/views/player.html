@@ -185,18 +185,28 @@
         #yume-player-container.controls-hidden #yume-subtitle-display {
             bottom: 24px;
         }
+        :fullscreen #yume-subtitle-display,
+        :-webkit-full-screen #yume-subtitle-display {
+            bottom: 96px;
+        }
+        #yume-player-container:fullscreen.controls-hidden #yume-subtitle-display,
+        #yume-player-container:-webkit-full-screen.controls-hidden #yume-subtitle-display {
+            bottom: 60px;
+        }
         .yume-sub-text {
             display: inline-block;
             font-family: 'Outfit', sans-serif;
             font-weight: 600;
             font-size: clamp(20px, 3.2vw, 36px);
             color: #ffffff;
-            text-shadow: -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000, 0 3px 6px rgba(0,0,0,0.95);
+            text-shadow: -3px -3px 0 #000, 3px -3px 0 #000, -3px 3px 0 #000, 3px 3px 0 #000, 0 3px 6px rgba(0,0,0,0.95);
             line-height: 1.35;
             padding: 2px 10px;
+            white-space: pre-line;
         }
-        :fullscreen .yume-sub-text {
-            font-size: clamp(24px, 4vw, 48px);
+        :fullscreen .yume-sub-text,
+        :-webkit-full-screen .yume-sub-text {
+            font-size: clamp(28px, 4.5vw, 54px);
         }
 
         /* Flash Effect on Screenshot */
@@ -1670,6 +1680,15 @@
         }
 
         // Subtitles Parser
+        function cleanCueText(text) {
+            return text
+                .replace(/<br\s*\/?>/gi, '\n')
+                .replace(/<[^>]*>/g, '')
+                .replace(/&nbsp;/g, ' ')
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>');
+        }
         function parseVTT(text) {
             const cues = []; const lines = text.split(/\r?\n/);
             for (let i = 0; i < lines.length; i++) {
@@ -1678,8 +1697,8 @@
                     const start = parseVTTTime(parts[0].trim());
                     const end = parseVTTTime(parts[1].trim().split(' ')[0]);
                     let content = ''; i++;
-                    while (i < lines.length && lines[i].trim() !== '') { content += (content ? '<br>' : '') + lines[i].trim(); i++; }
-                    cues.push({ start, end, text: content });
+                    while (i < lines.length && lines[i].trim() !== '') { content += (content ? '\n' : '') + lines[i].trim(); i++; }
+                    cues.push({ start, end, text: cleanCueText(content) });
                 }
             }
             return cues;
