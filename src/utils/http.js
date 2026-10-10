@@ -42,21 +42,21 @@ function cachedLookup(hostname, options, callback) {
   );
 }
 
-// Ultra high-performance Global Agent tuned for 4 vCPU cores
-// - pipelining:15 sends multiple requests per TCP connection (HTTP/1.1)
-// - connections:512 per origin (doubled for 4 cores)
+// Ultra high-performance Global Agent tuned for 4 vCPU cores - ULTRA MODE
+// - pipelining:25 sends multiple requests per TCP connection (HTTP/1.1)
+// - connections:1024 per origin (doubled for 4 cores)
 // - keepAliveTimeout/MaxTimeout: long-lived sockets so CDNs stay hot
 // - cachedLookup: 5min DNS memo (see above)
 const globalAgent = new Agent({
-  keepAliveTimeout: 180000,
-  keepAliveMaxTimeout: 600000,
-  connections: 512,
-  pipelining: 15,
+  keepAliveTimeout: 300000,
+  keepAliveMaxTimeout: 900000,
+  connections: 1024,
+  pipelining: 25,
   maxResponseSize: -1,
-  headersTimeout: 8000,
+  headersTimeout: 5000,
   bodyTimeout: 0,
   connect: {
-    timeout: 4000,
+    timeout: 2000,
     keepAlive: true,
     keepAliveInitialDelay: 0,
     noDelay: true,

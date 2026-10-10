@@ -28,13 +28,10 @@ const app = Fastify({
   connectionTimeout: 0,    // Let OS manage idle connections (LiteSpeed handles this)
   keepAliveTimeout: 65000, // 65s for better CDN keep-alive (was 5s)
   bodyLimit: 1048576,      // 1MB max body (proxy only streams, never buffers large bodies)
-  http2: true,             // Enable HTTP/2 for multiplexing (was false)
+  http2: false,            // Disable HTTP/2 (cPanel/Passenger compatibility issue)
   routerOptions: {
     maxParamLength: 4096
-  },
-  requestIdHeader: 'x-request-id',
-  requestIdLogLabel: 'reqId',
-  disableRequestLogging: true
+  }
 });
 
 // Enable Permissive High-Performance CORS
