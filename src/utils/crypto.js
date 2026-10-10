@@ -13,7 +13,7 @@ const zokoObfKey = Buffer.from('otaku-embed-v1', 'utf8');
  * Key: JSON.stringify(payload), Value: {token, exp}
  */
 const tokenCache = new Map();
-const TOKEN_CACHE_MAX = 5000;
+const TOKEN_CACHE_MAX = 20000;
 let tokenCacheLastPurge = Date.now();
 
 function purgeTokenCache() {
@@ -21,7 +21,7 @@ function purgeTokenCache() {
   if (now - tokenCacheLastPurge < 60000) return;
   tokenCacheLastPurge = now;
   for (const [k, v] of tokenCache) {
-    if (v.cachedAt + 300000 < now) tokenCache.delete(k);
+    if (v.cachedAt + 900000 < now) tokenCache.delete(k);
   }
 }
 

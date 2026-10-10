@@ -1,6 +1,7 @@
 const { fetchText } = require('../utils/http');
 const { deobfuscateZokoPayload } = require('../utils/crypto');
 const { zokoStreamCache, stats } = require('../utils/cache');
+const { singleflight } = require('../utils/singleflight');
 
 const zokoPRegex = /window\.__P\s*=\s*"([^"]+)"/;
 
@@ -12,60 +13,63 @@ async function extractZokoHLS(malID, ep = 1, track = 'sub') {
   }
 
   const cacheKey = `${malID}:${ep}:${track}`;
-  if (zokoStreamCache.has(cacheKey)) {
-    stats.zokoHits++;
-    return zokoStreamCache.get(cacheKey);
-  }
-  stats.zokoMisses++;
 
-  const targetURL = `https://zokoanime.video/stream/mal/${malID}/${ep}/${track}`;
-  const res = await fetchText(targetURL, {
-    headers: {
-      referer: 'https://zokoanime.video/',
-      accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+  return singleflight(`zoko|${cacheKey}`, async () => {
+    if (zokoStreamCache.has(cacheKey)) {
+      stats.zokoHits++;
+      return zokoStreamCache.get(cacheKey);
     }
-  });
+    stats.zokoMisses++;
 
-  if (res.statusCode !== 200 || !res.body) {
-    throw new Error(`Zoko upstream returned status: ${res.statusCode}`);
-  }
+    const targetURL = `https://zokoanime.video/stream/mal/${malID}/${ep}/${track}`;
+    const res = await fetchText(targetURL, {
+      headers: {
+        referer: 'https://zokoanime.video/',
+        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+      }
+    });
 
-  const m = res.body.match(zokoPRegex);
-  if (!m || !m[1]) {
-    throw new Error('Zoko __P payload not found in upstream HTML');
-  }
+    if (res.statusCode !== 200 || !res.body) {
+      throw new Error(`Zoko upstream returned status: ${res.statusCode}`);
+    }
 
-  const data = deobfuscateZokoPayload(m[1]);
-  if (!data || !data.src) {
-    throw new Error('Zoko returned empty stream src');
-  }
+    const m = res.body.match(zokoPRegex);
+    if (!m || !m[1]) {
+      throw new Error('Zoko __P payload not found in upstream HTML');
+    }
 
-  const tracks = [];
-  if (Array.isArray(data.subtitles)) {
-    for (const sub of data.subtitles) {
-      if (sub.src) {
-        let label = sub.label;
-        if (!label) {
-          label = (sub.lang || 'SUB').toUpperCase();
+    const data = deobfuscateZokoPayload(m[1]);
+    if (!data || !data.src) {
+      throw new Error('Zoko returned empty stream src');
+    }
+
+    const tracks = [];
+    if (Array.isArray(data.subtitles)) {
+      for (const sub of data.subtitles) {
+        if (sub.src) {
+          let label = sub.label;
+          if (!label) {
+            label = (sub.lang || 'SUB').toUpperCase();
+          }
+          tracks.push({
+            file: sub.src,
+            label,
+            kind: 'captions',
+            default: Boolean(sub.default)
+          });
         }
-        tracks.push({
-          file: sub.src,
-          label,
-          kind: 'captions',
-          default: Boolean(sub.default)
-        });
       }
     }
-  }
 
-  const result = {
-    streamFile: data.src,
-    tracks,
-    skip: data.skip || null
-  };
+    const result = {
+      streamFile: data.src,
+      tracks,
+      skip: data.skip || null
+    };
 
-  zokoStreamCache.set(cacheKey, result);
-  return result;
+    zokoStreamCache.set(cacheKey, result);
+    return result;
+  });
 }
 
 module.exports = {

@@ -8,7 +8,14 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.7.3/dist/hls.min.js"></script>
+    <script src="/hls.min.js"></script>
+    <script>
+        // Same-origin bundle normally loads instantly; fall back to CDN if the
+        // server-side file is missing (e.g. old deploy).
+        if (!window.Hls) {
+            document.write('<script src="https://cdn.jsdelivr.net/npm/hls.js@1.7.3/dist/hls.min.js"><\/script>');
+        }
+    </script>
     <style>
         *, *::before, *::after {
             box-sizing: border-box;
@@ -1057,20 +1064,21 @@
         const isHls = streamURL.indexOf('.mp4') === -1 && streamURL.indexOf('video.mp4') === -1;
         if (isHls && Hls.isSupported()) {
             hlsInstance = new Hls({
-                maxBufferLength: 15, // Reduced from 30s
-                maxMaxBufferLength: 30, // Reduced from 60s
-                maxBufferSize: 30 * 1000 * 1000, // Reduced from 60MB
-                backBufferLength: 15, // Reduced from 90s
-                maxBufferHole: 0.8, // Increased from 0.5
-                highBufferWatchdogPeriod: 3, // Increased from 2
+                // VOD tuning: build a deep forward buffer so the proxy's
+                // in-memory segment cache + prefetch stay ahead of playback.
+                maxBufferLength: 30,
+                maxMaxBufferLength: 120,
+                maxBufferSize: 80 * 1000 * 1000,
+                backBufferLength: 30,
+                maxBufferHole: 0.8,
+                highBufferWatchdogPeriod: 2,
                 nudgeOffset: 0.1,
                 nudgeMaxRetry: 5,
                 enableWorker: true,
-                lowLatencyMode: true, // Crucial for low-latency HLS
+                lowLatencyMode: false, // VOD: never part-load segments
                 capLevelToPlayerSize: true, // Automatically adapt quality to player size
                 startLevel: -1, // Start with ABR (auto)
-                abrEwmaSlowLive: 10.0,
-                abrEwmaFastLive: 5.0,
+                abrEwmaDefaultEstimate: 800000, // Assume 800kbps until measured → quick start
                 maxStarvationDelay: 4,
                 maxLoadingDelay: 20,
                 fragLoadingMaxRetry: 6,

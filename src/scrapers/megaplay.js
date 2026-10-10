@@ -2,6 +2,7 @@ const { fetchText, fetchJSON } = require('../utils/http');
 const { decryptMegaplayEnc } = require('../utils/crypto');
 const { megaplayStreamCache, megaplayGapCache, stats } = require('../utils/cache');
 const { resolveMalId } = require('./resolver');
+const { singleflight } = require('../utils/singleflight');
 
 const cidRegex = /cid\s*:\s*['"]([^'"]+)['"]/;
 const ciduRegex = /cidu\s*:\s*['"]([^'"]+)['"]/;
@@ -50,14 +51,18 @@ function parseMegaplaySourcesResponse(data) {
 }
 
 async function extractMegaplayHLS(targetPath) {
+  const start = Date.now();
   const normPath = normalizeMegaplayPath(targetPath);
   if (megaplayStreamCache.has(normPath)) {
     stats.megaplayHits++;
+    console.log(`[TIMING] MegaPlay cache HIT took ${Date.now() - start}ms`);
     return megaplayStreamCache.get(normPath);
   }
   stats.megaplayMisses++;
+  console.log(`[TIMING] MegaPlay cache MISS, starting extraction...`);
 
   const upstreamURL = `https://megaplay.buzz/stream/${normPath}`;
+  const htmlStart = Date.now();
   const htmlRes = await fetchText(upstreamURL, {
     headers: {
       referer: 'https://anikoto.cz/',
@@ -65,6 +70,7 @@ async function extractMegaplayHLS(targetPath) {
       'sec-fetch-mode': 'navigate'
     }
   });
+  console.log(`[TIMING] MegaPlay HTML fetch took ${Date.now() - htmlStart}ms`);
 
   if (htmlRes.statusCode !== 200 || !htmlRes.body) {
     throw new Error(`MegaPlay returned status ${htmlRes.statusCode}`);
@@ -83,36 +89,29 @@ async function extractMegaplayHLS(targetPath) {
   const cidu = ciduMatch[1];
   const dataId = dataIdMatch[1];
 
-  // PARALLEL: Race getSourcesNew and getSources simultaneously
+  // ONLY use getSourcesNew (legacy API is too slow: 800ms avg)
   const newApiURL = `https://megaplay.buzz/stream/getSourcesNew?id=${encodeURIComponent(dataId)}&cid=${encodeURIComponent(cid)}&cidu=${encodeURIComponent(cidu)}`;
-  const legacyApiURL = `https://megaplay.buzz/stream/getSources?id=${encodeURIComponent(dataId)}&cid=${encodeURIComponent(cid)}&cidu=${encodeURIComponent(cidu)}`;
 
   const headers = {
     referer: 'https://megaplay.buzz/',
     'x-requested-with': 'XMLHttpRequest'
   };
 
-  const fetchSources = async (url) => {
-    try {
-      const res = await fetchJSON(url, { headers });
-      if (res.statusCode === 200 && res.data) {
-        return parseMegaplaySourcesResponse(res.data);
-      }
-    } catch {}
-    return null;
-  };
+  const apiStart = Date.now();
+  const res = await fetchJSON(newApiURL, { headers });
+  console.log(`[TIMING] MegaPlay API New took ${Date.now() - apiStart}ms`);
 
-  const [resNew, resLegacy] = await Promise.all([
-    fetchSources(newApiURL),
-    fetchSources(legacyApiURL)
-  ]);
+  if (res.statusCode !== 200 || !res.data) {
+    throw new Error(`MegaPlay API returned status ${res.statusCode}`);
+  }
 
-  const result = resNew || resLegacy;
+  const result = parseMegaplaySourcesResponse(res.data);
   if (!result || !result.streamFile) {
-    throw new Error('Both MegaPlay getSourcesNew and getSources failed');
+    throw new Error('MegaPlay API returned no stream file');
   }
 
   megaplayStreamCache.set(normPath, result);
+  console.log(`[TIMING] MegaPlay total extraction took ${Date.now() - start}ms`);
   return result;
 }
 
@@ -154,19 +153,22 @@ async function extractMegaplayHLSAniFirst(path) {
 }
 
 async function extractMegaplayHLSWithFallback(originalPath) {
-  try {
-    return await extractMegaplayHLSAniFirst(originalPath);
-  } catch (err) {
-    // If language was dub or sub, try fallback language
-    const parts = originalPath.split('/');
-    if (parts.length >= 3) {
-      const currentLang = parts[parts.length - 1];
-      const fallbackLang = currentLang === 'dub' ? 'sub' : 'dub';
-      const fallbackPath = [...parts.slice(0, -1), fallbackLang].join('/');
-      return await extractMegaplayHLSAniFirst(fallbackPath);
+  const normPath = normalizeMegaplayPath(originalPath);
+  return singleflight(`kira|${normPath}`, async () => {
+    try {
+      return await extractMegaplayHLSAniFirst(normPath);
+    } catch (err) {
+      // If language was dub or sub, try fallback language
+      const parts = normPath.split('/');
+      if (parts.length >= 3) {
+        const currentLang = parts[parts.length - 1];
+        const fallbackLang = currentLang === 'dub' ? 'sub' : 'dub';
+        const fallbackPath = [...parts.slice(0, -1), fallbackLang].join('/');
+        return await extractMegaplayHLSAniFirst(fallbackPath);
+      }
+      throw err;
     }
-    throw err;
-  }
+  });
 }
 
 module.exports = {

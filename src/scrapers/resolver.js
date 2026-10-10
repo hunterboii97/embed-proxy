@@ -1,12 +1,16 @@
 const { fetchText, fetchJSON } = require('../utils/http');
 const { animeTitleCache, malIdCache } = require('../utils/cache');
+const { singleflight } = require('../utils/singleflight');
 
 async function resolveMalId(idNum) {
   if (!idNum || idNum <= 0) return 0;
   if (malIdCache.has(idNum)) return malIdCache.get(idNum);
 
-  // Parallel race: Tier 1 AniZip API & Tier 2 AniList GraphQL
-  const promises = [];
+  return singleflight(`res|${idNum}`, async () => {
+    if (malIdCache.has(idNum)) return malIdCache.get(idNum);
+
+    // Parallel race: Tier 1 AniZip API & Tier 2 AniList GraphQL
+    const promises = [];
 
   // 1. AniZip API
   promises.push(
@@ -43,6 +47,7 @@ async function resolveMalId(idNum) {
     malIdCache.set(idNum, found);
   }
   return found;
+  });
 }
 
 async function resolveAnimeTitle(anilistID, malID) {
@@ -50,7 +55,10 @@ async function resolveAnimeTitle(anilistID, malID) {
   const cacheKey = `ani:${anilistID}_mal:${malID}`;
   if (animeTitleCache.has(cacheKey)) return animeTitleCache.get(cacheKey);
 
-  const promises = [];
+  return singleflight(`title|${cacheKey}`, async () => {
+    if (animeTitleCache.has(cacheKey)) return animeTitleCache.get(cacheKey);
+
+    const promises = [];
 
   // 1. AniZip API
   if (anilistID > 0 || malID > 0) {
@@ -110,6 +118,7 @@ async function resolveAnimeTitle(anilistID, malID) {
     animeTitleCache.set(cacheKey, found);
   }
   return found;
+  });
 }
 
 module.exports = {

@@ -2,14 +2,39 @@ const { extractZokoHLS } = require('../scrapers/zoko');
 const { extractAnimeSaltStream, resolveAnimeSaltSlug } = require('../scrapers/animesalt');
 const { extractMegaplayHLSWithFallback } = require('../scrapers/megaplay');
 const { resolveMalId } = require('../scrapers/resolver');
-const { stats, m3u8PlaylistCache, zokoStreamCache, animeSaltStreamCache, megaplayStreamCache } = require('../utils/cache');
+const {
+  stats,
+  m3u8PlaylistCache,
+  tsSegmentCache,
+  abyssChunkCache,
+  segmentIndex,
+  zokoStreamCache,
+  animeSaltStreamCache,
+  megaplayStreamCache
+} = require('../utils/cache');
+const { inflightCount } = require('../utils/singleflight');
 
 const startTime = Date.now();
+
+// Event-loop lag sampler (unref'd — never keeps the process alive)
+let eventLoopLagMs = 0;
+let lastLoopSample = Date.now();
+setInterval(() => {
+  const now = Date.now();
+  eventLoopLagMs = Math.max(0, Math.round(now - lastLoopSample - 1000));
+  lastLoopSample = now;
+}, 1000).unref();
 
 async function registerApiRoutes(fastify) {
   // /health
   fastify.get('/health', async (req, reply) => {
     const mem = process.memoryUsage();
+    
+    // Calculate segment cache hit rate
+    const segmentHitRate = stats.segmentHits > 0 
+      ? ((stats.segmentHits / (stats.segmentHits + stats.segmentUpstream)) * 100).toFixed(2) + '%'
+      : '0%';
+    
     return {
       status: 'ok',
       service: 'kaido-api',
@@ -20,12 +45,29 @@ async function registerApiRoutes(fastify) {
         heapUsedMB: Math.round(mem.heapUsed / 1024 / 1024),
         heapTotalMB: Math.round(mem.heapTotal / 1024 / 1024)
       },
+      runtime: {
+        node: process.version,
+        uvThreadpool: parseInt(process.env.UV_THREADPOOL_SIZE || '4', 10),
+        eventLoopLagMs,
+        inflight: inflightCount()
+      },
       cacheStats: stats,
       cacheSizes: {
         m3u8: m3u8PlaylistCache.size,
+        segments: tsSegmentCache.size,
+        segmentMB: Math.round((tsSegmentCache.calculatedSize || 0) / 1024 / 1024),
+        abyssChunks: abyssChunkCache.size,
+        abyssMB: Math.round((abyssChunkCache.calculatedSize || 0) / 1024 / 1024),
+        segmentIndex: segmentIndex.size,
         zoko: zokoStreamCache.size,
         animeSalt: animeSaltStreamCache.size,
         megaplay: megaplayStreamCache.size
+      },
+      performance: {
+        segmentHitRate,
+        segmentPrefetchRate: stats.segmentPrefetch,
+        prefetchInflight: stats.prefetchInflight || 0,
+        clientInflight: stats.clientInflight || 0
       }
     };
   });

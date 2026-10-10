@@ -1,6 +1,7 @@
 const { fetchText } = require('../utils/http');
 const { encryptToken, decryptAbyssDatas } = require('../utils/crypto');
 const { resolveAnimeTitle } = require('./resolver');
+const { singleflight } = require('../utils/singleflight');
 const {
   animeSaltStreamCache,
   animeSaltAudioLinksCache,
@@ -82,6 +83,14 @@ async function resolveAnimeSaltSlug(anilistID, malID, manualSlug) {
 }
 
 async function extractAnimeSaltStream(slug, season = 1, ep = 1, hashDirect = '', requestedLang = 'hin') {
+  requestedLang = (requestedLang || 'hin').toLowerCase().trim();
+  if (season <= 0) season = 1;
+  if (ep <= 0) ep = 1;
+  const flightKey = `salt|${slug}:${season}:${ep}:${hashDirect}:${requestedLang}`;
+  return singleflight(flightKey, () => extractAnimeSaltStreamUncached(slug, season, ep, hashDirect, requestedLang));
+}
+
+async function extractAnimeSaltStreamUncached(slug, season = 1, ep = 1, hashDirect = '', requestedLang = 'hin') {
   requestedLang = (requestedLang || 'hin').toLowerCase().trim();
   if (season <= 0) season = 1;
   if (ep <= 0) ep = 1;
