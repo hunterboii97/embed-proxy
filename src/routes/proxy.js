@@ -330,6 +330,7 @@ async function handleSegmentRequest(req, reply, targetURL, upstreamHeaders, dlNa
   clientInflight++;
   stats.clientInflight = clientInflight;
   let notifyURL = null;
+  const requestStart = Date.now();
   try {
     // REMOVED: Singleflight check for ULTRA speed - go directly to fetch
     // Cache will handle duplicates after first completes
@@ -388,6 +389,8 @@ async function handleSegmentRequest(req, reply, targetURL, upstreamHeaders, dlNa
   } finally {
     clientInflight--;
     stats.clientInflight = clientInflight;
+    const elapsed = Date.now() - requestStart;
+    console.log(`[TIMING] Segment request to ${targetURL.substring(0, 50)}... took ${elapsed}ms`);
     if (notifyURL) notifySegmentServed(notifyURL);
   }
 }
@@ -1077,7 +1080,8 @@ async function registerProxyRoutes(fastify) {
         for (let i = 0; i < segURLs.length; i++) {
           segmentIndex.set(segURLs[i], { playlistKey: m3u8CacheKey, idx: i });
         }
-        warmSegments(playlistEntry, 15);
+        // ULTRA: Prefetch ALL segments immediately for instant seeking
+        warmSegments(playlistEntry, segURLs.length);
       }
 
       reply.header('Content-Type', responseContentType);

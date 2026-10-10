@@ -97,13 +97,21 @@ async function extractMegaplayHLS(targetPath) {
     'x-requested-with': 'XMLHttpRequest'
   };
 
-  const apiStart = Date.now();
-  const res = await fetchJSON(newApiURL, { headers });
-  console.log(`[TIMING] MegaPlay API New took ${Date.now() - apiStart}ms`);
+  const fetchSources = async (url) => {
+    const apiStart = Date.now();
+    try {
+      const res = await fetchJSON(url, { headers });
+      console.log(`[TIMING] MegaPlay API ${url.includes('getSourcesNew') ? 'New' : 'Legacy'} took ${Date.now() - apiStart}ms`);
+      if (res.statusCode === 200 && res.data) {
+        return parseMegaplaySourcesResponse(res.data);
+      }
+    } catch {}
+    return null;
+  };
 
-  // Add 5-second timeout to prevent hanging on slow upstream
+  // Add 2-second timeout for ULTRA speed (was 5s)
   const timeoutPromise = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error('MegaPlay API timeout')), 5000)
+    setTimeout(() => reject(new Error('MegaPlay API timeout')), 2000)
   );
 
   const results = await Promise.allSettled([
