@@ -11,8 +11,8 @@ const { globalAgent, DEFAULT_UA } = require('../utils/http');
 // Segment engine tunables
 const SEGMENT_BUFFER_CAP = 16 * 1024 * 1024;   // Cache segments up to 16MB; larger = passthrough stream
 const ABYSS_MAX_CACHED_CHUNK = 12 * 1024 * 1024; // Only cache abyss chunks up to 12MB
-const PREFETCH_LOOKAHEAD = 6;                   // Prefetch next N segments of a playlist
-const PREFETCH_MAX_INFLIGHT = 8;                // Global concurrent prefetch cap
+const PREFETCH_LOOKAHEAD = 12;                  // Prefetch next 12 segments of a playlist (was 6)
+const PREFETCH_MAX_INFLIGHT = 16;               // Max 16 concurrent prefetches (was 8)
 
 const segFlight = new Map();   // Dedupe concurrent fetches (segments + abyss chunks, prefixed keys)
 const prefetchSet = new Set(); // Prefetch de-dup guard
@@ -330,6 +330,7 @@ async function handleSegmentRequest(req, reply, targetURL, upstreamHeaders, dlNa
   }
 
   clientInflight++;
+  stats.clientInflight = clientInflight;
   let notifyURL = null;
   try {
     const existing = segFlight.get(targetURL);
@@ -390,6 +391,7 @@ async function handleSegmentRequest(req, reply, targetURL, upstreamHeaders, dlNa
     return passthroughSegment(targetURL, upstreamHeaders, reply, extraHeaders);
   } finally {
     clientInflight--;
+    stats.clientInflight = clientInflight;
     if (notifyURL) notifySegmentServed(notifyURL);
   }
 }
@@ -446,6 +448,7 @@ function prefetchSegment(url, headers) {
   if (clientInflight > 0) return; // player traffic has priority
   if (prefetchInflight >= PREFETCH_MAX_INFLIGHT) return;
   prefetchInflight++;
+  stats.prefetchInflight = prefetchInflight;
   prefetchSet.add(url);
   stats.segmentPrefetch++;
 
@@ -461,6 +464,7 @@ function prefetchSegment(url, headers) {
     }
   }).catch(() => {}).finally(() => {
     prefetchInflight--;
+    stats.prefetchInflight = prefetchInflight;
     prefetchSet.delete(url);
   });
 }
@@ -622,6 +626,7 @@ function notifyAbyssServed(payload, totalSize, chunkSize, idx) {
   if (clientInflight > 0) return; // player traffic has priority
   if (prefetchInflight >= PREFETCH_MAX_INFLIGHT) return;
   prefetchInflight++;
+  stats.prefetchInflight = prefetchInflight;
   prefetchSet.add(key);
   stats.segmentPrefetch++;
 
@@ -637,6 +642,7 @@ function notifyAbyssServed(payload, totalSize, chunkSize, idx) {
     }
   }).catch(() => {}).finally(() => {
     prefetchInflight--;
+    stats.prefetchInflight = prefetchInflight;
     prefetchSet.delete(key);
   });
 }
@@ -763,6 +769,7 @@ async function handleAbyssChunked(req, reply, payload) {
   }
 
   clientInflight++;
+  stats.clientInflight = clientInflight;
   let served = false;
   try {
     const existing = segFlight.get(key);
@@ -789,6 +796,7 @@ async function handleAbyssChunked(req, reply, payload) {
     }
   } finally {
     clientInflight--;
+    stats.clientInflight = clientInflight;
     if (served) notifyAbyssServed(payload, totalSize, chunkSize, idx);
     if (!rawRes.destroyed && !rawRes.writableEnded) rawRes.end();
   }
@@ -1071,7 +1079,7 @@ async function registerProxyRoutes(fastify) {
         for (let i = 0; i < segURLs.length; i++) {
           segmentIndex.set(segURLs[i], { playlistKey: m3u8CacheKey, idx: i });
         }
-        warmSegments(playlistEntry, 2);
+        warmSegments(playlistEntry, 8);
       }
 
       reply.header('Content-Type', responseContentType);

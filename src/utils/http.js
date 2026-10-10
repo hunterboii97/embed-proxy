@@ -3,8 +3,8 @@ const { LRUCache } = require('lru-cache');
 const { request, Agent, setGlobalDispatcher } = require('undici');
 
 // DNS cache: undici has NO built-in DNS cache, every new connection re-resolves
-// via getaddrinfo (threadpool + ~20-80ms). Cache lookups for 60s per hostname.
-const dnsCache = new LRUCache({ max: 500, ttl: 60000 });
+// via getaddrinfo (threadpool + ~20-80ms). Cache lookups for 5 minutes per hostname.
+const dnsCache = new LRUCache({ max: 1000, ttl: 300000 });
 const dnsInflight = new Map();
 
 function cachedLookup(hostname, options, callback) {
@@ -42,21 +42,21 @@ function cachedLookup(hostname, options, callback) {
   );
 }
 
-// Ultra high-performance Global Agent
-// - pipelining:10 sends multiple requests per TCP connection (HTTP/1.1)
-// - connections:256 per origin (cPanel has plenty of RAM now)
+// Ultra high-performance Global Agent tuned for 4 vCPU cores
+// - pipelining:15 sends multiple requests per TCP connection (HTTP/1.1)
+// - connections:512 per origin (doubled for 4 cores)
 // - keepAliveTimeout/MaxTimeout: long-lived sockets so CDNs stay hot
-// - cachedLookup: 60s DNS memo (see above)
+// - cachedLookup: 5min DNS memo (see above)
 const globalAgent = new Agent({
-  keepAliveTimeout: 120000,
+  keepAliveTimeout: 180000,
   keepAliveMaxTimeout: 600000,
-  connections: 256,
-  pipelining: 10,
+  connections: 512,
+  pipelining: 15,
   maxResponseSize: -1,
-  headersTimeout: 3000,
+  headersTimeout: 8000,
   bodyTimeout: 0,
   connect: {
-    timeout: 1000,
+    timeout: 4000,
     keepAlive: true,
     keepAliveInitialDelay: 0,
     noDelay: true,

@@ -101,11 +101,20 @@ async function extractMegaplayHLS(targetPath) {
   const res = await fetchJSON(newApiURL, { headers });
   console.log(`[TIMING] MegaPlay API New took ${Date.now() - apiStart}ms`);
 
-  if (res.statusCode !== 200 || !res.data) {
-    throw new Error(`MegaPlay API returned status ${res.statusCode}`);
-  }
+  // Add 5-second timeout to prevent hanging on slow upstream
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('MegaPlay API timeout')), 5000)
+  );
 
-  const result = parseMegaplaySourcesResponse(res.data);
+  const results = await Promise.allSettled([
+    fetchSources(newApiURL),
+    fetchSources(legacyApiURL),
+    timeoutPromise
+  ]);
+
+  // Filter out timeout and return first successful result
+  const validResults = results.filter(r => r.status === 'fulfilled' && r.value?.streamFile);
+  const result = validResults[0]?.value;
   if (!result || !result.streamFile) {
     throw new Error('MegaPlay API returned no stream file');
   }
