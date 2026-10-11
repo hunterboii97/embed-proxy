@@ -3,8 +3,8 @@ const { LRUCache } = require('lru-cache');
 const { request, Agent, setGlobalDispatcher } = require('undici');
 
 // DNS cache: undici has NO built-in DNS cache, every new connection re-resolves
-// via getaddrinfo (threadpool + ~20-80ms). Cache lookups for 10 minutes per hostname.
-const dnsCache = new LRUCache({ max: 5000, ttl: 600000 });
+// via getaddrinfo (threadpool + ~20-80ms). Cache lookups for 5 minutes per hostname.
+const dnsCache = new LRUCache({ max: 1000, ttl: 300000 });
 const dnsInflight = new Map();
 
 function cachedLookup(hostname, options, callback) {
@@ -42,21 +42,22 @@ function cachedLookup(hostname, options, callback) {
   );
 }
 
-// Ultra high-performance Global Agent tuned for 4 vCPU cores - ULTRA MODE
-// - pipelining:30 sends multiple requests per TCP connection (HTTP/1.1)
-// - connections:1024 per origin (doubled for 4 cores)
+// High-performance Global Agent
+// - pipelining:10 batches small requests per TCP connection without the
+//   head-of-line blocking risk that high pipelining adds to multi-MB bodies
+// - connections:256 per origin is more than the CDN bandwidth can ever use
 // - keepAliveTimeout/MaxTimeout: long-lived sockets so CDNs stay hot
-// - cachedLookup: 10min DNS memo (see above)
+// - cachedLookup: 5min DNS memo (see above)
 const globalAgent = new Agent({
-  keepAliveTimeout: 300000,
-  keepAliveMaxTimeout: 900000,
-  connections: 1024,
-  pipelining: 30,
+  keepAliveTimeout: 120000,
+  keepAliveMaxTimeout: 600000,
+  connections: 256,
+  pipelining: 10,
   maxResponseSize: -1,
-  headersTimeout: 3000,
+  headersTimeout: 8000,
   bodyTimeout: 0,
   connect: {
-    timeout: 1000,
+    timeout: 4000,
     keepAlive: true,
     keepAliveInitialDelay: 0,
     noDelay: true,
@@ -78,7 +79,8 @@ async function fetchText(url, options = {}) {
     method: options.method || 'GET',
     headers,
     body: options.body,
-    dispatcher: globalAgent
+    dispatcher: globalAgent,
+    signal: options.signal // Allow AbortSignal for timeout
   });
   const text = await res.body.text();
   return {
@@ -98,7 +100,8 @@ async function fetchJSON(url, options = {}) {
     method: options.method || 'GET',
     headers,
     body: options.body,
-    dispatcher: globalAgent
+    dispatcher: globalAgent,
+    signal: options.signal // Allow AbortSignal for timeout
   });
   const json = await res.body.json();
   return {

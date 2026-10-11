@@ -51,18 +51,14 @@ function parseMegaplaySourcesResponse(data) {
 }
 
 async function extractMegaplayHLS(targetPath) {
-  const start = Date.now();
   const normPath = normalizeMegaplayPath(targetPath);
   if (megaplayStreamCache.has(normPath)) {
     stats.megaplayHits++;
-    console.log(`[TIMING] MegaPlay cache HIT took ${Date.now() - start}ms`);
     return megaplayStreamCache.get(normPath);
   }
   stats.megaplayMisses++;
-  console.log(`[TIMING] MegaPlay cache MISS, starting extraction...`);
 
   const upstreamURL = `https://megaplay.buzz/stream/${normPath}`;
-  const htmlStart = Date.now();
   const htmlRes = await fetchText(upstreamURL, {
     headers: {
       referer: 'https://anikoto.cz/',
@@ -70,7 +66,6 @@ async function extractMegaplayHLS(targetPath) {
       'sec-fetch-mode': 'navigate'
     }
   });
-  console.log(`[TIMING] MegaPlay HTML fetch took ${Date.now() - htmlStart}ms`);
 
   if (htmlRes.statusCode !== 200 || !htmlRes.body) {
     throw new Error(`MegaPlay returned status ${htmlRes.statusCode}`);
@@ -89,7 +84,8 @@ async function extractMegaplayHLS(targetPath) {
   const cidu = ciduMatch[1];
   const dataId = dataIdMatch[1];
 
-  // ONLY use getSourcesNew (legacy API is too slow: 800ms avg)
+  // Race getSourcesNew and the legacy API in parallel — whichever returns a
+  // usable stream first wins; the other is a free fallback when New fails.
   const newApiURL = `https://megaplay.buzz/stream/getSourcesNew?id=${encodeURIComponent(dataId)}&cid=${encodeURIComponent(cid)}&cidu=${encodeURIComponent(cidu)}`;
 
   const headers = {
@@ -97,11 +93,12 @@ async function extractMegaplayHLS(targetPath) {
     'x-requested-with': 'XMLHttpRequest'
   };
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4000); // cap the whole race at 4s
+
   const fetchSources = async (url) => {
-    const apiStart = Date.now();
     try {
-      const res = await fetchJSON(url, { headers });
-      console.log(`[TIMING] MegaPlay API ${url.includes('getSourcesNew') ? 'New' : 'Legacy'} took ${Date.now() - apiStart}ms`);
+      const res = await fetchJSON(url, { headers, signal: controller.signal });
       if (res.statusCode === 200 && res.data) {
         return parseMegaplaySourcesResponse(res.data);
       }
@@ -109,26 +106,27 @@ async function extractMegaplayHLS(targetPath) {
     return null;
   };
 
-  // Add 2-second timeout for ULTRA speed (was 5s)
-  const timeoutPromise = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error('MegaPlay API timeout')), 2000)
-  );
+  let result = null;
+  try {
+    // Prefer New (faster in practice) but accept whichever succeeds first.
+    const [resNew, resLegacy] = await Promise.allSettled([
+      fetchSources(newApiURL),
+      fetchSources(legacyApiURL)
+    ]);
+    if (resNew.status === 'fulfilled' && resNew.value?.streamFile) {
+      result = resNew.value;
+    } else if (resLegacy.status === 'fulfilled' && resLegacy.value?.streamFile) {
+      result = resLegacy.value;
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
 
-  const results = await Promise.allSettled([
-    fetchSources(newApiURL),
-    fetchSources(legacyApiURL),
-    timeoutPromise
-  ]);
-
-  // Filter out timeout and return first successful result
-  const validResults = results.filter(r => r.status === 'fulfilled' && r.value?.streamFile);
-  const result = validResults[0]?.value;
   if (!result || !result.streamFile) {
     throw new Error('MegaPlay API returned no stream file');
   }
 
   megaplayStreamCache.set(normPath, result);
-  console.log(`[TIMING] MegaPlay total extraction took ${Date.now() - start}ms`);
   return result;
 }
 

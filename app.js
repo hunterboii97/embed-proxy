@@ -1,7 +1,8 @@
-// Dynamic thread pool scaling based on CPU cores for better hardware utilization
+// libuv pool for dns.lookup / crypto offload — must be set before any async
+// work starts. os.cpus() on shared cPanel boxes reports host cores, so cap it.
 const os = require('node:os');
 const cpuCount = os.cpus().length;
-process.env.UV_THREADPOOL_SIZE = String(Math.max(16, cpuCount * 4)); // 4x CPU cores, min 16
+process.env.UV_THREADPOOL_SIZE = String(Math.min(32, Math.max(16, cpuCount * 2)));
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -47,11 +48,6 @@ app.register(compression, {
   encodings: ['gzip', 'deflate'],
   threshold: 1024, // Compress responses > 1KB
   compressibleTypes: ['application/vnd.apple.mpegurl', 'text/plain', 'text/html']
-});
-
-// Enable TCP_NODELAY on all sockets for immediate packet transmission
-app.addHook('onRequest', async (req, reply) => {
-  req.raw.socket?.setNoDelay(true);
 });
 
 // Register Sub-routers
@@ -119,34 +115,12 @@ app.listen = function (opt, ...args) {
   return origListen(opt, ...args);
 };
 
-// CDN prewarming: establish connections to common CDNs on startup
-async function prewarmCDNConnections() {
-  const { fetchStream } = require('./src/utils/http');
-  const commonCDNs = [
-    'https://megacloud.club',
-    'https://vidsrc.me',
-    'https://mega.nz',
-    'https://zoro.to',
-    'https://animixplay.to'
-  ];
-
-  console.log('🔥 Prewarming CDN connections...');
-  for (const cdn of commonCDNs) {
-    try {
-      await fetchStream(cdn, { method: 'HEAD' });
-    } catch {}
-  }
-  console.log('✅ CDN connections prewarmed');
-}
-
 // Start Server in standalone mode
 if (require.main === module) {
   (async () => {
     try {
       const address = await app.listen({ port: PORT, host: '0.0.0.0' });
       console.log(`🚀 KaidoAPI running at: ${address}`);
-      // Prewarm CDN connections in background
-      prewarmCDNConnections();
     } catch (err) {
       console.error('Failed to start server:', err);
       process.exit(1);

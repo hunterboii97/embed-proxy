@@ -8,16 +8,74 @@ const { rewriteM3U8, resolveAbsoluteURL } = require('../utils/m3u8');
 const { m3u8PlaylistCache, tsSegmentCache, abyssChunkCache, segmentIndex, stats } = require('../utils/cache');
 const { globalAgent, DEFAULT_UA } = require('../utils/http');
 
-// Segment engine tunables - ULTRA AGGRESSIVE for maximum speed
-const SEGMENT_BUFFER_CAP = 50 * 1024 * 1024;   // Cache segments up to 50MB (was 16MB)
-const ABYSS_MAX_CACHED_CHUNK = 50 * 1024 * 1024; // Cache abyss chunks up to 50MB (was 12MB)
-const PREFETCH_LOOKAHEAD = 20;                  // Prefetch next 20 segments (was 12)
-const PREFETCH_MAX_INFLIGHT = 32;               // Max 32 concurrent prefetches (was 16)
+// Segment engine tunables
+const SEGMENT_BUFFER_CAP = 16 * 1024 * 1024;    // Cache segments up to 16MB; larger = passthrough stream
+const ABYSS_MAX_CACHED_CHUNK = 12 * 1024 * 1024; // Abyss chunks are ~5MB; 12MB covers every real layout
+const PREFETCH_LOOKAHEAD = 15;                  // Prefetch next 15 segments (~2+ min ahead of playhead)
+const PREFETCH_MAX_INFLIGHT = 6;                // Global concurrent prefetch cap (bounded upstream load)
+const BODY_STALL_MS = parseInt(process.env.BODY_STALL_MS || '30000', 10); // Abort upstream bodies that go silent (tunable)
+const PREFETCH_YIELD_POLL_MS = 100;              // Re-check client traffic every 100ms while a prefetch is paused
 
 const segFlight = new Map();   // Dedupe concurrent fetches (segments + abyss chunks, prefixed keys)
 const prefetchSet = new Set(); // Prefetch de-dup guard
 let prefetchInflight = 0;
 let clientInflight = 0;        // Prefetches yield to real client traffic
+
+/**
+ * Wraps an upstream body iterator with an inactivity timeout: if no chunk
+ * arrives for BODY_STALL_MS the body is destroyed so the pending next()
+ * rejects instead of hanging the request forever.
+ */
+function timedIterator(body) {
+  const iterator = body[Symbol.asyncIterator]();
+  let timer = null;
+  const arm = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      try { body.destroy(); } catch {}
+    }, BODY_STALL_MS);
+  };
+  arm();
+  return {
+    [Symbol.asyncIterator]() { return this; },
+    next() {
+      return iterator.next().then(
+        (v) => {
+          if (v.done) clearTimeout(timer); else arm();
+          return v;
+        },
+        (err) => {
+          clearTimeout(timer);
+          throw err;
+        }
+      );
+    },
+    return() {
+      clearTimeout(timer);
+      return iterator.return ? iterator.return() : Promise.resolve({ done: true });
+    },
+    // Used by prefetches that pause mid-stream while clients have priority:
+    // disarm the stall timer during the pause, re-arm it when reading resumes.
+    disarm() {
+      clearTimeout(timer);
+      timer = null;
+    },
+    touch() {
+      arm();
+    }
+  };
+}
+
+async function readBodyText(body) {
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of timedIterator(body)) {
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    chunks.push(buf);
+    total += buf.length;
+  }
+  return Buffer.concat(chunks, total).toString('utf8');
+}
 
 function waitDrain(rawRes) {
   return new Promise((resolve) => {
@@ -96,38 +154,124 @@ async function fetchSegmentRaw(targetURL, headers) {
 }
 
 /**
- * Buffers an upstream segment response up to SEGMENT_BUFFER_CAP bytes.
+ * Buffers an upstream segment response up to SEGMENT_BUFFER_CAP bytes while
+ * fanning the arriving chunks out to every registered waiter (clients that
+ * joined an in-flight prefetch). A waiter joining mid-flight gets the buffered
+ * prefix replayed first so it always receives the COMPLETE segment from byte 0
+ * (a tail-only body would break hls.js TS parsing and trigger error loops).
+ * Prefetch-origin flights pause while real client traffic is in flight.
  * Returns { kind: 'buffered', body } or { kind: 'stream', iterator, chunks }
- * when the payload is too large (the partial chunks are handed to the streamer).
+ * when the payload is too large.
  */
-async function bufferSegment(upstreamRes) {
+async function bufferAndFanout(upstreamRes, flight) {
+  const waiters = flight.waiters;
   const cl = parseInt(upstreamRes.headers['content-length'] || '0', 10);
-  const iterator = upstreamRes.body[Symbol.asyncIterator]();
+  const iterator = timedIterator(upstreamRes.body);
   if (cl > SEGMENT_BUFFER_CAP) {
     return { kind: 'stream', upstreamRes, iterator, chunks: [] };
   }
 
   const chunks = [];
   let total = 0;
-  while (true) {
-    const { done, value } = await iterator.next();
-    if (done) break;
-    const buf = Buffer.isBuffer(value) ? value : Buffer.from(value);
-    chunks.push(buf);
-    total += buf.length;
-    if (total > SEGMENT_BUFFER_CAP) {
-      return { kind: 'stream', upstreamRes, iterator, chunks };
+  try {
+    while (true) {
+      // Bandwidth priority: a prefetch with no client attached pauses while
+      // any client fetch is in flight (clients' own segments stream unthrottled).
+      while (clientInflight > 0 && waiters.length === 0) {
+        iterator.disarm();
+        await new Promise((r) => setTimeout(r, PREFETCH_YIELD_POLL_MS));
+        iterator.touch();
+      }
+
+      const { done, value } = await iterator.next();
+      if (done) break;
+      const buf = Buffer.isBuffer(value) ? value : Buffer.from(value);
+
+      if (!flight.overCap) {
+        chunks.push(buf);
+        total += buf.length;
+        if (total > SEGMENT_BUFFER_CAP) {
+          flight.overCap = true;
+          chunks.length = 0;
+          total = 0;
+          // No client is receiving this uncacheable body and no new waiter
+          // can join now — abort instead of draining a huge payload.
+          if (waiters.length === 0) {
+            try { upstreamRes.body.destroy(); } catch {}
+            return { kind: 'stream', upstreamRes, iterator, chunks: [], streamConsumed: true };
+          }
+        }
+      }
+
+      for (let i = waiters.length - 1; i >= 0; i--) {
+        const w = waiters[i];
+        if (!w || w.rawRes.destroyed) {
+          waiters.splice(i, 1);
+          continue;
+        }
+        try {
+          if (!w.headersSent) {
+            w.headersSent = true;
+            const first = chunks.length ? chunks[0] : buf;
+            let ct = (upstreamRes.headers['content-type'] || 'application/octet-stream').toLowerCase();
+            let strip = 0;
+            if (upstreamRes.statusCode === 200 && isFakePngTs(first)) {
+              ct = 'video/mp2t';
+              strip = 252;
+            } else if (first.length > 0 && first[0] === 0x47) {
+              ct = 'video/mp2t';
+            }
+            w.rawRes.writeHead(upstreamRes.statusCode || 200, {
+              'Content-Type': ct,
+              'Cache-Control': 'public, max-age=86400, immutable',
+              ...corsHeaders(),
+              ...(w.extraHeaders || {})
+            });
+            if (first.length > strip && !w.rawRes.write(first.subarray(strip))) await waitDrain(w.rawRes);
+            for (let j = 1; j < chunks.length; j++) {
+              if (w.rawRes.destroyed) break;
+              if (!w.rawRes.write(chunks[j])) await waitDrain(w.rawRes);
+            }
+          } else if (buf.length > 0 && !w.rawRes.write(buf)) {
+            await waitDrain(w.rawRes);
+          }
+        } catch {
+          waiters.splice(i, 1);
+        }
+      }
     }
+
+    for (const w of waiters) {
+      // Waiters that never got headers are served the full buffered body by
+      // handleSegmentRequest once the flight completes.
+      if (w && w.headersSent && !w.rawRes.destroyed && !w.rawRes.writableEnded) w.rawRes.end();
+    }
+    waiters.length = 0;
+  } catch (err) {
+    for (const w of waiters) {
+      try { if (!w.rawRes.destroyed) w.rawRes.destroy(); } catch {}
+    }
+    waiters.length = 0;
+    throw err;
+  }
+
+  if (flight.overCap) {
+    return { kind: 'stream', upstreamRes, iterator, chunks: [], streamConsumed: true };
   }
   return { kind: 'buffered', upstreamRes, body: Buffer.concat(chunks, total) };
 }
 
 /**
- * Ultra-fast tee streaming: direct zero-copy streaming to client
- * Buffering simplified for maximum throughput
+ * Streams the upstream segment to the creator client WHILE filling the buffer
+ * pool: the player receives bytes progressively (fast start / fast seeks) and
+ * the full body lands in tsSegmentCache when done. Late-joining clients
+ * (waiters) get the buffered prefix replayed then the live tail fanned out —
+ * every client receives the complete segment. Oversized bodies (> cap) stop
+ * accumulating and become a plain passthrough stream.
  */
-async function teeSegmentToClient(upstreamRes, tee) {
+async function teeSegmentToClient(upstreamRes, tee, flight) {
   const rawRes = tee.rawRes;
+  const waiters = flight.waiters;
   const headers = {
     'Content-Type': (upstreamRes.headers['content-type'] || 'application/octet-stream').toLowerCase(),
     'Cache-Control': 'public, max-age=86400, immutable',
@@ -136,63 +280,113 @@ async function teeSegmentToClient(upstreamRes, tee) {
   };
   const clHeader = upstreamRes.headers['content-length'];
   const cl = parseInt(clHeader || '0', 10);
-  const iterator = upstreamRes.body[Symbol.asyncIterator]();
+  const iterator = timedIterator(upstreamRes.body);
 
   let chunks = [];
   let total = 0;
   let overCap = cl > SEGMENT_BUFFER_CAP;
   let sniffed = false;
+  let strip = 0;
 
-  while (true) {
-    const { done, value } = await iterator.next();
-    if (done) break;
-    const buf = Buffer.isBuffer(value) ? value : Buffer.from(value);
-
-    if (!sniffed) {
-      sniffed = true;
-      let strip = 0;
-      if (upstreamRes.statusCode === 200 && isFakePngTs(buf)) {
-        headers['Content-Type'] = 'video/mp2t';
-        strip = 252;
-      } else if (buf.length > 0 && buf[0] === 0x47) {
-        headers['Content-Type'] = 'video/mp2t';
+  async function fanToWaiters(buf) {
+    for (let i = waiters.length - 1; i >= 0; i--) {
+      const w = waiters[i];
+      if (!w || w.rawRes.destroyed) {
+        waiters.splice(i, 1);
+        continue;
       }
-      if (clHeader) {
-        const t = parseInt(clHeader, 10);
-        if (!isNaN(t)) headers['Content-Length'] = String(Math.max(0, t - strip));
-      } else if (upstreamRes.headers['content-range']) {
-        headers['Content-Range'] = upstreamRes.headers['content-range'];
+      try {
+        if (!w.headersSent) {
+          w.headersSent = true;
+          const first = chunks.length ? chunks[0] : buf;
+          let ct = (upstreamRes.headers['content-type'] || 'application/octet-stream').toLowerCase();
+          let wstrip = 0;
+          if (upstreamRes.statusCode === 200 && isFakePngTs(first)) {
+            ct = 'video/mp2t';
+            wstrip = 252;
+          } else if (first.length > 0 && first[0] === 0x47) {
+            ct = 'video/mp2t';
+          }
+          w.rawRes.writeHead(upstreamRes.statusCode || 200, {
+            'Content-Type': ct,
+            'Cache-Control': 'public, max-age=86400, immutable',
+            ...corsHeaders(),
+            ...(w.extraHeaders || {})
+          });
+          if (first.length > wstrip && !w.rawRes.write(first.subarray(wstrip))) await waitDrain(w.rawRes);
+          for (let j = 1; j < chunks.length; j++) {
+            if (w.rawRes.destroyed) break;
+            if (!w.rawRes.write(chunks[j])) await waitDrain(w.rawRes);
+          }
+        } else if (buf.length > 0 && !w.rawRes.write(buf)) {
+          await waitDrain(w.rawRes);
+        }
+      } catch {
+        waiters.splice(i, 1);
       }
-      if (!rawRes.headersSent && !rawRes.destroyed) {
-        rawRes.writeHead(upstreamRes.statusCode || 200, headers);
-      }
-      if (!overCap) {
-        chunks.push(buf);
-        total += buf.length;
-        if (total > SEGMENT_BUFFER_CAP) { overCap = true; chunks = []; total = 0; }
-      }
-      const out = strip > 0 ? buf.subarray(strip) : buf;
-      if (out.length > 0 && !rawRes.destroyed) {
-        if (!rawRes.write(out)) await waitDrain(rawRes);
-      }
-      continue;
-    }
-
-    if (!overCap) {
-      chunks.push(buf);
-      total += buf.length;
-      if (total > SEGMENT_BUFFER_CAP) { overCap = true; chunks = []; total = 0; }
-    }
-    if (!rawRes.destroyed) {
-      if (!rawRes.write(buf)) await waitDrain(rawRes);
-    } else if (overCap) {
-      // Client gone AND nothing cacheable is being collected — abort upstream.
-      try { upstreamRes.body.destroy(); } catch {}
-      break;
     }
   }
 
-  if (!rawRes.writableEnded && !rawRes.destroyed) rawRes.end();
+  try {
+    while (true) {
+      const { done, value } = await iterator.next();
+      if (done) break;
+      const buf = Buffer.isBuffer(value) ? value : Buffer.from(value);
+
+      if (!sniffed) {
+        sniffed = true;
+        if (upstreamRes.statusCode === 200 && isFakePngTs(buf)) {
+          headers['Content-Type'] = 'video/mp2t';
+          strip = 252;
+        } else if (buf.length > 0 && buf[0] === 0x47) {
+          headers['Content-Type'] = 'video/mp2t';
+        }
+        if (clHeader) {
+          const t = parseInt(clHeader, 10);
+          if (!isNaN(t)) headers['Content-Length'] = String(Math.max(0, t - strip));
+        } else if (upstreamRes.headers['content-range']) {
+          headers['Content-Range'] = upstreamRes.headers['content-range'];
+        }
+        if (!rawRes.headersSent && !rawRes.destroyed) {
+          rawRes.writeHead(upstreamRes.statusCode || 200, headers);
+        }
+      }
+
+      if (!overCap) {
+        chunks.push(buf);
+        total += buf.length;
+        if (total > SEGMENT_BUFFER_CAP) {
+          overCap = true;
+          flight.overCap = true;
+          chunks = [];
+          total = 0;
+        }
+      }
+
+      await fanToWaiters(buf);
+
+      const out = strip > 0 ? buf.subarray(strip) : buf;
+      if (out.length > 0 && !rawRes.destroyed) {
+        if (!rawRes.write(out)) await waitDrain(rawRes);
+      } else if (overCap && waiters.length === 0) {
+        // Creator gone, nothing cacheable left, nobody else listening — abort.
+        try { upstreamRes.body.destroy(); } catch {}
+        break;
+      }
+    }
+
+    if (!rawRes.writableEnded && !rawRes.destroyed) rawRes.end();
+    for (const w of waiters) {
+      if (w && w.headersSent && !w.rawRes.destroyed && !w.rawRes.writableEnded) w.rawRes.end();
+    }
+    waiters.length = 0;
+  } catch (err) {
+    for (const w of waiters) {
+      try { if (!w.rawRes.destroyed) w.rawRes.destroy(); } catch {}
+    }
+    waiters.length = 0;
+    throw err;
+  }
 
   if (overCap || !sniffed) {
     return { kind: 'stream', upstreamRes, iterator, chunks: [], streamConsumed: true };
@@ -203,7 +397,9 @@ async function teeSegmentToClient(upstreamRes, tee) {
 /**
  * Singleflight segment fetch: while one request is in flight (client or
  * prefetch), everyone else shares its result instead of hitting the CDN again.
- * The creator optionally tees the body straight to its client while buffering.
+ * The creator optionally tees the body straight to its client while buffering;
+ * late-joining clients (waiters) of a prefetch-origin flight get the arriving
+ * chunks fanned out to them progressively.
  */
 function startSegmentFlight(cacheKey, targetURL, headers, tee) {
   const flight = (async () => {
@@ -219,8 +415,8 @@ function startSegmentFlight(cacheKey, targetURL, headers, tee) {
     }
 
     const result = tee
-      ? await teeSegmentToClient(upstreamRes, tee)
-      : await bufferSegment(upstreamRes);
+      ? await teeSegmentToClient(upstreamRes, tee, flight)
+      : await bufferAndFanout(upstreamRes, flight);
     result.statusCode = upstreamRes.statusCode;
 
     if (result.kind === 'buffered') {
@@ -232,6 +428,9 @@ function startSegmentFlight(cacheKey, targetURL, headers, tee) {
     return result;
   })();
 
+  flight.creatorTee = Boolean(tee);
+  flight.waiters = [];
+  flight.overCap = false;
   segFlight.set(cacheKey, flight);
   flight.then(() => segFlight.delete(cacheKey), () => segFlight.delete(cacheKey));
   return flight;
@@ -289,14 +488,14 @@ async function streamSegmentResponse(rawRes, upstreamRes, iterator, prefixChunks
     for (let i = 1; i < prefix.length; i++) {
       if (rawRes.destroyed) return;
       if (!rawRes.write(prefix[i])) {
-        await new Promise(r => rawRes.once('drain', r));
+        await waitDrain(rawRes);
       }
     }
   }
   for await (const chunk of { [Symbol.asyncIterator]: () => iterator }) {
     if (rawRes.destroyed) break;
     if (!rawRes.write(chunk)) {
-      await new Promise(r => rawRes.once('drain', r));
+      await waitDrain(rawRes);
     }
   }
   if (!rawRes.writableEnded) rawRes.end();
@@ -330,11 +529,19 @@ async function handleSegmentRequest(req, reply, targetURL, upstreamHeaders, dlNa
   clientInflight++;
   stats.clientInflight = clientInflight;
   let notifyURL = null;
-  const requestStart = Date.now();
   try {
-    // REMOVED: Singleflight check for ULTRA speed - go directly to fetch
-    // Cache will handle duplicates after first completes
-    const flight = startSegmentFlight(targetURL, targetURL, upstreamHeaders, {
+    const existing = segFlight.get(targetURL);
+    const isCreator = !existing;
+    // Join any in-flight flight as a fanned waiter: receive the buffered
+    // prefix replayed + the live tail, so this client streams progressively
+    // and still gets the complete segment (fast seeks into the prefetch
+    // window AND concurrent clients on the same segment).
+    const waiter = !isCreator && existing && !existing.overCap
+      ? { rawRes: reply.raw, extraHeaders, headersSent: false }
+      : null;
+    if (waiter) existing.waiters.push(waiter);
+
+    const flight = existing || startSegmentFlight(targetURL, targetURL, upstreamHeaders, {
       rawRes: reply.raw,
       extraHeaders
     });
@@ -353,8 +560,10 @@ async function handleSegmentRequest(req, reply, targetURL, upstreamHeaders, dlNa
     }
 
     if (result.kind === 'buffered') {
-      // Streamed during fetch, now serve the cached entry
-      if (result.entry) {
+      // Creator already streamed its copy during the fetch; fanned waiters
+      // received the body chunk by chunk; a waiter that joined at the very
+      // end (never got headers) serves the shared buffer now.
+      if (!isCreator && result.entry && (!waiter || !waiter.headersSent) && !reply.raw.destroyed && !reply.raw.writableEnded) {
         const entry = result.entry;
         reply.hijack();
         const rawRes = reply.raw;
@@ -366,6 +575,8 @@ async function handleSegmentRequest(req, reply, targetURL, upstreamHeaders, dlNa
           ...(extraHeaders || {})
         });
         rawRes.end(entry.body);
+      } else if (waiter && waiter.headersSent && !reply.raw.destroyed && !reply.raw.writableEnded) {
+        reply.raw.end();
       }
       notifyURL = targetURL;
       return true;
@@ -373,7 +584,9 @@ async function handleSegmentRequest(req, reply, targetURL, upstreamHeaders, dlNa
 
     // Oversized stream result
     if (result.streamConsumed) {
-      return true; // already proxied by the tee
+      if (isCreator) return true; // already proxied by the tee
+      if (waiter && waiter.headersSent) return true; // already fanned out
+      return passthroughSegment(targetURL, upstreamHeaders, reply, extraHeaders);
     }
     if (!result.claimed) {
       result.claimed = true;
@@ -389,8 +602,6 @@ async function handleSegmentRequest(req, reply, targetURL, upstreamHeaders, dlNa
   } finally {
     clientInflight--;
     stats.clientInflight = clientInflight;
-    const elapsed = Date.now() - requestStart;
-    console.log(`[TIMING] Segment request to ${targetURL.substring(0, 50)}... took ${elapsed}ms`);
     if (notifyURL) notifySegmentServed(notifyURL);
   }
 }
@@ -407,7 +618,7 @@ async function passthroughSegment(targetURL, upstreamHeaders, reply, extraHeader
   }
   reply.hijack();
   try {
-    await streamSegmentResponse(reply.raw, freshRes, freshRes.body[Symbol.asyncIterator](), [], extraHeaders);
+    await streamSegmentResponse(reply.raw, freshRes, timedIterator(freshRes.body), [], extraHeaders);
   } catch {
     if (!reply.raw.writableEnded) reply.raw.destroy();
   }
@@ -444,8 +655,7 @@ function extractSegmentURLs(text, baseURL) {
 function prefetchSegment(url, headers) {
   if (!url || !headers) return;
   if (tsSegmentCache.has(url) || prefetchSet.has(url)) return;
-  // REMOVED: if (clientInflight > 0) return; // player traffic has priority
-  // Aggressive prefetch: always prefetch, even during client traffic
+  if (clientInflight > 0) return; // player traffic has priority
   if (prefetchInflight >= PREFETCH_MAX_INFLIGHT) return;
   prefetchInflight++;
   stats.prefetchInflight = prefetchInflight;
@@ -469,10 +679,15 @@ function prefetchSegment(url, headers) {
   });
 }
 
-function warmSegments(entry, count) {
+/**
+ * Warms the segments AFTER `skip`: the player's own request for the first
+ * segment(s) must stay a creator tee (progressive first bytes), while the
+ * immediately following segments land in cache before the player asks for them.
+ */
+function warmSegments(entry, skip, count) {
   if (!entry || !entry.segments) return;
-  const n = Math.min(count, entry.segments.length);
-  for (let i = 0; i < n; i++) {
+  const end = Math.min(skip + count, entry.segments.length);
+  for (let i = skip; i < end; i++) {
     prefetchSegment(entry.segments[i], entry.upstreamHeaders);
   }
 }
@@ -521,10 +736,16 @@ function abyssChunkCacheKey(payload, totalSize, chunkSize, idx) {
  * degrade to a plain stream (never cached).
  */
 async function bufferAbyssChunk(upstreamRes) {
-  const iterator = upstreamRes.body[Symbol.asyncIterator]();
+  const iterator = timedIterator(upstreamRes.body);
   const chunks = [];
   let total = 0;
   while (true) {
+    // Prefetch-only fetch: yield bandwidth to live client traffic.
+    while (clientInflight > 0) {
+      iterator.disarm();
+      await new Promise((r) => setTimeout(r, PREFETCH_YIELD_POLL_MS));
+      iterator.touch();
+    }
     const { done, value } = await iterator.next();
     if (done) break;
     const buf = Buffer.isBuffer(value) ? value : Buffer.from(value);
@@ -546,7 +767,7 @@ async function teeAbyssChunk(upstreamRes, tee) {
   const rawRes = tee.rawRes;
   const a = tee.a;
   const b = tee.b;
-  const iterator = upstreamRes.body[Symbol.asyncIterator]();
+  const iterator = timedIterator(upstreamRes.body);
 
   let chunks = [];
   let total = 0;
@@ -619,33 +840,35 @@ function startAbyssChunkFlight(payload, totalSize, chunkSize, idx, tee) {
 }
 
 function notifyAbyssServed(payload, totalSize, chunkSize, idx) {
-  const nextIdx = idx + 1;
-  if (nextIdx * chunkSize >= totalSize) return;
-  const key = abyssChunkCacheKey(payload, totalSize, chunkSize, nextIdx);
-  if (abyssChunkCache.has(key) || segFlight.has(key) || prefetchSet.has(key)) return;
-  // REMOVED: if (clientInflight > 0) return; // player traffic has priority
-  // Aggressive prefetch: always prefetch
-  if (prefetchInflight >= PREFETCH_MAX_INFLIGHT) return;
-  prefetchInflight++;
-  stats.prefetchInflight = prefetchInflight;
-  prefetchSet.add(key);
-  stats.segmentPrefetch++;
-
-  const flight = segFlight.get(key) || startAbyssChunkFlight(payload, totalSize, chunkSize, nextIdx, null);
-  flight.then((result) => {
-    if (result && result.kind === 'stream' && !result.streamConsumed && !result.claimed) {
-      // Oversized body nobody claimed — release it after a grace period.
-      setTimeout(() => {
-        if (!result.claimed) {
-          try { result.upstreamRes.body.destroy(); } catch {}
-        }
-      }, 15000);
-    }
-  }).catch(() => {}).finally(() => {
-    prefetchInflight--;
+  // Prefetch the next 2 chunks (~10MB) ahead of the playhead.
+  for (let ahead = 1; ahead <= 2; ahead++) {
+    const nextIdx = idx + ahead;
+    if (nextIdx * chunkSize >= totalSize) break;
+    const key = abyssChunkCacheKey(payload, totalSize, chunkSize, nextIdx);
+    if (abyssChunkCache.has(key) || segFlight.has(key) || prefetchSet.has(key)) continue;
+    if (clientInflight > 0) return; // player traffic has priority
+    if (prefetchInflight >= PREFETCH_MAX_INFLIGHT) return;
+    prefetchInflight++;
     stats.prefetchInflight = prefetchInflight;
-    prefetchSet.delete(key);
-  });
+    prefetchSet.add(key);
+    stats.segmentPrefetch++;
+
+    const flight = segFlight.get(key) || startAbyssChunkFlight(payload, totalSize, chunkSize, nextIdx, null);
+    flight.then((result) => {
+      if (result && result.kind === 'stream' && !result.streamConsumed && !result.claimed) {
+        // Oversized body nobody claimed — release it after a grace period.
+        setTimeout(() => {
+          if (!result.claimed) {
+            try { result.upstreamRes.body.destroy(); } catch {}
+          }
+        }, 15000);
+      }
+    }).catch(() => {}).finally(() => {
+      prefetchInflight--;
+      stats.prefetchInflight = prefetchInflight;
+      prefetchSet.delete(key);
+    });
+  }
 }
 
 async function streamAbyssChunksLegacy(payload, totalSize, chunkSize, start, end, rawRes) {
@@ -672,7 +895,7 @@ async function streamAbyssChunksLegacy(payload, totalSize, chunkSize, start, end
         headers: { ...abyssUpstreamHeaders(), range: `bytes=${reqStartInChunk}-${reqEndInChunk}` },
         dispatcher: globalAgent
       });
-      for await (const chunk of upstreamRes.body) {
+      for await (const chunk of timedIterator(upstreamRes.body)) {
         if (rawRes.destroyed) return;
         if (!rawRes.write(chunk)) {
           await waitDrain(rawRes);
@@ -893,7 +1116,6 @@ async function handleAbyssCTR(req, reply, upstreamRes, payload) {
 
 async function registerProxyRoutes(fastify) {
   fastify.get('/p/*', async (req, reply) => {
-    req.raw.socket?.setNoDelay(true);
     setCORS(reply);
 
     const path = req.params['*'] || '';
@@ -1024,9 +1246,7 @@ async function registerProxyRoutes(fastify) {
 
     // 3. M3U8 Playlist Processing & Rewriting
     if (isM3U8) {
-      const m3u8Start = Date.now();
-      let bodyText = await upstreamRes.body.text();
-      console.log(`[TIMING] M3U8 fetch took ${Date.now() - m3u8Start}ms for ${targetURL.substring(0, 50)}...`);
+      let bodyText = await readBodyText(upstreamRes.body);
 
       // De-XOR if pkParam is present
       if (pkParam && !bodyText.trim().startsWith('#EXTM3U')) {
@@ -1080,8 +1300,9 @@ async function registerProxyRoutes(fastify) {
         for (let i = 0; i < segURLs.length; i++) {
           segmentIndex.set(segURLs[i], { playlistKey: m3u8CacheKey, idx: i });
         }
-        // ULTRA: Prefetch ALL segments immediately for instant seeking
-        warmSegments(playlistEntry, segURLs.length);
+        // Warm the segments right after the first: the player's own request for
+        // segment 0 stays a tee (instant first bytes), 1..4 land in cache.
+        warmSegments(playlistEntry, 1, 4);
       }
 
       reply.header('Content-Type', responseContentType);
@@ -1129,7 +1350,7 @@ async function registerProxyRoutes(fastify) {
       outHeaders['Content-Range'] = upstreamRes.headers['content-range'];
     }
 
-    const iterator = upstreamRes.body[Symbol.asyncIterator]();
+    const iterator = timedIterator(upstreamRes.body);
     const first = await iterator.next();
 
     if (first.done) {
@@ -1169,7 +1390,7 @@ async function registerProxyRoutes(fastify) {
         chunks.push(chunk);
         totalBytes += chunk.length;
         if (!rawRes.write(chunk)) {
-          await new Promise(r => rawRes.once('drain', r));
+          await waitDrain(rawRes);
         }
       }
       rawRes.end();
@@ -1185,7 +1406,7 @@ async function registerProxyRoutes(fastify) {
     for await (const chunk of { [Symbol.asyncIterator]: () => iterator }) {
       if (rawRes.destroyed) break;
       if (!rawRes.write(chunk)) {
-        await new Promise(r => rawRes.once('drain', r));
+        await waitDrain(rawRes);
       }
     }
     rawRes.end();
@@ -1193,5 +1414,11 @@ async function registerProxyRoutes(fastify) {
 }
 
 module.exports = {
-  registerProxyRoutes
+  registerProxyRoutes,
+  _internals: {
+    timedIterator,
+    bufferAndFanout,
+    // Test hook: simulate concurrent client traffic for the prefetch yield gate.
+    _setClientInflight: (n) => { clientInflight = n; }
+  }
 };
