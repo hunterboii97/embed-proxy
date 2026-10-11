@@ -1,11 +1,41 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 
 const playerTemplatePath = path.join(__dirname, 'player', 'player.html');
 let playerHtmlTemplate = '';
 
+// Content version of every player asset (name+size+mtime hash, computed once
+// at startup). Appended as ?v= to each /player-assets URL so browsers fetch
+// the current bundle even if they hold long-lived cache entries from before
+// the no-cache policy existed — a stale cached bundle can otherwise persist
+// for a year and keep serving old player code.
+function computeAssetVersion() {
+  const h = crypto.createHash('sha1');
+  (function walk(dir) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        walk(full);
+      } else {
+        const st = fs.statSync(full);
+        h.update(e.name);
+        h.update(String(st.size));
+        h.update(String(Math.floor(st.mtimeMs)));
+      }
+    }
+  })(path.join(__dirname, 'player'));
+  return h.digest('hex').slice(0, 10);
+}
+
 try {
   playerHtmlTemplate = fs.readFileSync(playerTemplatePath, 'utf8');
+  const assetVersion = computeAssetVersion();
+  playerHtmlTemplate = playerHtmlTemplate.replace(
+    /\/player-assets\/[^"'\s)]+/g,
+    (m) => `${m}?v=${assetVersion}`
+  );
 } catch (e) {
   console.error('Failed reading player.html:', e);
 }
