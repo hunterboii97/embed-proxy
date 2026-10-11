@@ -61,20 +61,6 @@ const animeSaltStreamCache = new LRUCache({
   updateAgeOnGet: true
 });
 
-// 2. Zoko Stream Cache (4 Hours TTL, 40K entries)
-const zokoStreamCache = new LRUCache({
-  max: 40000,
-  ttl: 4 * 60 * 60 * 1000,
-  updateAgeOnGet: true
-});
-
-// 3. AnimeSalt Stream & Audio Links Cache (4 Hours TTL, 40K entries)
-const animeSaltStreamCache = new LRUCache({
-  max: 40000,
-  ttl: 4 * 60 * 60 * 1000,
-  updateAgeOnGet: true
-});
-
 const animeSaltAudioLinksCache = new LRUCache({
   max: 20000,
   ttl: 2 * 60 * 60 * 1000,

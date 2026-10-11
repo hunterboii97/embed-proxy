@@ -87,6 +87,7 @@ async function extractMegaplayHLS(targetPath) {
   // Race getSourcesNew and the legacy API in parallel — whichever returns a
   // usable stream first wins; the other is a free fallback when New fails.
   const newApiURL = `https://megaplay.buzz/stream/getSourcesNew?id=${encodeURIComponent(dataId)}&cid=${encodeURIComponent(cid)}&cidu=${encodeURIComponent(cidu)}`;
+  const legacyApiURL = `https://megaplay.buzz/stream/getSources?id=${encodeURIComponent(dataId)}&cid=${encodeURIComponent(cid)}&cidu=${encodeURIComponent(cidu)}`;
 
   const headers = {
     referer: 'https://megaplay.buzz/',
@@ -123,7 +124,7 @@ async function extractMegaplayHLS(targetPath) {
   }
 
   if (!result || !result.streamFile) {
-    throw new Error('MegaPlay API returned no stream file');
+    throw new Error('Both MegaPlay getSourcesNew and getSources failed');
   }
 
   megaplayStreamCache.set(normPath, result);
