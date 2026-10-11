@@ -275,7 +275,6 @@ function makeButton(label, svgPath, placement = 'top') {
   return { tooltip: tip, button: btn };
 }
 
-const ICON_CAMERA = '<path d="M4 9h4l2-3h12l2 3h4a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V11a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="2"/><circle cx="16" cy="17" r="5" stroke="currentColor" stroke-width="2"/>';
 const ICON_DOWNLOAD = '<path d="M16 4v16m0 0 6-6m-6 6-6-6M5 26h22" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
 
 export async function createPlayer(options = {}) {
@@ -291,7 +290,7 @@ export async function createPlayer(options = {}) {
   /* --- element tree ---------------------------------------------------- */
   const player = document.createElement('media-player');
   player.setAttribute('playsinline', '');
-  player.setAttribute('crossorigin', 'anonymous');   // needed for CORS subs + screenshots
+  player.setAttribute('crossorigin', 'anonymous');   // needed for CORS subtitles
   player.setAttribute('stream-type', 'on-demand');
   // Vidstack defaults to load="play" and defers attaching the <video> element
   // until the user presses play. "idle" loads immediately on src change.
@@ -399,28 +398,29 @@ export async function createPlayer(options = {}) {
   }
 
   /* --- extra control-bar buttons --------------------------------------- */
-  if (cfg.layout !== 'native') {
-    const bar = layout.querySelector('.vds-controls-group');
-    if (bar) {
-      if (cfg.download) {
-        const { tooltip, button } = makeButton('Download', ICON_DOWNLOAD);
-        button.addEventListener('click', () => {
-          host.send('strmcx-download', { url: cfg.download });
-          const a = document.createElement('a');
-          a.href = cfg.download;
-          a.download = cfg.screenshotName || '';
-          a.target = '_blank';
-          a.rel = 'noopener';
-          document.body.append(a);
-          a.click();
-          a.remove();
-        });
-        bar.append(tooltip);
-      }
-      const { tooltip: shotTip, button: shotBtn } = makeButton('Take Screenshot', ICON_CAMERA);
-      shotBtn.addEventListener('click', () => takeScreenshot());
-      bar.append(shotTip);
-    }
+  // The layout re-renders its controls template as reactive state settles,
+  // wiping any nodes we insert — re-attach the download button if dropped.
+  if (cfg.layout !== 'native' && cfg.download) {
+    const { tooltip, button } = makeButton('Download', ICON_DOWNLOAD);
+    button.addEventListener('click', () => {
+      host.send('strmcx-download', { url: cfg.download });
+      const a = document.createElement('a');
+      a.href = cfg.download;
+      a.download = cfg.screenshotName || '';
+      a.target = '_blank';
+      a.rel = 'noopener';
+      document.body.append(a);
+      a.click();
+      a.remove();
+    });
+    const ensureAttached = () => {
+      if (tooltip.isConnected) return;
+      const groups = layout.querySelectorAll('.vds-controls-group');
+      const g = groups.length ? groups[groups.length - 1] : null;
+      if (g) g.insertBefore(tooltip, g.lastElementChild);
+    };
+    new MutationObserver(ensureAttached).observe(layout, { childList: true, subtree: true });
+    ensureAttached();
   }
 
   /* --- screenshot ------------------------------------------------------- */
@@ -513,7 +513,6 @@ export async function createPlayer(options = {}) {
     if (/^[0-9]$/.test(k)) return { command: 'seek-percent', payload: { percent: Number(k) / 10 } };
     if (e.shiftKey) {
       if (k === 'Enter') return { command: 'smart-skip' };
-      if (k === 's') return { command: 'screenshot' };
       if (k === 'p') return { command: 'previous-episode' };
       if (k === 'n') return { command: 'next-episode' };
       return null;
