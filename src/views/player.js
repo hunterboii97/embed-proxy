@@ -161,9 +161,23 @@ function registerPlayerAssetRoutes(fastify) {
       return reply.code(404).send(renderCustomProxy404(req.url, 'Asset Not Found'));
     }
     reply.header('Content-Type', ASSET_MIME[path.extname(file).toLowerCase()] || 'application/octet-stream');
-    // Vendored third-party bundles never change → immutable. Own files change
-    // with deployments → short cache.
-    reply.header('Cache-Control', rel.startsWith('/vendor/') ? 'public, max-age=31536000, immutable' : 'public, max-age=3600');
+    // no-cache + weak ETag: browsers revalidate every load (cheap 304 when
+    // unchanged) so player patches reach users immediately — previously
+    // vendor/* was served immutable for a year and patched bundles never
+    // reached browsers that had cached them.
+    let stat;
+    try {
+      stat = fs.statSync(file);
+    } catch {
+      reply.header('Content-Type', 'text/html; charset=utf-8');
+      return reply.code(404).send(renderCustomProxy404(req.url, 'Asset Not Found'));
+    }
+    const etag = `W/"${stat.size.toString(36)}-${Math.floor(stat.mtimeMs).toString(36)}"`;
+    reply.header('Cache-Control', 'no-cache');
+    reply.header('ETag', etag);
+    if (req.headers['if-none-match'] === etag) {
+      return reply.code(304).send();
+    }
     return reply.send(fs.createReadStream(file));
   });
 }

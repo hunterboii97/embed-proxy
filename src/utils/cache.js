@@ -21,19 +21,22 @@ const m3u8PlaylistCache = new LRUCache({
   updateAgeOnGet: true
 });
 
-// 6. Segment Cache (45 min TTL, max 1.5GB total) — content-agnostic: works for
+// 6. Segment Cache (45 min TTL, 384MB total) — content-agnostic: works for
 // disguised .jpg/.html TS chunks from kira as well as plain .ts from zoko.
 // Entries are { body: Buffer, contentType: string }.
+// Kept deliberately small: multi-GB buffer piles put Node under constant GC
+// and OS memory pressure, which shows up as stream stutter on the client.
+// 384MB ≈ 10+ min of a 5.3 Mbps 1080p stream or a couple of full episodes.
 const tsSegmentCache = new LRUCache({
-  maxSize: 1.5 * 1024 * 1024 * 1024, // 1.5 GB
+  maxSize: 384 * 1024 * 1024, // 384 MB
   ttl: 45 * 60 * 1000,
   sizeCalculation: (entry) => entry.body.length,
   updateAgeOnGet: true
 });
 
-// 6b. Abyss (haiku) 5MB chunk cache — 1GB, 45min TTL
+// 6b. Abyss (haiku) 5MB chunk cache — 256MB, 45min TTL
 const abyssChunkCache = new LRUCache({
-  maxSize: 1 * 1024 * 1024 * 1024, // 1 GB
+  maxSize: 256 * 1024 * 1024, // 256 MB
   ttl: 45 * 60 * 1000,
   sizeCalculation: (buf) => buf.length,
   updateAgeOnGet: true

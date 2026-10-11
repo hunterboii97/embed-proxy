@@ -150,6 +150,18 @@ html[data-color-scheme="light"] body { background: #fff; }
 html[data-color-scheme="light"] .strmcx-splash { background: #fff; }
 html[data-color-scheme="light"] .strmcx-splash__brand { color: #111; }
 
+/* ---- Stable video geometry across fullscreen toggles -------------------
+   The video box always matches the provider box; letterboxing happens
+   inside the element via object-fit. The vendored theme instead sizes the
+   video to an aspect-ratio-derived box, which re-shapes the rendered layer
+   mid-toggle and shows as a zoom/crop jump on fullscreen enter/exit. */
+[data-media-provider] video {
+  width: 100% !important;
+  height: 100% !important;
+  aspect-ratio: auto !important;
+  object-fit: contain;
+}
+
 /* ==========================================================================
    Performance tuning
    --------------------------------------------------------------------------

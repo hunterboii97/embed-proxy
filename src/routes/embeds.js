@@ -11,6 +11,7 @@ function applyEmbedHeaders(req, reply) {
   reply.header('Content-Type', 'text/html; charset=utf-8');
   reply.header('Content-Security-Policy', buildFrameAncestorsCSP(host));
   reply.header('X-Content-Type-Options', 'nosniff');
+  reply.header('Cache-Control', 'no-cache');
 }
 
 function proxyTracks(tracks, referer = '') {
