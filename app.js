@@ -11,7 +11,7 @@ const cors = require('@fastify/cors');
 const compression = require('@fastify/compress');
 const { PORT } = require('./config');
 const { renderDocs } = require('./src/views/docs');
-const { renderCustomProxy404 } = require('./src/views/player');
+const { renderCustomProxy404, registerPlayerAssetRoutes } = require('./src/views/player');
 const { registerProxyRoutes } = require('./src/routes/proxy');
 const { registerEmbedRoutes } = require('./src/routes/embeds');
 const { registerApiRoutes } = require('./src/routes/api');
@@ -55,6 +55,7 @@ app.register(registerProxyRoutes);
 app.register(registerEmbedRoutes);
 app.register(registerApiRoutes);
 app.register(registerDownloadRoutes);
+registerPlayerAssetRoutes(app);
 
 // Self-hosted hls.js (long-cacheable, same-origin = no external DNS/TLS)
 app.get('/hls.min.js', async (req, reply) => {

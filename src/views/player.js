@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const playerTemplatePath = path.join(__dirname, 'player.html');
+const playerTemplatePath = path.join(__dirname, 'player', 'player.html');
 let playerHtmlTemplate = '';
 
 try {
@@ -10,17 +10,12 @@ try {
   console.error('Failed reading player.html:', e);
 }
 
-function renderCleanArtplayer(streamURL, subtitleTracks = [], preferredLang = 'sub', episodeKey = '', audioOptions = []) {
-  if (!preferredLang) preferredLang = 'sub';
+function renderCleanArtplayer(streamURL, subtitleTracks = []) {
   const tracksJSON = JSON.stringify(subtitleTracks || []);
-  const audsJSON = JSON.stringify(audioOptions || []);
 
   return playerHtmlTemplate
     .replace('{{STREAM_URL}}', streamURL)
-    .replace('{{RAW_TRACKS}}', tracksJSON)
-    .replace('{{PREFERRED_LANG}}', preferredLang)
-    .replace('{{EPISODE_KEY}}', episodeKey)
-    .replace('{{RAW_AUDIO_OPTIONS}}', audsJSON);
+    .replace('{{RAW_TRACKS}}', tracksJSON);
 }
 
 function renderCustomProxy404(requestPath = '', message = '') {
@@ -123,7 +118,58 @@ function renderCustomProxy404(requestPath = '', message = '') {
 </html>`;
 }
 
+// Whitelist map of every file under src/views/player/ (template excluded),
+// built once at startup — path-traversal safe, no fs access per request.
+const ASSET_MIME = {
+  '.js': 'application/javascript; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.woff2': 'font/woff2',
+  '.map': 'application/json; charset=utf-8'
+};
+
+function buildPlayerAssetMap() {
+  const root = path.join(__dirname, 'player');
+  const map = new Map();
+  (function walk(dir, prefix) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === 'player.html') continue;
+      const full = path.join(dir, entry.name);
+      const rel = prefix + entry.name;
+      if (entry.isDirectory()) {
+        walk(full, rel + '/');
+      } else {
+        map.set('/' + rel, full);
+      }
+    }
+  })(root, '');
+  return map;
+}
+
+function registerPlayerAssetRoutes(fastify) {
+  const assets = buildPlayerAssetMap();
+
+  fastify.get('/player-assets/*', async (req, reply) => {
+    const rel = '/' + (req.params['*'] || '');
+    const file = assets.get(rel);
+    if (!file) {
+      reply.header('Content-Type', 'text/html; charset=utf-8');
+      return reply.code(404).send(renderCustomProxy404(req.url, 'Asset Not Found'));
+    }
+    reply.header('Content-Type', ASSET_MIME[path.extname(file).toLowerCase()] || 'application/octet-stream');
+    // Vendored third-party bundles never change → immutable. Own files change
+    // with deployments → short cache.
+    reply.header('Cache-Control', rel.startsWith('/vendor/') ? 'public, max-age=31536000, immutable' : 'public, max-age=3600');
+    return reply.send(fs.createReadStream(file));
+  });
+}
+
 module.exports = {
   renderCleanArtplayer,
-  renderCustomProxy404
+  renderCustomProxy404,
+  registerPlayerAssetRoutes
 };

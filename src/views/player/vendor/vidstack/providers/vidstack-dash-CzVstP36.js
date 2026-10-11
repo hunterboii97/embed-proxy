@@ -1,0 +1,1 @@
+import{DASHProvider as e}from"../chunks/vidstack-C_sw-qX7.js";export{e as DASHProvider};

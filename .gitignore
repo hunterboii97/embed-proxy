@@ -8,6 +8,9 @@
 *.out
 yume-proxy
 vendor/
+# player assets are vendored intentionally (self-hosted, no CDN) — committed
+!src/views/player/vendor/
+!player/vendor/
 .DS_Store
 .idea/
 .vscode/

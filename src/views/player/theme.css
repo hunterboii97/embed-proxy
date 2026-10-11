@@ -1,0 +1,151 @@
+/* ==========================================================================
+   Player chrome — sits on top of Vidstack's default theme
+   ========================================================================== */
+
+:root {
+  color-scheme: dark;
+}
+
+html, body {
+  min-width: 100%;
+  min-height: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  color: #fff;
+  background: #000;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+               "Helvetica Neue", sans-serif;
+}
+
+#app {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 100svh;
+  overflow: hidden;
+}
+
+media-player {
+  display: block;
+  width: 100%;
+  max-height: 100svh;
+  background: #000;
+}
+
+/* Aspect-ratio control via the `aspect` query param */
+media-player[style*="--strmcx-aspect"] {
+  aspect-ratio: var(--strmcx-aspect);
+  max-height: 100svh;
+}
+
+/* ---- Embedded mode: fill the host iframe completely -------------------- */
+html[data-embedded],
+html[data-embedded] body,
+html[data-embedded] #app,
+html[data-embedded] media-player {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+}
+
+/* ---- Theatre mode ------------------------------------------------------ */
+html[data-theater] #app {
+  align-items: start;
+}
+html[data-theater] media-player {
+  max-height: 80svh;
+  aspect-ratio: 16 / 9;
+}
+
+/* ---- Loading splash ---------------------------------------------------- */
+.strmcx-splash {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: #000;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.24s, visibility 0.24s;
+}
+.strmcx-splash[hidden] {
+  opacity: 0;
+  visibility: hidden;
+}
+.strmcx-splash__brand {
+  font-size: max(3rem, min(13vw, 8.5rem));
+  font-weight: 800;
+  line-height: 0.9;
+  letter-spacing: 0;
+  text-rendering: geometricPrecision;
+}
+
+/* ---- Skip intro / outro ------------------------------------------------ */
+.strmcx-skip {
+  position: absolute;
+  right: 16px;
+  bottom: 88px;
+  z-index: 15;
+  display: flex;
+  gap: 8px;
+}
+.strmcx-skip[hidden] { display: none; }
+
+.strmcx-skip__btn {
+  padding: 8px 18px;
+  font: 600 13px/1 inherit;
+  color: #000;
+  background: #fff;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: transform 0.12s, background 0.12s;
+}
+.strmcx-skip__btn:hover  { background: #e5e5e5; }
+.strmcx-skip__btn:active { transform: scale(0.96); }
+
+/* ---- Next-episode overlay ---------------------------------------------- */
+.strmcx-next {
+  position: absolute;
+  right: 16px;
+  bottom: 88px;
+  z-index: 14;
+}
+.strmcx-next[hidden] { display: none; }
+
+.strmcx-next__btn {
+  padding: 12px 22px;
+  font: 700 14px/1 inherit;
+  color: #000;
+  background: #fff;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
+}
+.strmcx-next__btn:hover { background: #e5e5e5; }
+
+/* Keep our overlays clear of the control bar when it auto-hides */
+media-player[data-controls] .strmcx-skip,
+media-player[data-controls] .strmcx-next {
+  bottom: 96px;
+}
+
+/* ---- Custom control-bar buttons ---------------------------------------- */
+.strmcx-skip__btn:focus-visible,
+.strmcx-next__btn:focus-visible,
+button:focus-visible {
+  outline: 2px solid #7c5cff;
+  outline-offset: 2px;
+}
+
+/* ---- Light scheme (via set-color-scheme command) ----------------------- */
+html[data-color-scheme="light"] body { background: #fff; }
+html[data-color-scheme="light"] .strmcx-splash { background: #fff; }
+html[data-color-scheme="light"] .strmcx-splash__brand { color: #111; }

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="origin">
+<title>player</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23000' stroke='%23333' stroke-width='2'/%3E%3Cpath d='M24 18v28l22-14z' fill='%23fff'/%3E%3C/svg%3E">
+
+<!-- Vendored locally: no CDN, no third-party requests -->
+<link rel="stylesheet" href="/player-assets/vendor/styles/default/theme.css">
+<link rel="stylesheet" href="/player-assets/vendor/styles/default/layouts/video.css">
+<link rel="stylesheet" href="/player-assets/theme.css">
+
+<script>
+  // Marks the document when framed, exactly like the original.
+  if (window.top !== window.self) document.documentElement.dataset.embedded = "";
+
+  // Injected by the server: proxied stream URL + proxied subtitle tracks
+  // (strm.cx contract: {file,label,lang,kind}).
+  window.__YUME_PLAYER_CONFIG__ = {
+    src: '{{STREAM_URL}}',
+    tracks: {{RAW_TRACKS}} || []
+  };
+</script>
+
+<!--
+  Vidstack hardcodes three jsdelivr URLs:
+    - media-icons     static import  -> intercepted by this import map
+    - media-captions  dynamic import -> intercepted by this import map
+    - hls.js          <script> tag   -> NOT interceptable; the URL in
+      vendor/vidstack/providers/vidstack-hls-*.js was repointed to
+      /player-assets/vendor/hls.min.js instead.
+  A fourth (dashjs) is only fetched if you play a DASH source.
+-->
+<script type="importmap">
+{
+  "imports": {
+    "https://cdn.jsdelivr.net/npm/media-icons@1.1.5/dist/cdn.js/+esm": "/player-assets/vendor/media-icons.js",
+    "https://cdn.jsdelivr.net/npm/media-captions@1.0.4/dist/prod.js/+esm": "/player-assets/vendor/media-captions.js"
+  }
+}
+</script>
+</head>
+<body>
+
+<main id="app">
+  <div class="strmcx-splash" aria-label="Loading player">
+    <div class="strmcx-splash__brand">player</div>
+  </div>
+</main>
+
+<!-- Vendored hls.js (UMD) sets window.Hls so Vidstack skips its jsdelivr fetch -->
+<script src="/player-assets/vendor/hls.min.js"></script>
+
+<!-- Vidstack: registers the <media-*> custom elements. Must load before core.js
+     creates them, otherwise the elements stay inert and never upgrade. -->
+<script type="module" src="/player-assets/vendor/vidstack/vidstack.js"></script>
+<script type="module" src="/player-assets/player.js"></script>
+</body>
+</html>

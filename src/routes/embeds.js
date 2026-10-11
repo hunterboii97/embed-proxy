@@ -53,7 +53,7 @@ async function registerEmbedRoutes(fastify) {
       const proxiedM3U8 = `/p/${streamToken}/master.m3u8`;
       const proxiedTracks = proxyTracks(data.tracks, 'https://zokoanime.video/');
 
-      const html = renderCleanArtplayer(proxiedM3U8, proxiedTracks, lang, episodeKey);
+      const html = renderCleanArtplayer(proxiedM3U8, proxiedTracks);
       return reply.send(html);
     } catch (err) {
       return reply.code(404).send(renderCustomProxy404(req.url, `Zoko stream error: ${err.message}`));
@@ -117,10 +117,7 @@ async function registerEmbedRoutes(fastify) {
 
       const html = renderCleanArtplayer(
         data.proxiedURL,
-        proxiedTracks,
-        lang,
-        episodeKey,
-        data.audioOptions
+        proxiedTracks
       );
       return reply.send(html);
     } catch (err) {
@@ -225,7 +222,7 @@ async function registerEmbedRoutes(fastify) {
       const proxiedM3U8 = `/p/${streamToken}/master.m3u8`;
       const proxiedTracks = proxyTracks(data.tracks, 'https://megaplay.buzz/');
 
-      const html = renderCleanArtplayer(proxiedM3U8, proxiedTracks, lang, episodeKey);
+      const html = renderCleanArtplayer(proxiedM3U8, proxiedTracks);
       return reply.send(html);
     } catch (err) {
       return reply.code(404).send(renderCustomProxy404(req.url, `Kira stream error: ${err.message}`));
