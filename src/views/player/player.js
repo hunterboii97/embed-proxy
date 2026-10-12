@@ -23,6 +23,8 @@ createPlayer(injected)
   })
   .catch((err) => {
     console.error('[player] failed to initialise', err);
-    const splash = document.querySelector('.strmcx-splash__brand');
-    if (splash) splash.textContent = 'Failed to load player';
+    const msg = document.createElement('div');
+    msg.className = 'strmcx-error';
+    msg.textContent = 'Failed to load player';
+    document.getElementById('app')?.append(msg);
   });
