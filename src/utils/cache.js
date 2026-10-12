@@ -21,23 +21,23 @@ const m3u8PlaylistCache = new LRUCache({
   updateAgeOnGet: true
 });
 
-// 6. Segment Cache (20 min TTL, 128MB total) — content-agnostic: works for
+// 6. Segment Cache (45 min TTL, 384MB total) — content-agnostic: works for
 // disguised .jpg/.html TS chunks from kira as well as plain .ts from zoko.
 // Entries are { body: Buffer, contentType: string }.
-// Reduced from 384MB to 128MB to prevent GC pressure and memory buildup over time.
-// 128MB ≈ 4-5 min of a 5.3 Mbps 1080p stream - sufficient for smooth playback.
+// Kept deliberately small: multi-GB buffer piles put Node under constant GC
+// and OS memory pressure, which shows up as stream stutter on the client.
+// 384MB ≈ 10+ min of a 5.3 Mbps 1080p stream or a couple of full episodes.
 const tsSegmentCache = new LRUCache({
-  maxSize: 128 * 1024 * 1024, // 128 MB (reduced from 384MB)
-  ttl: 20 * 60 * 1000, // 20 min (reduced from 45 min)
+  maxSize: 384 * 1024 * 1024, // 384 MB
+  ttl: 45 * 60 * 1000,
   sizeCalculation: (entry) => entry.body.length,
   updateAgeOnGet: true
 });
 
-// 6b. Abyss (haiku) 5MB chunk cache — 96MB, 20min TTL
-// Reduced from 256MB to 96MB to prevent memory buildup and GC pressure.
+// 6b. Abyss (haiku) 5MB chunk cache — 256MB, 45min TTL
 const abyssChunkCache = new LRUCache({
-  maxSize: 96 * 1024 * 1024, // 96 MB (reduced from 256MB)
-  ttl: 20 * 60 * 1000, // 20 min (reduced from 45 min)
+  maxSize: 256 * 1024 * 1024, // 256 MB
+  ttl: 45 * 60 * 1000,
   sizeCalculation: (buf) => buf.length,
   updateAgeOnGet: true
 });
@@ -45,8 +45,8 @@ const abyssChunkCache = new LRUCache({
 // 6c. Segment → Playlist Index (upstream segment URL → { playlistKey, idx })
 // Used to look ahead in the playlist and prefetch upcoming segments.
 const segmentIndex = new LRUCache({
-  max: 50000, // Reduced from 100000 to prevent memory buildup
-  ttl: 1 * 60 * 60 * 1000, // Reduced from 2 hours to 1 hour
+  max: 100000,
+  ttl: 2 * 60 * 60 * 1000,
   updateAgeOnGet: true
 });
 
@@ -105,41 +105,6 @@ const malIdCache = new LRUCache({
   updateAgeOnGet: true
 });
 
-// Periodic cleanup function to prevent memory buildup
-// Clears stale entries and runs every 5 minutes
-let cleanupInterval = null;
-
-function startPeriodicCleanup() {
-  if (cleanupInterval) return; // Already running
-
-  cleanupInterval = setInterval(() => {
-    // LRU caches auto-evict based on TTL, but we can force cleanup
-    // This helps GC by releasing references to old entries
-    const now = Date.now();
-
-    // Force purge expired entries in all caches
-    tsSegmentCache.purgeStale();
-    abyssChunkCache.purgeStale();
-    segmentIndex.purgeStale();
-    m3u8PlaylistCache.purgeStale();
-    zokoStreamCache.purgeStale();
-    animeSaltStreamCache.purgeStale();
-    animeSaltAudioLinksCache.purgeStale();
-    animeSaltSlugCache.purgeStale();
-    megaplayStreamCache.purgeStale();
-    megaplayGapCache.purgeStale();
-    animeTitleCache.purgeStale();
-    malIdCache.purgeStale();
-  }, 5 * 60 * 1000); // Every 5 minutes
-}
-
-function stopPeriodicCleanup() {
-  if (cleanupInterval) {
-    clearInterval(cleanupInterval);
-    cleanupInterval = null;
-  }
-}
-
 module.exports = {
   stats,
   m3u8PlaylistCache,
@@ -153,7 +118,5 @@ module.exports = {
   megaplayStreamCache,
   animeTitleCache,
   malIdCache,
-  megaplayGapCache,
-  startPeriodicCleanup,
-  stopPeriodicCleanup
+  megaplayGapCache
 };

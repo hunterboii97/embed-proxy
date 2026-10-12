@@ -3,15 +3,9 @@ const { LRUCache } = require('lru-cache');
 const { request, Agent, setGlobalDispatcher } = require('undici');
 
 // DNS cache: undici has NO built-in DNS cache, every new connection re-resolves
-// via getaddrinfo (threadpool + ~20-80ms). Cache lookups for 2 minutes per hostname.
-// Reduced from 5 minutes to 2 minutes and size from 1000 to 500 to prevent memory buildup.
-const dnsCache = new LRUCache({ max: 500, ttl: 120000 });
+// via getaddrinfo (threadpool + ~20-80ms). Cache lookups for 5 minutes per hostname.
+const dnsCache = new LRUCache({ max: 1000, ttl: 300000 });
 const dnsInflight = new Map();
-
-// Periodic cleanup for DNS cache
-setInterval(() => {
-  dnsCache.purgeStale();
-}, 60 * 1000); // Every minute
 
 function cachedLookup(hostname, options, callback) {
   if (typeof options === 'function') {
@@ -49,21 +43,21 @@ function cachedLookup(hostname, options, callback) {
 }
 
 // High-performance Global Agent
-// - pipelining:8 batches small requests per TCP connection without the
+// - pipelining:10 batches small requests per TCP connection without the
 //   head-of-line blocking risk that high pipelining adds to multi-MB bodies
-// - connections:128 per origin (reduced from 256 to prevent resource exhaustion)
+// - connections:256 per origin is more than the CDN bandwidth can ever use
 // - keepAliveTimeout/MaxTimeout: long-lived sockets so CDNs stay hot
-// - cachedLookup: 2min DNS memo (see above)
+// - cachedLookup: 5min DNS memo (see above)
 const globalAgent = new Agent({
   keepAliveTimeout: 120000,
   keepAliveMaxTimeout: 600000,
-  connections: 128, // Reduced from 256 to prevent connection pool exhaustion
-  pipelining: 8,   // Reduced from 10 to reduce memory overhead
+  connections: 256,
+  pipelining: 10,
   maxResponseSize: -1,
-  headersTimeout: 6000, // Reduced from 8000 for faster failover
+  headersTimeout: 8000,
   bodyTimeout: 0,
   connect: {
-    timeout: 3000, // Reduced from 4000 for faster connection
+    timeout: 4000,
     keepAlive: true,
     keepAliveInitialDelay: 0,
     noDelay: true,

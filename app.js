@@ -16,7 +16,6 @@ const { registerProxyRoutes } = require('./src/routes/proxy');
 const { registerEmbedRoutes } = require('./src/routes/embeds');
 const { registerApiRoutes } = require('./src/routes/api');
 const { registerDownloadRoutes } = require('./src/routes/download');
-const { startPeriodicCleanup } = require('./src/utils/cache');
 
 // Self-hosted hls.js bundle (served from memory — no CDN round-trip / JS-delay)
 let hlsBundle = null;
@@ -57,9 +56,6 @@ app.register(registerEmbedRoutes);
 app.register(registerApiRoutes);
 app.register(registerDownloadRoutes);
 registerPlayerAssetRoutes(app);
-
-// Start periodic cache cleanup to prevent memory buildup
-startPeriodicCleanup();
 
 // Self-hosted hls.js (long-cacheable, same-origin = no external DNS/TLS)
 app.get('/hls.min.js', async (req, reply) => {

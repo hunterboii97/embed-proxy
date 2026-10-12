@@ -327,34 +327,6 @@ export async function createPlayer(options = {}) {
   if (cfg.poster) player.poster = cfg.poster;
   if (cfg.title) player.title = cfg.title;
 
-  /* --- HLS.js performance optimizations --------------------------------- */
-  if (source.includes('.m3u8') && typeof window.Hls !== 'undefined') {
-    // Configure HLS.js for optimal performance
-    window.Hls.defaultConfig = {
-      // Buffer management
-      maxBufferLength: 30,          // Max buffer size in seconds (default 30)
-      maxMaxBufferLength: 60,       // Max buffer size during seeking (default 60)
-      maxBufferSize: 60 * 1000 * 1000, // 60MB max buffer (reduced from default)
-      // Network
-      maxBufferHole: 0.5,          // Handle small gaps in timeline (default 0.5)
-      // Performance
-      enableWorker: true,           // Use web worker for parsing (default true)
-      // Prefetch
-      manifestLoadingTimeOut: 10000, // 10s timeout for manifest
-      manifestLoadingMaxRetry: 3,   // Retry manifest loading 3 times
-      levelLoadingTimeOut: 10000,   // 10s timeout for level playlists
-      levelLoadingMaxRetry: 3,      // Retry level loading 3 times
-      fragLoadingTimeOut: 20000,     // 20s timeout for fragments
-      fragLoadingMaxRetry: 4,       // Retry fragment loading 4 times
-      // Recovery
-      enableStallDetection: true,   // Detect stalled playback
-      stallThreshold: 0.5,          // Stall threshold in seconds
-      // Cache
-      enableWebVTT: true,           // Enable VTT parsing
-      ...window.Hls.defaultConfig
-    };
-  }
-
   /* --- restored settings ---------------------------------------------- */
   player.addEventListener('can-play', () => {
     if (typeof settings.volume === 'number') player.volume = settings.volume;

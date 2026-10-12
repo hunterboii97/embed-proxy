@@ -9,32 +9,17 @@ const { m3u8PlaylistCache, tsSegmentCache, abyssChunkCache, segmentIndex, stats 
 const { globalAgent, DEFAULT_UA } = require('../utils/http');
 
 // Segment engine tunables
-const SEGMENT_BUFFER_CAP = 8 * 1024 * 1024;     // Cache segments up to 8MB (reduced from 16MB); larger = passthrough stream
-const ABYSS_MAX_CACHED_CHUNK = 8 * 1024 * 1024; // Abyss chunks are ~5MB; 8MB is sufficient (reduced from 12MB)
-const PREFETCH_LOOKAHEAD = 8;                   // Prefetch next 8 segments (~1 min ahead of playhead, reduced from 15)
-const PREFETCH_MAX_INFLIGHT = 4;                // Global concurrent prefetch cap (reduced from 6 for less memory pressure)
+const SEGMENT_BUFFER_CAP = 16 * 1024 * 1024;    // Cache segments up to 16MB; larger = passthrough stream
+const ABYSS_MAX_CACHED_CHUNK = 12 * 1024 * 1024; // Abyss chunks are ~5MB; 12MB covers every real layout
+const PREFETCH_LOOKAHEAD = 15;                  // Prefetch next 15 segments (~2+ min ahead of playhead)
+const PREFETCH_MAX_INFLIGHT = 6;                // Global concurrent prefetch cap (bounded upstream load)
 const BODY_STALL_MS = parseInt(process.env.BODY_STALL_MS || '30000', 10); // Abort upstream bodies that go silent (tunable)
-const PREFETCH_YIELD_POLL_MS = 50;              // Re-check client traffic every 50ms (reduced from 100ms for faster response)
+const PREFETCH_YIELD_POLL_MS = 100;              // Re-check client traffic every 100ms while a prefetch is paused
 
 const segFlight = new Map();   // Dedupe concurrent fetches (segments + abyss chunks, prefixed keys)
 const prefetchSet = new Set(); // Prefetch de-dup guard
 let prefetchInflight = 0;
 let clientInflight = 0;        // Prefetches yield to real client traffic
-
-// Periodic cleanup for flight maps to prevent memory buildup
-setInterval(() => {
-  // Clean up orphaned flights that should have been deleted
-  const now = Date.now();
-  for (const [key, flight] of segFlight.entries()) {
-    // If flight is stale (no promise status), remove it
-    // This handles edge cases where the finally block didn't execute
-    if (flight && typeof flight.then !== 'function') {
-      segFlight.delete(key);
-    }
-  }
-  // Clean up stale prefetch entries
-  prefetchSet.clear(); // Clear all - prefetches are short-lived anyway
-}, 60 * 1000); // Every minute
 
 /**
  * Wraps an upstream body iterator with an inactivity timeout: if no chunk
