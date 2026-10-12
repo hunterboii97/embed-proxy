@@ -293,9 +293,12 @@ export async function createPlayer(options = {}) {
   player.setAttribute('crossorigin', 'anonymous');   // needed for CORS subtitles
   player.setAttribute('stream-type', 'on-demand');
   // Vidstack defaults to load="play" and defers attaching the <video> element
-  // until the user presses play. "idle" loads immediately on src change.
+  // until the user presses play. "idle" loads immediately on src change — the
+  // stream (duration, subtitles, first segments) keeps loading in the
+  // background while the click-to-play start screen is shown.
   player.setAttribute('load', 'idle');
-  if (cfg.autoplay) player.setAttribute('autoplay', '');
+  // Playback always begins from the start screen's play button; the autoplay
+  // query param is deliberately not honoured.
   if (cfg.muted) player.setAttribute('muted', '');
 
   const provider = document.createElement('media-provider');
@@ -396,6 +399,27 @@ export async function createPlayer(options = {}) {
     nextOverlay.querySelector('button').addEventListener('click', () => host.send('strmcx-next'));
     player.append(nextOverlay);
   }
+
+  /* --- click-to-play start screen --------------------------------------- */
+  // Appears once the media is ready and stays until playback begins: a black
+  // screen with a centered white circular play button. Loading already
+  // happened in the background (load="idle"), so clicking starts instantly.
+  const startScreen = document.createElement('div');
+  startScreen.className = 'strmcx-start';
+  startScreen.hidden = true;
+  startScreen.innerHTML =
+    '<button type="button" class="strmcx-start__btn" aria-label="Play">' +
+    '<svg viewBox="22 16 19 27" aria-hidden="true">' +
+    '<path d="M22 16 L40 29 L22 42 Z"/>' +
+    '</svg></button>';
+  startScreen.querySelector('button').addEventListener('click', () => player.play());
+  player.append(startScreen);
+
+  const showStartScreen = () => { startScreen.hidden = false; };
+  const hideStartScreen = () => { startScreen.hidden = true; };
+  player.addEventListener('can-play', showStartScreen, { once: true });
+  player.addEventListener('play', hideStartScreen);
+  if (player.state.canPlay) showStartScreen();
 
   /* --- extra control-bar buttons --------------------------------------- */
   // The layout re-renders its controls template as reactive state settles,
@@ -637,17 +661,6 @@ export async function createPlayer(options = {}) {
   player.addEventListener('error', () => host.send('strmcx-error', { message: String(player.error?.message ?? 'unknown') }));
   player.addEventListener('enter-fullscreen', () => host.send('strmcx-fullscreen', { active: true }));
   player.addEventListener('exit-fullscreen',  () => host.send('strmcx-fullscreen', { active: false }));
-
-  // Loading splash, matching the original's behaviour
-  const splash = document.querySelector('.strmcx-splash');
-  const hideSplash = () => {
-    if (!splash) return;
-    splash.hidden = true;
-    setTimeout(() => splash.remove(), 260);
-  };
-  for (const ev of ['can-play', 'loaded-metadata', 'playing']) {
-    player.addEventListener(ev, hideSplash, { once: true });
-  }
 
   player.addEventListener('can-play', () => host.send('strmcx-ready'), { once: true });
   // If the host connects before media is ready, still announce readiness.
