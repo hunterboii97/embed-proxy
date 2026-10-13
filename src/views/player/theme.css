@@ -79,6 +79,8 @@ media-player:not([data-started]) .vds-start-duration {
   display: grid;
   place-items: center;
   pointer-events: none;
+  /* opaque so the already-buffering stream's first frame can't show through */
+  background: #000;
 }
 .strmcx-start[hidden] { display: none; }
 
