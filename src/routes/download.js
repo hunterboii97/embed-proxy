@@ -21,7 +21,7 @@ function buildDownloadFilename(title, ep, quality, lang, ext = 'mp4') {
   const langUpper = (lang || 'SUB').toUpperCase();
   const epPad = String(ep).padStart(2, '0');
 
-  return `[KaidoAPI]_${cleanTitle}_EP${epPad}_${langUpper}_${q}.${ext}`;
+  return `[MikazaAPI]_${cleanTitle}_EP${epPad}_${langUpper}_${q}.${ext}`;
 }
 
 async function streamM3U8AsMP4(reply, variantM3U8URL, referer, filename) {

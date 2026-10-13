@@ -121,7 +121,7 @@ if (require.main === module) {
   (async () => {
     try {
       const address = await app.listen({ port: PORT, host: '0.0.0.0' });
-      console.log(`🚀 KaidoAPI running at: ${address}`);
+      console.log(`🚀 MikazaAPI running at: ${address}`);
     } catch (err) {
       console.error('Failed to start server:', err);
       process.exit(1);

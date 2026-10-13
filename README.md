@@ -1,4 +1,4 @@
-# KaidoAPI — Professional Anime Embed Streaming Service
+# MikazaAPI — Professional Anime Embed Streaming Service
 
 Dedicated ultra-high-performance Node.js & Fastify reverse proxy, embed sanitizer, and multi-server video scraper for **Kira** (MegaPlay), **Haiku** (AnimeSalt), and **Naoka** (Zoko). Engineered with C++ pooled keep-alive sockets (`undici`), zero-copy stream piping, and in-memory LRU caching. Compatible with both **cPanel Web Hosting** (CloudLinux Passenger) and **Docker / VPS / Railway**.
 

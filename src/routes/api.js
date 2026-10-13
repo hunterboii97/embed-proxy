@@ -16,6 +16,16 @@ const { inflightCount } = require('../utils/singleflight');
 
 const startTime = Date.now();
 
+// JSON source endpoints hand out direct stream URLs. They are off by default
+// and only serve when SOURCE_API_ENABLED=true is set for a licensed customer.
+function sourceApiEnabled() {
+  return String(process.env.SOURCE_API_ENABLED || '').toLowerCase() === 'true';
+}
+
+const SOURCE_API_DISABLED = {
+  error: 'Source API is disabled. Contact itzhunterboii on Discord for access.'
+};
+
 // Event-loop lag sampler (unref'd — never keeps the process alive)
 let eventLoopLagMs = 0;
 let lastLoopSample = Date.now();
@@ -37,7 +47,7 @@ async function registerApiRoutes(fastify) {
     
     return {
       status: 'ok',
-      service: 'kaido-api',
+      service: 'mikaza-api',
       uptimeSeconds: Math.floor((Date.now() - startTime) / 1000),
       timestamp: new Date().toISOString(),
       memory: {
@@ -74,6 +84,7 @@ async function registerApiRoutes(fastify) {
 
   // /api/naoka/source & /api/zoko/source
   const handleNaokaSource = async (req, reply) => {
+    if (!sourceApiEnabled()) return reply.code(403).send(SOURCE_API_DISABLED);
     let malId = parseInt(req.query.mal, 10) || 0;
     const aniId = parseInt(req.query.ani, 10) || 0;
     const ep = parseInt(req.query.ep, 10) || 1;
@@ -106,6 +117,7 @@ async function registerApiRoutes(fastify) {
 
   // /api/haiku/source & /api/animesalt/source
   const handleSaltSource = async (req, reply) => {
+    if (!sourceApiEnabled()) return reply.code(403).send(SOURCE_API_DISABLED);
     let slug = req.query.slug || '';
     const season = parseInt(req.query.season || req.query.s, 10) || 1;
     const ep = parseInt(req.query.ep, 10) || 1;
@@ -149,6 +161,7 @@ async function registerApiRoutes(fastify) {
 
   // /api/kira/source, /stream/getSources and /stream/getSourcesNew
   const handleMegaplaySources = async (req, reply) => {
+    if (!sourceApiEnabled()) return reply.code(403).send(SOURCE_API_DISABLED);
     const id = req.query.id || '';
     const malId = parseInt(req.query.mal, 10) || 0;
     const aniId = parseInt(req.query.ani, 10) || 0;

@@ -1,5 +1,5 @@
 {
-  "name": "kaido-api",
+  "name": "mikaza-api",
   "version": "1.0.0",
   "description": "Professional anime streaming API with ad-free embed player, multi-server support, and real-time events",
   "main": "app.js",

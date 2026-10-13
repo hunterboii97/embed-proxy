@@ -177,6 +177,12 @@ button:focus-visible {
   outline-offset: 2px;
 }
 
+/* ±10s seek buttons are desktop chrome only — the small ("minimized")
+   layout has no room for them and hides them entirely. */
+.vds-video-layout[data-sm] [data-strmcx-seek] {
+  display: none !important;
+}
+
 /* ---- Light scheme (via set-color-scheme command) ----------------------- */
 html[data-color-scheme="light"] body { background: #fff; }
 html[data-color-scheme="light"] .strmcx-start__btn {
