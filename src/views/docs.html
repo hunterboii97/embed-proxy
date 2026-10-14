@@ -125,6 +125,10 @@
             color: var(--text-main);
         }
 
+        .nav-discord-link:hover {
+            color: #5865F2 !important;
+        }
+
         .status-pill {
             display: inline-flex;
             align-items: center;
@@ -796,10 +800,15 @@
                 <li><a href="#postmessage">Events</a></li>
                 <li><a href="#tester">Test</a></li>
             </ul>
-            <a href="/health" target="_blank" class="status-pill">
-                <span class="status-dot"></span>
-                Online
-            </a>
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <a href="https://discord.com/users/865816996594450532" target="_blank" class="nav-discord-link" style="color: var(--text-muted); transition: color 0.2s ease; display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem;">
+                    <i class="fab fa-discord" style="font-size: 1.1rem;"></i>
+                </a>
+                <a href="/health" target="_blank" class="status-pill">
+                    <span class="status-dot"></span>
+                    Online
+                </a>
+            </div>
         </div>
     </nav>
 
@@ -880,6 +889,29 @@
                     </div>
                     <h3>Skip Timings</h3>
                     <p>Intro/outro skip detection with metadata</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Important Note -->
+        <section class="api-section" id="important-note">
+            <div class="section-header">
+                <h2>Important Note</h2>
+                <p>Usage and contact information</p>
+            </div>
+            <div class="doc-card">
+                <h3><i class="fas fa-info-circle"></i> Usage</h3>
+                <p>
+                    Looking to integrate our embed player into your anime streaming site? We offer this, paid embed with low monthly charges to help you get started. Maintaining reliable servers and infrastructure comes with ongoing costs, so our embed is designed to keep things affordable while delivering a smooth, dependable experience. As a partner, you'll get priority support, exclusive features, an ad-free experience for your users, and you can even demand custom features.
+                </p>
+                <p style="margin-top: 1rem;">
+                    Feel free to contact us on Discord!
+                </p>
+                <div style="margin-top: 1.5rem;">
+                    <a href="https://discord.com/users/865816996594450532" target="_blank" class="btn btn-secondary" style="display: inline-flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; padding: 0.6rem 1.2rem;">
+                        <i class="fab fa-discord"></i>
+                        Contact on Discord
+                    </a>
                 </div>
             </div>
         </section>
@@ -1222,7 +1254,7 @@
     <footer class="footer">
         <div class="footer-inner">
             <div class="footer-text">
-                <strong>MikazaAPI</strong> — Professional Anime Embed Service
+                MikazaAPI - Anime Embed Service
             </div>
             <div class="footer-links">
                 <a href="#features">Features</a>
