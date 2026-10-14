@@ -3,6 +3,11 @@ const crypto = require('node:crypto');
 require('dotenv').config();
 
 const PORT = parseInt(process.env.PORT || '5001', 10);
+
+// Standalone-mode bind address. Default 0.0.0.0 for Railway/cPanel; set
+// LISTEN_HOST=127.0.0.1 on VPS setups so the raw port is never publicly
+// reachable (nginx/Cloudflare front it; cf-connecting-ip trust depends on it).
+const LISTEN_HOST = process.env.LISTEN_HOST || '0.0.0.0';
 const rawSecret = process.env.PROXY_SECRET || 'e8b2f9a9416b9b32c69d82e1c9db8c56fa769f373cfd715dfc6b45a0d33b4991';
 
 // The built-in default and the shipped .env.example placeholder are public
@@ -280,6 +285,7 @@ function buildFrameAncestorsCSP(proxyHost) {
 
 module.exports = {
   PORT,
+  LISTEN_HOST,
   proxySecretKey,
   allowedOrigins,
   allowedEmbedDomains,

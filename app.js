@@ -9,7 +9,7 @@ const path = require('node:path');
 const Fastify = require('fastify');
 const cors = require('@fastify/cors');
 const compression = require('@fastify/compress');
-const { PORT } = require('./config');
+const { PORT, LISTEN_HOST } = require('./config');
 const { renderDocs } = require('./src/views/docs');
 const { renderCustomProxy404, registerPlayerAssetRoutes } = require('./src/views/player');
 const { registerProxyRoutes } = require('./src/routes/proxy');
@@ -120,7 +120,7 @@ app.listen = function (opt, ...args) {
 if (require.main === module) {
   (async () => {
     try {
-      const address = await app.listen({ port: PORT, host: '0.0.0.0' });
+      const address = await app.listen({ port: PORT, host: LISTEN_HOST });
       console.log(`🚀 MikazaAPI running at: ${address}`);
     } catch (err) {
       console.error('Failed to start server:', err);

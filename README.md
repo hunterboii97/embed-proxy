@@ -138,6 +138,7 @@ window.addEventListener("message", function (event) {
 | Variable | Default | Description |
 | :--- | :--- | :--- |
 | `PORT` | `5001` | Server listen port |
+| `LISTEN_HOST` | `0.0.0.0` | Standalone bind address. Set `127.0.0.1` on VPS behind nginx (keeps the raw port private). |
 | `PROXY_SECRET` | *(required)* | Strong random AES-256 key. The server refuses to boot with a missing/placeholder value (public defaults are rejected). |
 | `ALLOWED_EMBED_DOMAINS` | `localhost,127.0.0.1` | Embed allowlist. Requests from any other origin get a bare `403` (no page). Also drives the `frame-ancestors` CSP. |
 | `ALLOWED_ORIGINS` | `localhost,127.0.0.1` | CORS-allowed origins (no wildcard; foreign origins get no `Access-Control-Allow-Origin`). |
