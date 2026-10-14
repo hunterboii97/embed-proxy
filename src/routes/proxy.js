@@ -2,7 +2,8 @@ const { request } = require('undici');
 const crypto = require('node:crypto');
 const { Transform } = require('node:stream');
 
-const { cdnRules, isPrivateHost } = require('../../config');
+const { cdnRules, isPrivateHost, getClientIP, isDomainAllowed, proxyRateLimitPerMin } = require('../../config');
+const { rateLimited } = require('../utils/ratelimit');
 const { decryptToken, encryptPlaylistResponse, genSoraToken } = require('../utils/crypto');
 const { rewriteM3U8, resolveAbsoluteURL } = require('../utils/m3u8');
 const { m3u8PlaylistCache, tsSegmentCache, abyssChunkCache, segmentIndex, stats } = require('../utils/cache');
@@ -91,31 +92,15 @@ function waitDrain(rawRes) {
   });
 }
 
-function getClientIP(req) {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (forwarded) {
-    const first = forwarded.split(',')[0].trim();
-    if (first) return first;
-  }
-  return req.headers['cf-connecting-ip'] || req.headers['x-real-ip'] || req.socket?.remoteAddress || '127.0.0.1';
-}
-
+// Same-origin player playback needs no CORS grant; no wildcard ACAO anywhere
+// on /p — third-party sites can no longer replay scraped tokens in-browser.
 function corsHeaders() {
   return {
-    'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
     'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization, X-Requested-With',
     'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Content-Type, Accept-Ranges',
     'Accept-Ranges': 'bytes'
   };
-}
-
-function setCORS(reply) {
-  reply.header('Access-Control-Allow-Origin', '*');
-  reply.header('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-  reply.header('Access-Control-Allow-Headers', 'Range, Content-Type, Authorization, X-Requested-With');
-  reply.header('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Content-Type, Accept-Ranges');
-  reply.header('Accept-Ranges', 'bytes');
 }
 
 function isFakePngTs(buf) {
@@ -945,7 +930,6 @@ async function handleAbyssChunked(req, reply, payload) {
   if (start > end || start >= totalSize) {
     rawRes.writeHead(416, {
       'Content-Range': `bytes */${totalSize}`,
-      'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
       'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization, X-Requested-With',
       'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Content-Type, Accept-Ranges'
@@ -961,7 +945,6 @@ async function handleAbyssChunked(req, reply, payload) {
     'Content-Length': String(contentLength),
     'Content-Range': `bytes ${start}-${end}/${totalSize}`,
     'Cache-Control': 'public, max-age=86400, immutable',
-    'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
     'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization, X-Requested-With',
     'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Content-Type, Accept-Ranges'
@@ -1037,7 +1020,6 @@ async function handleAbyssCTR(req, reply, upstreamRes, payload) {
     'Content-Type': 'video/mp4',
     'Accept-Ranges': 'bytes',
     'Cache-Control': 'public, max-age=86400, immutable',
-    'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
     'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization, X-Requested-With',
     'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Content-Type, Accept-Ranges'
@@ -1114,9 +1096,50 @@ async function handleAbyssCTR(req, reply, upstreamRes, payload) {
   upstreamRes.body.pipe(transform).pipe(rawRes);
 }
 
+function buildPlaylistResponse(entry, opts) {
+  const rewritten = rewriteM3U8(
+    entry.body,
+    opts.targetURL,
+    opts.ref || '',
+    opts.clientIP,
+    opts.exp,
+    opts.key,
+    opts.pkParam,
+    opts.isEncrypted
+  );
+
+  let responseBody = rewritten;
+  let responseContentType = 'application/vnd.apple.mpegurl';
+  if (opts.key && opts.isEncrypted) {
+    try {
+      responseBody = encryptPlaylistResponse(rewritten, opts.key);
+      responseContentType = 'text/plain; charset=utf-8';
+    } catch {
+      responseBody = rewritten;
+      responseContentType = 'application/vnd.apple.mpegurl';
+    }
+  }
+  return { responseBody, responseContentType };
+}
+
 async function registerProxyRoutes(fastify) {
   fastify.get('/p/*', async (req, reply) => {
-    setCORS(reply);
+    const clientIP = getClientIP(req);
+
+    if (rateLimited(req, 'proxy', proxyRateLimitPerMin)) {
+      return reply.code(429).send({ error: 'Too many requests' });
+    }
+
+    // No wildcard ACAO on this route: same-origin player fetches need none, and
+    // cross-site playback of stolen tokens must stay blocked in-browser. The
+    // global CORS plugin reflects origins onto replies, so strip that first and
+    // echo only allowlisted embed origins (defense-in-depth; non-hijacked paths).
+    reply.removeHeader('access-control-allow-origin');
+    const reqOrigin = (req.headers['origin'] || '').trim();
+    if (reqOrigin && isDomainAllowed(reqOrigin, req.headers['host'])) {
+      reply.header('Access-Control-Allow-Origin', reqOrigin);
+      reply.header('Vary', 'Origin');
+    }
 
     const path = req.params['*'] || '';
     if (!path) {
@@ -1134,6 +1157,14 @@ async function registerProxyRoutes(fastify) {
     // Check token expiration
     if (payload.exp && Math.floor(Date.now() / 1000) > payload.exp) {
       return reply.code(410).send({ error: 'Token expired' });
+    }
+
+    // IP binding: public mint sites bake the requester's IP into the token;
+    // replaying it from any other network is rejected here. Tokens without an
+    // ip claim are portable by design (licensed source API — SOURCE_API_ENABLED
+    // — and pre-upgrade tokens until they expire).
+    if (payload.ip && payload.ip !== clientIP) {
+      return reply.code(403).send({ error: 'Token IP mismatch' });
     }
 
     let dlName = null;
@@ -1166,13 +1197,24 @@ async function registerProxyRoutes(fastify) {
     const isEncrypted = req.query.enc === '1';
     const m3u8CacheKey = `${targetURL}|pk:${pkParam}|enc:${isEncrypted}`;
 
-    // FAST PATH: In-memory M3U8 Cache (< 1ms latency)
+    // FAST PATH: In-memory M3U8 cache stores the RAW upstream playlist. The
+    // rewrite + token minting run per requester so IP-bound segment tokens are
+    // never shared between viewers through the cache.
     if (isM3U8Target) {
-      if (m3u8PlaylistCache.has(m3u8CacheKey)) {
-        const entry = m3u8PlaylistCache.get(m3u8CacheKey);
-        reply.header('Content-Type', entry.contentType);
+      const entry = m3u8PlaylistCache.get(m3u8CacheKey);
+      if (entry) {
+        const { responseBody, responseContentType } = buildPlaylistResponse(entry, {
+          targetURL,
+          ref: entry.ref,
+          clientIP,
+          exp: payload.exp,
+          key: payload.key,
+          pkParam,
+          isEncrypted
+        });
+        reply.header('Content-Type', responseContentType);
         reply.header('Cache-Control', 'no-cache');
-        return reply.code(entry.statusCode).send(entry.body);
+        return reply.code(entry.statusCode).send(responseBody);
       }
     }
 
@@ -1209,8 +1251,6 @@ async function registerProxyRoutes(fastify) {
     if (req.headers['range']) {
       upstreamHeaders['range'] = req.headers['range'];
     }
-
-    const clientIP = getClientIP(req);
 
     // 2. Segment Engine — content-agnostic memory cache + dedupe + lookahead
     // prefetch. Applies to any media-shaped GET without a Range header:
@@ -1262,34 +1302,11 @@ async function registerProxyRoutes(fastify) {
         } catch {}
       }
 
-      const rewritten = rewriteM3U8(
-        bodyText,
-        targetURL,
-        effectiveReferer,
-        clientIP,
-        payload.exp,
-        payload.key,
-        pkParam,
-        isEncrypted
-      );
-
-      let responseBody = rewritten;
-      let responseContentType = 'application/vnd.apple.mpegurl';
-      if (payload.key && isEncrypted) {
-        try {
-          responseBody = encryptPlaylistResponse(rewritten, payload.key);
-          responseContentType = 'text/plain; charset=utf-8';
-        } catch {
-          responseBody = rewritten;
-          responseContentType = 'application/vnd.apple.mpegurl';
-        }
-      }
-
       // Index segment URLs so served segments can trigger lookahead prefetches
       const segURLs = extractSegmentURLs(bodyText, targetURL);
       const playlistEntry = {
-        body: responseBody,
-        contentType: responseContentType,
+        body: bodyText,             // raw upstream text — tokenized per requester
+        ref: effectiveReferer,
         statusCode: upstreamRes.statusCode,
         segments: segURLs.length ? segURLs : undefined,
         upstreamHeaders
@@ -1305,6 +1322,15 @@ async function registerProxyRoutes(fastify) {
         warmSegments(playlistEntry, 1, 4);
       }
 
+      const { responseBody, responseContentType } = buildPlaylistResponse(playlistEntry, {
+        targetURL,
+        ref: effectiveReferer,
+        clientIP,
+        exp: payload.exp,
+        key: payload.key,
+        pkParam,
+        isEncrypted
+      });
       reply.header('Content-Type', responseContentType);
       reply.header('Cache-Control', 'no-cache');
       return reply.code(upstreamRes.statusCode).send(responseBody);

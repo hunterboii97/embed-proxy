@@ -1,4 +1,5 @@
-const { isEmbedAllowed, buildFrameAncestorsCSP } = require('../../config');
+const { isEmbedAllowed, buildFrameAncestorsCSP, getClientIP, embedRateLimitPerMin } = require('../../config');
+const { rateLimited } = require('../utils/ratelimit');
 const { encryptToken } = require('../utils/crypto');
 const { renderCleanArtplayer, renderCustomProxy404 } = require('../views/player');
 const { extractZokoHLS } = require('../scrapers/zoko');
@@ -14,14 +15,15 @@ function applyEmbedHeaders(req, reply) {
   reply.header('Cache-Control', 'no-cache');
 }
 
-function proxyTracks(tracks, referer = '') {
+function proxyTracks(tracks, referer = '', clientIP = '') {
   return (tracks || []).map(t => {
     if (!t.file) return t;
     if (t.file.startsWith('/p/')) return t;
     const token = encryptToken({
       url: t.file,
       ref: referer,
-      exp: Math.floor(Date.now() / 1000) + 86400
+      exp: Math.floor(Date.now() / 1000) + 86400,
+      ip: clientIP
     });
     return {
       ...t,
@@ -31,12 +33,18 @@ function proxyTracks(tracks, referer = '') {
 }
 
 async function registerEmbedRoutes(fastify) {
-  // Hook to enforce ALLOWED_EMBED_DOMAINS iframe security on all /embed/* and /player/* routes
+  // Hook to enforce ALLOWED_EMBED_DOMAINS on all /embed/* and /player/* routes.
+  // Blocked requests get a bare 403 (no page, no branding) so the iframe shows
+  // a plain error and nothing loads.
   fastify.addHook('preHandler', async (req, reply) => {
     if (req.url.startsWith('/embed') || req.url.startsWith('/player')) {
+      if (rateLimited(req, 'embed', embedRateLimitPerMin)) {
+        reply.header('Cache-Control', 'no-store');
+        return reply.code(429).send();
+      }
       if (!isEmbedAllowed(req)) {
-        applyEmbedHeaders(req, reply);
-        return reply.code(403).send(renderCustomProxy404(req.url, 'Embedding is not permitted from this domain'));
+        reply.header('Cache-Control', 'no-store');
+        return reply.code(403).send();
       }
     }
   });
@@ -44,15 +52,17 @@ async function registerEmbedRoutes(fastify) {
   // --- ZOKO EMBEDS ---
   async function handleZoko(req, reply, malId, ep, lang, episodeKey) {
     applyEmbedHeaders(req, reply);
+    const clientIP = getClientIP(req);
     try {
       const data = await extractZokoHLS(malId, ep, lang);
       const streamToken = encryptToken({
         url: data.streamFile,
         ref: 'https://zokoanime.video/',
-        exp: Math.floor(Date.now() / 1000) + 86400
+        exp: Math.floor(Date.now() / 1000) + 86400,
+        ip: clientIP
       });
       const proxiedM3U8 = `/p/${streamToken}/master.m3u8`;
-      const proxiedTracks = proxyTracks(data.tracks, 'https://zokoanime.video/');
+      const proxiedTracks = proxyTracks(data.tracks, 'https://zokoanime.video/', clientIP);
 
       const html = renderCleanArtplayer(proxiedM3U8, proxiedTracks);
       return reply.send(html);
@@ -112,9 +122,10 @@ async function registerEmbedRoutes(fastify) {
   // --- ANIMESALT EMBEDS ---
   async function handleSalt(req, reply, slug, season, ep, hash, lang, episodeKey) {
     applyEmbedHeaders(req, reply);
+    const clientIP = getClientIP(req);
     try {
-      const data = await extractAnimeSaltStream(slug, season, ep, hash, lang);
-      const proxiedTracks = proxyTracks(data.tracks, 'https://abyssplayer.com/');
+      const data = await extractAnimeSaltStream(slug, season, ep, hash, lang, clientIP);
+      const proxiedTracks = proxyTracks(data.tracks, 'https://abyssplayer.com/', clientIP);
 
       const html = renderCleanArtplayer(
         data.proxiedURL,
@@ -213,15 +224,17 @@ async function registerEmbedRoutes(fastify) {
   // --- KIRA EMBEDS (formerly MegaPlay) ---
   async function handleMegaplay(req, reply, targetPath, lang, episodeKey) {
     applyEmbedHeaders(req, reply);
+    const clientIP = getClientIP(req);
     try {
       const data = await extractMegaplayHLSWithFallback(targetPath);
       const streamToken = encryptToken({
         url: data.streamFile,
         ref: 'https://megaplay.buzz/',
-        exp: Math.floor(Date.now() / 1000) + 86400
+        exp: Math.floor(Date.now() / 1000) + 86400,
+        ip: clientIP
       });
       const proxiedM3U8 = `/p/${streamToken}/master.m3u8`;
-      const proxiedTracks = proxyTracks(data.tracks, 'https://megaplay.buzz/');
+      const proxiedTracks = proxyTracks(data.tracks, 'https://megaplay.buzz/', clientIP);
 
       const html = renderCleanArtplayer(proxiedM3U8, proxiedTracks);
       return reply.send(html);

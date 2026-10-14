@@ -82,12 +82,30 @@ async function resolveAnimeSaltSlug(anilistID, malID, manualSlug) {
   throw new Error(`No matching series found on AnimeSalt for: ${title}`);
 }
 
-async function extractAnimeSaltStream(slug, season = 1, ep = 1, hashDirect = '', requestedLang = 'hin') {
+// Tokens are minted per REQUEST from the shared (cache + singleflight) result:
+// cached entries carry raw stream claims only, and the requester's IP is bound
+// into the token at mint time — one viewer's token never leaks to another.
+function mintAbyssToken(stream, clientIP) {
+  const payload = clientIP ? { ...stream, ip: clientIP } : stream;
+  return encryptToken(payload);
+}
+
+function abyssResult(entry, clientIP) {
+  return {
+    proxiedURL: `/p/${mintAbyssToken(entry.stream, clientIP)}/video.mp4`,
+    tracks: entry.tracks,
+    audioOptions: entry.audioOptions,
+    resolvedSlug: entry.resolvedSlug
+  };
+}
+
+async function extractAnimeSaltStream(slug, season = 1, ep = 1, hashDirect = '', requestedLang = 'hin', clientIP = '') {
   requestedLang = (requestedLang || 'hin').toLowerCase().trim();
   if (season <= 0) season = 1;
   if (ep <= 0) ep = 1;
   const flightKey = `salt|${slug}:${season}:${ep}:${hashDirect}:${requestedLang}`;
-  return singleflight(flightKey, () => extractAnimeSaltStreamUncached(slug, season, ep, hashDirect, requestedLang));
+  const entry = await singleflight(flightKey, () => extractAnimeSaltStreamUncached(slug, season, ep, hashDirect, requestedLang));
+  return abyssResult(entry, clientIP);
 }
 
 async function extractAnimeSaltStreamUncached(slug, season = 1, ep = 1, hashDirect = '', requestedLang = 'hin') {
@@ -98,13 +116,7 @@ async function extractAnimeSaltStreamUncached(slug, season = 1, ep = 1, hashDire
   const cacheKey = `stream:${slug}:${season}:${ep}:${hashDirect}:${requestedLang}`;
   if (animeSaltStreamCache.has(cacheKey)) {
     stats.animeSaltHits++;
-    const cached = animeSaltStreamCache.get(cacheKey);
-    return {
-      proxiedURL: cached.proxiedURL,
-      tracks: cached.tracks,
-      audioOptions: cached.audioOptions,
-      resolvedSlug: cached.resolvedSlug
-    };
+    return animeSaltStreamCache.get(cacheKey);
   }
   stats.animeSaltMisses++;
 
@@ -225,7 +237,7 @@ async function extractAnimeSaltStreamUncached(slug, season = 1, ep = 1, hashDire
   if (animeSaltStreamCache.has(selectedLink)) {
     const cached = animeSaltStreamCache.get(selectedLink);
     return {
-      proxiedURL: cached.proxiedURL,
+      stream: cached.stream,
       tracks: cached.tracks,
       audioOptions,
       resolvedSlug: cached.resolvedSlug
@@ -264,16 +276,15 @@ async function extractAnimeSaltStreamUncached(slug, season = 1, ep = 1, hashDire
   if (bestSource) {
     const parts = bestSource.path.split('/');
     const filename = parts[parts.length - 1];
-    const streamToken = encryptToken({
+    const stream = {
       url: `${bestSource.url}/${bestSource.path}`,
       ref: 'https://abyssplayer.com/',
       key: filename,
       cipher: 'abyss-ctr',
       exp: Math.floor(Date.now() / 1000) + (6 * 3600)
-    });
-    const proxiedURL = `/p/${streamToken}/video.mp4`;
+    };
     const resEntry = {
-      proxiedURL,
+      stream,
       tracks: null,
       audioOptions,
       resolvedSlug: datas.slug || slug
@@ -316,7 +327,7 @@ async function extractAnimeSaltStreamUncached(slug, season = 1, ep = 1, hashDire
 
     const parts = bestFD.url.split('/');
     const filename = parts[parts.length - 1];
-    const streamToken = encryptToken({
+    const stream = {
       url: bestFD.url,
       ref: 'https://abyssplayer.com/',
       key: filename,
@@ -328,10 +339,9 @@ async function extractAnimeSaltStreamUncached(slug, season = 1, ep = 1, hashDire
       rid: bestFD.res_id,
       dom: domain,
       exp: Math.floor(Date.now() / 1000) + (6 * 3600)
-    });
-    const proxiedURL = `/p/${streamToken}/video.mp4`;
+    };
     const resEntry = {
-      proxiedURL,
+      stream,
       tracks: null,
       audioOptions,
       resolvedSlug: datas.slug || slug

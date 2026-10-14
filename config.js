@@ -4,6 +4,25 @@ require('dotenv').config();
 
 const PORT = parseInt(process.env.PORT || '5001', 10);
 const rawSecret = process.env.PROXY_SECRET || 'e8b2f9a9416b9b32c69d82e1c9db8c56fa769f373cfd715dfc6b45a0d33b4991';
+
+// The built-in default and the shipped .env.example placeholder are public
+// values — anyone could forge tokens with them. Refuse to boot unless a real
+// secret is configured (ALLOW_INSECURE_DEFAULT_SECRET=1 bypasses for local dev).
+const INSECURE_SECRETS = new Set([
+  'e8b2f9a9416b9b32c69d82e1c9db8c56fa769f373cfd715dfc6b45a0d33b4991',
+  'your_32_byte_hex_or_secret_string'
+]);
+if (
+  (!process.env.PROXY_SECRET || INSECURE_SECRETS.has(String(process.env.PROXY_SECRET).trim())) &&
+  process.env.ALLOW_INSECURE_DEFAULT_SECRET !== '1'
+) {
+  console.error(
+    '[config] PROXY_SECRET is missing or is a public placeholder. Set a strong random ' +
+    'PROXY_SECRET in .env (ALLOW_INSECURE_DEFAULT_SECRET=1 bypasses for local development only).'
+  );
+  process.exit(1);
+}
+
 const proxySecretKey = crypto.createHash('sha256').update(rawSecret).digest();
 
 const originsStr = process.env.ALLOWED_ORIGINS || 'yumezone.live,localhost,127.0.0.1';
@@ -11,6 +30,18 @@ const allowedOrigins = originsStr.split(',').map(s => s.trim().toLowerCase()).fi
 
 let embedStr = process.env.ALLOWED_EMBED_DOMAINS || process.env.ALLOWED_ORIGINS || 'yumezone.live,*.yumezone.live,localhost,127.0.0.1';
 const allowedEmbedDomains = embedStr.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+
+// Master switch: RATE_LIMIT_ENABLED=false turns off ALL per-IP rate limits
+// (embed pages, /p stream tokens, downloads). Allowed domains then send
+// unlimited requests; the embed gate and IP-bound tokens still apply.
+const rateLimitEnabled = !/^(false|0|off|no)$/i.test(String(process.env.RATE_LIMIT_ENABLED || 'true').trim());
+
+// Per-client-IP request budgets (requests per minute; 0 disables a limit).
+// Embed/proxy defaults are set high so authorized sites' viewers never feel
+// them (even via shared NAT/carrier IPs); they exist as flood protection only.
+const embedRateLimitPerMin = parseInt(process.env.EMBED_RATE_LIMIT_PER_MIN || '3000', 10);
+const proxyRateLimitPerMin = parseInt(process.env.PROXY_RATE_LIMIT_PER_MIN || '30000', 10);
+const downloadRateLimitPerMin = parseInt(process.env.DOWNLOAD_RATE_LIMIT_PER_MIN || '30', 10);
 
 // Comprehensive CDN Rules matching main.go with exact Referer / Origin header spoofing
 const cdnRules = [
@@ -196,34 +227,40 @@ function isDomainAllowed(hostOrURL, proxyHost) {
   return false;
 }
 
+// Trusted-proxy order: Cloudflare overwrites cf-connecting-ip, nginx/LiteSpeed
+// overwrite x-real-ip. For raw X-Forwarded-For the LAST entry is the one our
+// own proxy appended (client-forged values sit to the left), so take that.
+function getClientIP(req) {
+  const cf = req.headers['cf-connecting-ip'];
+  if (cf) return String(cf).trim();
+  const real = req.headers['x-real-ip'];
+  if (real) return String(real).trim();
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded) {
+    const parts = String(forwarded).split(',');
+    const last = parts[parts.length - 1].trim();
+    if (last) return last;
+  }
+  return req.socket?.remoteAddress || '127.0.0.1';
+}
+
 function isEmbedAllowed(req) {
   const secFetchDest = (req.headers['sec-fetch-dest'] || '').toLowerCase();
-  const secFetchSite = (req.headers['sec-fetch-site'] || '').toLowerCase();
   const referer = req.headers['referer'] || '';
   const origin = req.headers['origin'] || '';
   const host = req.headers['host'] || '';
 
-  // Direct tab visits always permitted
-  if (secFetchDest === 'document' && (secFetchSite === 'none' || secFetchSite === 'same-origin' || !secFetchSite) && !referer) {
-    return true;
-  }
+  // Top-level navigation (typed URL, bookmark, shared link) is a direct visit,
+  // not an embed — allowed. Tokens minted for it are IP-bound and rate-limited,
+  // so scraped direct-visit tokens are useless for re-hosting elsewhere.
+  if (secFetchDest === 'document') return true;
 
-  // Cross-site iframe requests
-  if (secFetchDest === 'iframe' || secFetchSite === 'cross-site' || (referer && referer.includes('://'))) {
-    if (referer) {
-      if (isDomainAllowed(referer, host)) return true;
-    }
-    if (origin) {
-      if (isDomainAllowed(origin, host)) return true;
-    }
-    // Block unauthorized iframes
-    if (secFetchDest === 'iframe') {
-      return false;
-    }
-  }
-
-  // Permissive fallback for standard browser requests
-  return true;
+  // Everything else — iframes, objects, and header-less HTTP clients — must
+  // present a Referer/Origin from the allowlist. Fail closed: no signals at
+  // all means a script, not a browser embed.
+  if (referer && isDomainAllowed(referer, host)) return true;
+  if (origin && isDomainAllowed(origin, host)) return true;
+  return false;
 }
 
 function buildFrameAncestorsCSP(proxyHost) {
@@ -246,9 +283,14 @@ module.exports = {
   proxySecretKey,
   allowedOrigins,
   allowedEmbedDomains,
+  embedRateLimitPerMin,
+  proxyRateLimitPerMin,
+  downloadRateLimitPerMin,
+  rateLimitEnabled,
   cdnRules,
   isPrivateHost,
   isDomainAllowed,
   isEmbedAllowed,
+  getClientIP,
   buildFrameAncestorsCSP
 };

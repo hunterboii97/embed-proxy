@@ -138,9 +138,16 @@ window.addEventListener("message", function (event) {
 | Variable | Default | Description |
 | :--- | :--- | :--- |
 | `PORT` | `5001` | Server listen port |
-| `PROXY_SECRET` | *(required)* | 32-character AES-256 key |
-| `ALLOWED_EMBED_DOMAINS` | `localhost,127.0.0.1` | Whitelisted embed domains |
-| `ALLOWED_ORIGINS` | `localhost,127.0.0.1` | CORS-allowed origins |
+| `PROXY_SECRET` | *(required)* | Strong random AES-256 key. The server refuses to boot with a missing/placeholder value (public defaults are rejected). |
+| `ALLOWED_EMBED_DOMAINS` | `localhost,127.0.0.1` | Embed allowlist. Requests from any other origin get a bare `403` (no page). Also drives the `frame-ancestors` CSP. |
+| `ALLOWED_ORIGINS` | `localhost,127.0.0.1` | CORS-allowed origins (no wildcard; foreign origins get no `Access-Control-Allow-Origin`). |
+| `SOURCE_API_ENABLED` | *off* | Enables the JSON source API (`/api/*/source`). Off = `403`. Licensed deployments only. |
+| `DOWNLOAD_ENABLED` | *off* | Enables `/download` + `/api/download`. Off = `403`. |
+| `RATE_LIMIT_ENABLED` | `true` | Master switch for all per-IP rate limits. `false` = unlimited requests (embed gate + IP-bound tokens still apply). |
+| `EMBED_RATE_LIMIT_PER_MIN` | `3000` | Per-IP embed-page rate limit (`429` when exceeded). Defaults are generous so real viewers never trip them; `0` disables. |
+| `PROXY_RATE_LIMIT_PER_MIN` | `30000` | Per-IP `/p/*` stream/token rate limit. `0` disables. |
+| `DOWNLOAD_RATE_LIMIT_PER_MIN` | `30` | Per-IP download rate limit. `0` disables. |
+| `ALLOW_INSECURE_DEFAULT_SECRET` | *unset* | Local dev only: boot with a placeholder `PROXY_SECRET`. Never set in production. |
 
 ---
 

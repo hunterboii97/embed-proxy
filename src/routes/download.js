@@ -1,11 +1,19 @@
 const { spawn } = require('node:child_process');
 const { Readable } = require('node:stream');
+const { getClientIP, downloadRateLimitPerMin } = require('../../config');
+const { rateLimited } = require('../utils/ratelimit');
 const { extractZokoHLS } = require('../scrapers/zoko');
 const { extractAnimeSaltStream, resolveAnimeSaltSlug } = require('../scrapers/animesalt');
 const { extractMegaplayHLSWithFallback } = require('../scrapers/megaplay');
 const { resolveAnimeTitle, resolveMalId } = require('../scrapers/resolver');
 const { resolveM3U8Quality, resolveAbsoluteURL } = require('../utils/m3u8');
 const { fetchText, request, globalAgent, DEFAULT_UA } = require('../utils/http');
+
+// Downloads hand out full MP4s and are off unless explicitly enabled for a
+// licensed deployment. Keep disabled on public deployments.
+function downloadEnabled() {
+  return String(process.env.DOWNLOAD_ENABLED || '').toLowerCase() === 'true';
+}
 
 function buildDownloadFilename(title, ep, quality, lang, ext = 'mp4') {
   let cleanTitle = (title || 'Anime')
@@ -171,6 +179,13 @@ async function streamM3U8AsTS(reply, chunkURLs, referer, filename) {
 
 async function registerDownloadRoutes(fastify) {
   const handleDownload = async (req, reply) => {
+    if (!downloadEnabled()) {
+      return reply.code(403).send({ error: 'Downloads are disabled on this deployment.' });
+    }
+    if (rateLimited(req, 'download', downloadRateLimitPerMin)) {
+      return reply.code(429).send({ error: 'Too many download requests' });
+    }
+    const clientIP = getClientIP(req);
     const q = req.query;
     let server = (q.server || '').toLowerCase().trim();
     const malId = parseInt(q.mal, 10) || 0;
@@ -238,7 +253,7 @@ async function registerDownloadRoutes(fastify) {
         }
       }
       try {
-        const data = await extractAnimeSaltStream(resolvedSlug, season, ep, hash, lang);
+        const data = await extractAnimeSaltStream(resolvedSlug, season, ep, hash, lang, clientIP);
         const filename = buildDownloadFilename(customTitle || data.resolvedSlug || 'Anime', ep, quality, lang, 'mp4');
 
         // Haiku returns a proxied URL like /p/:token/video.mp4
