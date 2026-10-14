@@ -12,7 +12,7 @@ if (Array.isArray(injected.tracks)) {
       label: t.label ?? t.lang ?? 'Subtitles',
       language: t.lang || '',
       kind: t.kind === 'captions' ? 'captions' : 'subtitles',
-      default: !!t.default
+      default: false
     }));
 }
 
