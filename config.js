@@ -277,6 +277,12 @@ function buildFrameAncestorsCSP(proxyHost) {
   }
   for (const d of allowedEmbedDomains) {
     if (d === '*') return 'frame-ancestors *';
+    // A CSP host-source without a port only matches the scheme's default port,
+    // so "localhost" alone would still block dev servers on :3000/:5173/etc.
+    if (d === 'localhost' || d === '127.0.0.1') {
+      ancestors.push(`http://${d}:*`, `https://${d}:*`);
+      continue;
+    }
     ancestors.push(`https://${d}`);
     ancestors.push(`http://${d}`);
   }
