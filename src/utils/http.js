@@ -43,8 +43,11 @@ function cachedLookup(hostname, options, callback) {
 }
 
 // High-performance Global Agent
-// - pipelining:10 batches small requests per TCP connection without the
-//   head-of-line blocking risk that high pipelining adds to multi-MB bodies
+// - pipelining:1 — every request owns its connection. Pipelining>1 shared a
+//   connection across responses; HTTP/1.1 serializes responses, so ONE slow or
+//   paused body (e.g. a bandwidth-yielding prefetch) head-of-line-blocked every
+//   request queued behind it — measured 12s+ stalls. Parallelism comes from
+//   connections, not pipelining.
 // - connections:256 per origin is more than the CDN bandwidth can ever use
 // - keepAliveTimeout/MaxTimeout: long-lived sockets so CDNs stay hot
 // - cachedLookup: 5min DNS memo (see above)
@@ -52,7 +55,7 @@ const globalAgent = new Agent({
   keepAliveTimeout: 120000,
   keepAliveMaxTimeout: 600000,
   connections: 256,
-  pipelining: 10,
+  pipelining: 1,
   maxResponseSize: -1,
   headersTimeout: 8000,
   bodyTimeout: 0,

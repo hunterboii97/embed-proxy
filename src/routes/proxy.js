@@ -33,7 +33,7 @@ function timedIterator(body) {
   const arm = () => {
     clearTimeout(timer);
     timer = setTimeout(() => {
-      try { body.destroy(); } catch {}
+      destroyBody(body);
     }, BODY_STALL_MS);
   };
   arm();
@@ -90,6 +90,17 @@ function waitDrain(rawRes) {
     rawRes.once('close', done);
     rawRes.once('error', done);
   });
+}
+
+// Destroying an undici body with no error listener emits an async 'error'
+// event that Node treats as an uncaughtException — process exit, restarted
+// by systemd. Swallowing the event does not change reader behavior: pending
+// reads still reject through their own promise.
+function destroyBody(body) {
+  try {
+    if (body && typeof body.on === 'function') body.on('error', () => {});
+    body.destroy();
+  } catch {}
 }
 
 // Same-origin player playback needs no CORS grant; no wildcard ACAO anywhere
@@ -160,9 +171,12 @@ async function bufferAndFanout(upstreamRes, flight) {
   let total = 0;
   try {
     while (true) {
-      // Bandwidth priority: a prefetch with no client attached pauses while
-      // any client fetch is in flight (clients' own segments stream unthrottled).
-      while (clientInflight > 0 && waiters.length === 0) {
+      // Bandwidth priority: while real client traffic is in flight and no
+      // client has attached to this flight, drain one chunk per yield tick
+      // instead of stopping entirely — preload keeps advancing under load,
+      // and the moment a client joins (waiter) or traffic clears, the
+      // flight resumes full speed.
+      if (clientInflight > 0 && waiters.length === 0) {
         iterator.disarm();
         await new Promise((r) => setTimeout(r, PREFETCH_YIELD_POLL_MS));
         iterator.touch();
@@ -182,7 +196,7 @@ async function bufferAndFanout(upstreamRes, flight) {
           // No client is receiving this uncacheable body and no new waiter
           // can join now — abort instead of draining a huge payload.
           if (waiters.length === 0) {
-            try { upstreamRes.body.destroy(); } catch {}
+            destroyBody(upstreamRes.body);
             return { kind: 'stream', upstreamRes, iterator, chunks: [], streamConsumed: true };
           }
         }
@@ -355,7 +369,7 @@ async function teeSegmentToClient(upstreamRes, tee, flight) {
         if (!rawRes.write(out)) await waitDrain(rawRes);
       } else if (overCap && waiters.length === 0) {
         // Creator gone, nothing cacheable left, nobody else listening — abort.
-        try { upstreamRes.body.destroy(); } catch {}
+        destroyBody(upstreamRes.body);
         break;
       }
     }
@@ -393,7 +407,7 @@ function startSegmentFlight(cacheKey, targetURL, headers, tee) {
 
     const upCT = (upstreamRes.headers['content-type'] || '').toLowerCase();
     if (upCT.includes('mpegurl')) {
-      try { upstreamRes.body.destroy(); } catch {}
+      destroyBody(upstreamRes.body);
       const e = new Error('Playlist served from a media-shaped URL');
       e.code = 'IS_PLAYLIST';
       throw e;
@@ -640,7 +654,6 @@ function extractSegmentURLs(text, baseURL) {
 function prefetchSegment(url, headers) {
   if (!url || !headers) return;
   if (tsSegmentCache.has(url) || prefetchSet.has(url)) return;
-  if (clientInflight > 0) return; // player traffic has priority
   if (prefetchInflight >= PREFETCH_MAX_INFLIGHT) return;
   prefetchInflight++;
   stats.prefetchInflight = prefetchInflight;
@@ -653,7 +666,7 @@ function prefetchSegment(url, headers) {
       // Oversized body nobody claimed — release it after a grace period.
       setTimeout(() => {
         if (!result.claimed) {
-          try { result.upstreamRes.body.destroy(); } catch {}
+          destroyBody(result.upstreamRes.body);
         }
       }, 15000);
     }
@@ -725,8 +738,9 @@ async function bufferAbyssChunk(upstreamRes) {
   const chunks = [];
   let total = 0;
   while (true) {
-    // Prefetch-only fetch: yield bandwidth to live client traffic.
-    while (clientInflight > 0) {
+    // Prefetch-only fetch: drain one chunk per yield tick while clients are
+    // active, instead of stopping (see bufferAndFanout).
+    if (clientInflight > 0) {
       iterator.disarm();
       await new Promise((r) => setTimeout(r, PREFETCH_YIELD_POLL_MS));
       iterator.touch();
@@ -777,7 +791,7 @@ async function teeAbyssChunk(upstreamRes, tee) {
       if (slice.length > 0 && !rawRes.write(slice)) await waitDrain(rawRes);
     } else if (rawRes.destroyed && overCap) {
       // Client gone AND nothing cacheable is being collected — abort upstream.
-      try { upstreamRes.body.destroy(); } catch {}
+      destroyBody(upstreamRes.body);
       break;
     }
     offset += buf.length;
@@ -808,7 +822,7 @@ function startAbyssChunkFlight(payload, totalSize, chunkSize, idx, tee) {
       dispatcher: globalAgent
     });
     if (upstreamRes.statusCode >= 400) {
-      try { upstreamRes.body.destroy(); } catch {}
+      destroyBody(upstreamRes.body);
       throw new Error(`Abyss chunk upstream status ${upstreamRes.statusCode}`);
     }
 
@@ -831,7 +845,6 @@ function notifyAbyssServed(payload, totalSize, chunkSize, idx) {
     if (nextIdx * chunkSize >= totalSize) break;
     const key = abyssChunkCacheKey(payload, totalSize, chunkSize, nextIdx);
     if (abyssChunkCache.has(key) || segFlight.has(key) || prefetchSet.has(key)) continue;
-    if (clientInflight > 0) return; // player traffic has priority
     if (prefetchInflight >= PREFETCH_MAX_INFLIGHT) return;
     prefetchInflight++;
     stats.prefetchInflight = prefetchInflight;
@@ -844,7 +857,7 @@ function notifyAbyssServed(payload, totalSize, chunkSize, idx) {
         // Oversized body nobody claimed — release it after a grace period.
         setTimeout(() => {
           if (!result.claimed) {
-            try { result.upstreamRes.body.destroy(); } catch {}
+            destroyBody(result.upstreamRes.body);
           }
         }, 15000);
       }
