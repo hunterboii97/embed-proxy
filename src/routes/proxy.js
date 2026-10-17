@@ -28,6 +28,12 @@ function prefetchInt(name, fallback, min, max) {
 // a paused upstream body was the fragile part of the reverted yield build).
 const PREFETCH_UNDER_LOAD = prefetchBool('PREFETCH_UNDER_LOAD');
 const PREFETCH_MAX_INFLIGHT = prefetchInt('PREFETCH_MAX_INFLIGHT', PREFETCH_UNDER_LOAD ? 16 : 6, 1, 64);
+// Slots free-tier prefetch may never occupy: partner prefetches always have
+// at least this much headroom, even when free traffic is prefetching hard.
+const PREFETCH_PARTNER_RESERVE = Math.min(
+  PREFETCH_MAX_INFLIGHT - 1,
+  prefetchInt('PREFETCH_PARTNER_RESERVE', 6, 0, 64)
+);
 const PREFETCH_LOOKAHEAD = prefetchInt('PREFETCH_LOOKAHEAD', PREFETCH_UNDER_LOAD ? 24 : 15, 1, 120);
 const PREFETCH_WARM_COUNT = prefetchInt('PREFETCH_WARM_COUNT', PREFETCH_UNDER_LOAD ? 8 : 4, 0, 60);
 const PREFETCH_STALL_MS = prefetchInt('PREFETCH_STALL_MS', 20000, 1000, BODY_STALL_MS);
@@ -42,6 +48,24 @@ const segFlight = new Map();   // Dedupe concurrent fetches (segments + abyss ch
 const prefetchSet = new Set(); // Prefetch de-dup guard
 let prefetchInflight = 0;
 let clientInflight = 0;        // Prefetches yield to real client traffic
+let partnerClientInflight = 0; // Free prefetch yields while partner streams run
+
+function requestTier(req, payload) {
+  if (req.headers['x-embed-tier'] === 'partner') return 'partner';
+  // Abyss plays through a plain <video> element (no custom headers); partner
+  // embeds get ?prior=1 on the initial URL instead.
+  if (payload && payload.cipher === 'abyss-chunked' && req.query && req.query.prior === '1') return 'partner';
+  return 'free';
+}
+
+// Partner prefetch can use the full budget; free prefetch leaves the reserved
+// slots untouched and stops entirely while partner streams are active.
+function prefetchAllowed(tier) {
+  if (!PREFETCH_UNDER_LOAD && clientInflight > 0) return false;
+  if (tier === 'partner') return prefetchInflight < PREFETCH_MAX_INFLIGHT;
+  if (partnerClientInflight > 0) return false;
+  return prefetchInflight < PREFETCH_MAX_INFLIGHT - PREFETCH_PARTNER_RESERVE;
+}
 
 /**
  * Wraps an upstream body iterator with an inactivity timeout: if no chunk
@@ -542,7 +566,7 @@ async function streamSegmentResponse(rawRes, upstreamRes, iterator, prefixChunks
  * tees to its client while caching) -> oversize passthrough. Returns true when
  * the response was fully handled.
  */
-async function handleSegmentRequest(req, reply, targetURL, upstreamHeaders, dlName) {
+async function handleSegmentRequest(req, reply, targetURL, upstreamHeaders, dlName, tier = 'free') {
   const extraHeaders = dlName ? { 'Content-Disposition': `attachment; filename="${dlName}"` } : undefined;
 
   const cached = tsSegmentCache.get(targetURL);
@@ -558,11 +582,12 @@ async function handleSegmentRequest(req, reply, targetURL, upstreamHeaders, dlNa
       ...(extraHeaders || {})
     });
     rawRes.end(cached.body);
-    notifySegmentServed(targetURL);
+    notifySegmentServed(targetURL, tier);
     return true;
   }
 
   clientInflight++;
+  if (tier === 'partner') partnerClientInflight++;
   stats.clientInflight = clientInflight;
   let notifyURL = null;
   try {
@@ -637,8 +662,9 @@ async function handleSegmentRequest(req, reply, targetURL, upstreamHeaders, dlNa
     return passthroughSegment(targetURL, upstreamHeaders, reply, extraHeaders);
   } finally {
     clientInflight--;
+    if (tier === 'partner') partnerClientInflight--;
     stats.clientInflight = clientInflight;
-    if (notifyURL) notifySegmentServed(notifyURL);
+    if (notifyURL) notifySegmentServed(notifyURL, tier);
   }
 }
 
@@ -688,15 +714,17 @@ function extractSegmentURLs(text, baseURL) {
  * response lands in nginx's disk cache AND this worker's RAM cache. The token
  * minted here carries no ip claim; /p accepts that by design.
  */
-async function prefetchSegmentViaLoopback(url, entry) {
+async function prefetchSegmentViaLoopback(url, entry, tier) {
   const token = encryptToken({
     url,
     ref: entry.ref || '',
     exp: Math.floor(Date.now() / 1000) + 86400
   });
+  const headers = { 'user-agent': DEFAULT_UA };
+  if (tier === 'partner') headers['x-embed-tier'] = 'partner';
   const res = await request(`${PREFETCH_LOOPBACK_BASE}/p/${token}/prefetch.bin`, {
     method: 'GET',
-    headers: { 'user-agent': DEFAULT_UA },
+    headers,
     dispatcher: globalAgent,
     headersTimeout: PREFETCH_STALL_MS,
     bodyTimeout: PREFETCH_STALL_MS
@@ -714,11 +742,10 @@ async function prefetchSegmentViaLoopback(url, entry) {
  * real client traffic (hard gate); under-load mode uses its own bounded
  * budget, runs each body to completion, and shares flights with clients.
  */
-function prefetchSegment(url, headers, entry) {
+function prefetchSegment(url, headers, entry, tier = 'free') {
   if (!url || !headers) return;
-  if (!PREFETCH_UNDER_LOAD && clientInflight > 0) return; // legacy: player traffic has priority
+  if (!prefetchAllowed(tier)) return;
   if (tsSegmentCache.has(url) || prefetchSet.has(url)) return;
-  if (prefetchInflight >= PREFETCH_MAX_INFLIGHT) return;
   prefetchInflight++;
   stats.prefetchInflight = prefetchInflight;
   prefetchSet.add(url);
@@ -726,7 +753,7 @@ function prefetchSegment(url, headers, entry) {
 
   let work;
   if (PREFETCH_VIA_LOOPBACK && entry) {
-    work = prefetchSegmentViaLoopback(url, entry);
+    work = prefetchSegmentViaLoopback(url, entry, tier);
   } else {
     const flight = segFlight.get(url) || startSegmentFlight(url, url, headers, null, { stallMs: PREFETCH_STALL_MS });
     work = flight.then((result) => {
@@ -753,18 +780,18 @@ function prefetchSegment(url, headers, entry) {
  * segment(s) must stay a creator tee (progressive first bytes), while the
  * immediately following segments land in cache before the player asks for them.
  */
-function warmSegments(entry, skip, count) {
+function warmSegments(entry, skip, count, tier = 'free') {
   if (!entry || !entry.segments) return;
   const end = Math.min(skip + count, entry.segments.length);
   for (let i = skip; i < end; i++) {
-    prefetchSegment(entry.segments[i], entry.upstreamHeaders, entry);
+    prefetchSegment(entry.segments[i], entry.upstreamHeaders, entry, tier);
   }
 }
 
 /**
  * After a segment is served, prefetch the next N segments of its playlist.
  */
-function notifySegmentServed(servedURL) {
+function notifySegmentServed(servedURL, tier = 'free') {
   const info = segmentIndex.get(servedURL);
   if (!info) return;
   const entry = m3u8PlaylistCache.get(info.playlistKey);
@@ -772,7 +799,7 @@ function notifySegmentServed(servedURL) {
   for (let i = 1; i <= PREFETCH_LOOKAHEAD; i++) {
     const next = entry.segments[info.idx + i];
     if (!next) break;
-    prefetchSegment(next, entry.upstreamHeaders, entry);
+    prefetchSegment(next, entry.upstreamHeaders, entry, tier);
   }
 }
 
@@ -909,15 +936,15 @@ function startAbyssChunkFlight(payload, totalSize, chunkSize, idx, tee) {
   return flight;
 }
 
-function notifyAbyssServed(payload, totalSize, chunkSize, idx) {
-  if (!PREFETCH_UNDER_LOAD && clientInflight > 0) return; // legacy: player traffic has priority
+function notifyAbyssServed(payload, totalSize, chunkSize, idx, tier = 'free') {
+  if (!prefetchAllowed(tier)) return;
   // Prefetch the next 2 chunks (~10MB) ahead of the playhead.
   for (let ahead = 1; ahead <= 2; ahead++) {
     const nextIdx = idx + ahead;
     if (nextIdx * chunkSize >= totalSize) break;
     const key = abyssChunkCacheKey(payload, totalSize, chunkSize, nextIdx);
     if (abyssChunkCache.has(key) || segFlight.has(key) || prefetchSet.has(key)) continue;
-    if (prefetchInflight >= PREFETCH_MAX_INFLIGHT) return;
+    if (!prefetchAllowed(tier)) return;
     prefetchInflight++;
     stats.prefetchInflight = prefetchInflight;
     prefetchSet.add(key);
@@ -981,7 +1008,7 @@ async function streamAbyssChunksLegacy(payload, totalSize, chunkSize, start, end
  * Handles Abyss Chunked (Type B) video proxying with Sora tokens and range
  * clamping. Full chunks are memory-cached (768MB pool) with next-chunk prefetch.
  */
-async function handleAbyssChunked(req, reply, payload) {
+async function handleAbyssChunked(req, reply, payload, tier = 'free') {
   const totalSize = payload.ts || 0;
   let chunkSize = payload.cs || 5242880;
   if (chunkSize <= 0) chunkSize = 5242880;
@@ -1056,11 +1083,12 @@ async function handleAbyssChunked(req, reply, payload) {
       await waitDrain(rawRes);
     }
     if (!rawRes.destroyed && !rawRes.writableEnded) rawRes.end();
-    notifyAbyssServed(payload, totalSize, chunkSize, idx);
+    notifyAbyssServed(payload, totalSize, chunkSize, idx, tier);
     return;
   }
 
   clientInflight++;
+  if (tier === 'partner') partnerClientInflight++;
   stats.clientInflight = clientInflight;
   let served = false;
   try {
@@ -1088,8 +1116,9 @@ async function handleAbyssChunked(req, reply, payload) {
     }
   } finally {
     clientInflight--;
+    if (tier === 'partner') partnerClientInflight--;
     stats.clientInflight = clientInflight;
-    if (served) notifyAbyssServed(payload, totalSize, chunkSize, idx);
+    if (served) notifyAbyssServed(payload, totalSize, chunkSize, idx, tier);
     if (!rawRes.destroyed && !rawRes.writableEnded) rawRes.end();
   }
 }
@@ -1257,6 +1286,10 @@ async function registerProxyRoutes(fastify) {
       return reply.code(403).send({ error: 'Token IP mismatch' });
     }
 
+    // Partner/free lane label for prefetch scheduling. One header lookup (or,
+    // for the abyss <video> path, one query check) — no URL parsing.
+    const tier = requestTier(req, payload);
+
     let dlName = null;
     if (req.query.dl === '1' || req.query.download === '1') {
       dlName = String(req.query.filename || 'video.mp4').replace(/[^\w.\-() ]/g, '_');
@@ -1265,7 +1298,7 @@ async function registerProxyRoutes(fastify) {
 
     // 1. Abyss Chunked Proxy
     if (payload.cipher === 'abyss-chunked') {
-      return handleAbyssChunked(req, reply, payload);
+      return handleAbyssChunked(req, reply, payload, tier);
     }
 
     const targetURL = payload.url;
@@ -1357,7 +1390,7 @@ async function registerProxyRoutes(fastify) {
       !isKeyFile;
 
     if (isSegmentCandidate) {
-      const handled = await handleSegmentRequest(req, reply, targetURL, upstreamHeaders, dlName);
+      const handled = await handleSegmentRequest(req, reply, targetURL, upstreamHeaders, dlName, tier);
       if (handled) return;
     }
 
@@ -1410,7 +1443,7 @@ async function registerProxyRoutes(fastify) {
         }
         // Warm the segments right after the first: the player's own request for
         // segment 0 stays a tee (instant first bytes), 1..N land in cache.
-        warmSegments(playlistEntry, 1, PREFETCH_WARM_COUNT);
+        warmSegments(playlistEntry, 1, PREFETCH_WARM_COUNT, tier);
       }
 
       const { responseBody, responseContentType } = buildPlaylistResponse(playlistEntry, {
@@ -1538,10 +1571,15 @@ module.exports = {
     prefetchSegment,
     // Test hooks: simulate concurrent client traffic and inspect prefetch state.
     _setClientInflight: (n) => { clientInflight = n; },
+    _setPartnerClientInflight: (n) => { partnerClientInflight = n; },
+    _setPrefetchInflight: (n) => { prefetchInflight = n; },
+    _prefetchAllowed: (tier) => prefetchAllowed(tier),
+    _requestTier: (req, payload) => requestTier(req, payload),
     _getPrefetchInflight: () => prefetchInflight,
     _config: {
       underLoad: PREFETCH_UNDER_LOAD,
       maxInflight: PREFETCH_MAX_INFLIGHT,
+      partnerReserve: PREFETCH_PARTNER_RESERVE,
       lookahead: PREFETCH_LOOKAHEAD,
       warmCount: PREFETCH_WARM_COUNT,
       stallMs: PREFETCH_STALL_MS,

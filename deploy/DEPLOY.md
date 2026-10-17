@@ -23,6 +23,12 @@ NVMe cache), Cloudflare DNS as today. All configs here are written, not applied.
 - **Prefetch through loopback** (`PREFETCH_VIA_LOOPBACK=1`) sends warm requests
   back through nginx, so a prefetch started on worker A may land on worker B:
   it fills both the nginx cache and B's RAM cache. Cross-worker by design.
+- **Tier is per embed page, priority is per request header.** The parent site's
+  Referer picks partner/free once per embed page (partner = ad-free + reserved
+  prefetch lane). The player then sends `X-Embed-Tier: partner` on playlist and
+  segment requests, so `/p/` URLs stay identical for both tiers and the nginx
+  cache still holds one copy per segment. Embed HTML itself is `no-cache`
+  because it differs by site; that is a few KB per page view, not the video path.
 - **Rate limits are per worker.** Defaults (3000 embed/min, 30000 proxy/min per
   IP) apply to each worker independently, so the effective ceiling is 6×.
   Add the commented nginx `limit_req` below if you want a global per-IP cap.
@@ -59,6 +65,8 @@ Required values in `.env`:
     SHARED_SEGMENT_TOKENS=1
     PREFETCH_VIA_LOOPBACK=1
     EMBED_MODE=free                      # public embeds + redirect ads
+    ALLOWED_EMBED_DOMAINS=<partner domains>   # ad-free + priority lane
+    BLOCKED_EMBED_DOMAINS=<optional deny list>
     AD_DIRECT_URLS=<comma separated ad URLs>
     AD_INTERSTITIAL_URL=<sandboxed fallback ad URL>
 

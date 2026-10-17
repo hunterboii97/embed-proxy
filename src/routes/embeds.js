@@ -1,6 +1,6 @@
 const {
-  isEmbedAllowed, buildFrameAncestorsCSP, getClientIP, embedRateLimitPerMin,
-  freeEmbedMode, sharedSegmentTokens, adDirectUrls, adInterstitialUrl
+  isEmbedAllowed, buildFrameAncestorsCSP, getClientIP, getEmbedTier, embedRateLimitPerMin,
+  freeEmbedMode, adDirectUrls, adInterstitialUrl
 } = require('../../config');
 const { rateLimited } = require('../utils/ratelimit');
 const { encryptToken } = require('../utils/crypto');
@@ -15,14 +15,13 @@ function applyEmbedHeaders(req, reply) {
   reply.header('Content-Type', 'text/html; charset=utf-8');
   reply.header('Content-Security-Policy', buildFrameAncestorsCSP(host));
   reply.header('X-Content-Type-Options', 'nosniff');
-  // Free mode + shared tokens makes the page byte-identical for every viewer,
-  // so a shared cache may serve it; otherwise tokens are viewer-bound.
-  const cacheable = freeEmbedMode && sharedSegmentTokens;
-  reply.header('Cache-Control', cacheable ? 'public, max-age=600' : 'no-cache');
+  // The page now varies by embedding site (partner = no ads + priority tier),
+  // so a shared cache must never serve one site's copy to another.
+  reply.header('Cache-Control', 'no-cache');
 }
 
-function embedAds() {
-  if (!freeEmbedMode) return null;
+function embedAds(tier) {
+  if (!freeEmbedMode || tier === 'partner') return null;
   const ads = {};
   if (adDirectUrls.length) ads.redirects = adDirectUrls;
   if (adInterstitialUrl) ads.interstitial = adInterstitialUrl;
@@ -67,6 +66,7 @@ async function registerEmbedRoutes(fastify) {
   async function handleZoko(req, reply, malId, ep, lang, episodeKey) {
     applyEmbedHeaders(req, reply);
     const clientIP = getClientIP(req);
+    const tier = getEmbedTier(req);
     try {
       const data = await extractZokoHLS(malId, ep, lang);
       const streamToken = encryptToken({
@@ -85,7 +85,7 @@ async function registerEmbedRoutes(fastify) {
         `/embed/haiku/mal/${malId}/${ep}/${lang}`,
       ];
 
-      const html = renderCleanArtplayer(proxiedM3U8, proxiedTracks, embedAds(), fallbacks);
+      const html = renderCleanArtplayer(proxiedM3U8, proxiedTracks, embedAds(tier), fallbacks, tier);
       return reply.send(html);
     } catch (err) {
       return reply.code(404).send(renderCustomProxy404(req.url, `Zoko stream error: ${err.message}`));
@@ -144,14 +144,20 @@ async function registerEmbedRoutes(fastify) {
   async function handleSalt(req, reply, slug, season, ep, hash, lang, episodeKey) {
     applyEmbedHeaders(req, reply);
     const clientIP = getClientIP(req);
+    const tier = getEmbedTier(req);
     try {
       const data = await extractAnimeSaltStream(slug, season, ep, hash, lang, clientIP);
       const proxiedTracks = proxyTracks(data.tracks, 'https://abyssplayer.com/', clientIP);
+      // Abyss plays through a plain <video> element, which cannot send the
+      // priority header, so partner status rides in the initial URL instead.
+      const streamURL = tier === 'partner' ? `${data.proxiedURL}?prior=1` : data.proxiedURL;
 
       const html = renderCleanArtplayer(
-        data.proxiedURL,
+        streamURL,
         proxiedTracks,
-        embedAds()
+        embedAds(tier),
+        [],
+        tier
       );
       return reply.send(html);
     } catch (err) {
@@ -247,6 +253,7 @@ async function registerEmbedRoutes(fastify) {
   async function handleMegaplay(req, reply, targetPath, lang, episodeKey, fallbacks = []) {
     applyEmbedHeaders(req, reply);
     const clientIP = getClientIP(req);
+    const tier = getEmbedTier(req);
     try {
       const data = await extractMegaplayHLSWithFallback(targetPath);
       const streamToken = encryptToken({
@@ -258,7 +265,7 @@ async function registerEmbedRoutes(fastify) {
       const proxiedM3U8 = `/p/${streamToken}/master.m3u8`;
       const proxiedTracks = proxyTracks(data.tracks, 'https://megaplay.buzz/', clientIP);
 
-      const html = renderCleanArtplayer(proxiedM3U8, proxiedTracks, embedAds(), fallbacks);
+      const html = renderCleanArtplayer(proxiedM3U8, proxiedTracks, embedAds(tier), fallbacks, tier);
       return reply.send(html);
     } catch (err) {
       return reply.code(404).send(renderCustomProxy404(req.url, `Kira stream error: ${err.message}`));

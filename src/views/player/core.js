@@ -468,6 +468,17 @@ export async function createPlayer(options = {}) {
       });
     } catch { /* config tweaks are best-effort; playback must not break */ }
 
+    // Priority lane: every playlist/segment request carries this header, which
+    // the proxy reads before scheduling prefetch. Free embeds send nothing.
+    // hls.js invokes xhrSetup before xhr.open(), where setRequestHeader throws;
+    // opening it here makes openAndSendXhr skip its own open, so the header sticks.
+    if (cfg.tier === 'partner') {
+      hls.config.xhrSetup = (xhr, url) => {
+        if (xhr.readyState === 0) xhr.open('GET', url, true);
+        xhr.setRequestHeader('X-Embed-Tier', 'partner');
+      };
+    }
+
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
       const idx = pickStartLevel(hls.levels || []);
       if (idx >= 0) hls.startLevel = idx;

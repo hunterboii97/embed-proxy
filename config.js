@@ -36,9 +36,18 @@ const allowedOrigins = originsStr.split(',').map(s => s.trim().toLowerCase()).fi
 let embedStr = process.env.ALLOWED_EMBED_DOMAINS || process.env.ALLOWED_ORIGINS || 'yumezone.live,*.yumezone.live,localhost,127.0.0.1';
 const allowedEmbedDomains = embedStr.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 
-// Free embed mode: any site may frame the player (CSP frame-ancestors *) and
-// viewer-independent embed HTML is publicly cacheable when shared tokens are
-// on. Off by default — allowlisted domains keep working when off.
+// Hard deny list: any embedding page whose Referer/Origin matches is refused
+// even in free mode. Empty (default) disables the check entirely.
+const blockedEmbedDomains = String(process.env.BLOCKED_EMBED_DOMAINS || '')
+  .split(',')
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
+
+// Free embed mode: any non-blocked site may frame the player (CSP
+// frame-ancestors *). Domains in ALLOWED_EMBED_DOMAINS become the partner
+// tier: no ads and a reserved prefetch lane. Every other site is the free
+// tier: allowed, but sees ads and yields background work first. Off by
+// default — allowlisted domains keep working and are all partner-tier.
 const freeEmbedMode = String(process.env.EMBED_MODE || '').trim().toLowerCase() === 'free';
 
 // Redirect-ad URLs for free mode. One direct link (Adsterra + Monetag, comma
@@ -276,6 +285,44 @@ function getClientIP(req) {
   return req.socket?.remoteAddress || '127.0.0.1';
 }
 
+function hostnameOf(hostOrURL) {
+  if (!hostOrURL) return '';
+  const value = String(hostOrURL).toLowerCase().trim();
+  if (value.includes('://')) {
+    try { return new URL(value).hostname.toLowerCase(); } catch { return ''; }
+  }
+  return value.includes(':') ? value.split(':')[0] : value;
+}
+
+function matchesDomainList(hostOrURL, patterns) {
+  const host = hostnameOf(hostOrURL);
+  if (!host) return false;
+  for (const pattern of patterns) {
+    if (matchDomainPattern(host, pattern)) return true;
+  }
+  return false;
+}
+
+function isEmbedBlocked(req) {
+  if (!blockedEmbedDomains.length) return false;
+  return matchesDomainList(req.headers['referer'] || '', blockedEmbedDomains) ||
+    matchesDomainList(req.headers['origin'] || '', blockedEmbedDomains);
+}
+
+// Tier is decided once per embed-page request from the embedding site's
+// Referer/Origin. Direct visits have no parent site and default to free.
+// Legacy allowlist mode (free mode off) has no ads, so every allowed page is
+// treated as partner for the priority lane.
+function getEmbedTier(req) {
+  if (!freeEmbedMode) return 'partner';
+  const host = req.headers['host'] || '';
+  const referer = req.headers['referer'] || '';
+  const origin = req.headers['origin'] || '';
+  if (referer && isDomainAllowed(referer, host)) return 'partner';
+  if (origin && isDomainAllowed(origin, host)) return 'partner';
+  return 'free';
+}
+
 function isEmbedAllowed(req) {
   const secFetchDest = (req.headers['sec-fetch-dest'] || '').toLowerCase();
   const referer = req.headers['referer'] || '';
@@ -286,6 +333,9 @@ function isEmbedAllowed(req) {
   // not an embed — allowed. Tokens minted for it are IP-bound and rate-limited,
   // so scraped direct-visit tokens are useless for re-hosting elsewhere.
   if (secFetchDest === 'document') return true;
+
+  // Hard-deny list applies in every mode, before the allowlist/free checks.
+  if (isEmbedBlocked(req)) return false;
 
   // Everything else — iframes, objects, and header-less HTTP clients — must
   // present a Referer/Origin from the allowlist. Fail closed: no signals at
@@ -336,6 +386,7 @@ module.exports = {
   proxySecretKey,
   allowedOrigins,
   allowedEmbedDomains,
+  blockedEmbedDomains,
   embedRateLimitPerMin,
   proxyRateLimitPerMin,
   downloadRateLimitPerMin,
@@ -350,6 +401,8 @@ module.exports = {
   isPrivateHost,
   isDomainAllowed,
   isEmbedAllowed,
+  isEmbedBlocked,
+  getEmbedTier,
   getClientIP,
   buildFrameAncestorsCSP
 };
