@@ -171,12 +171,10 @@ async function bufferAndFanout(upstreamRes, flight) {
   let total = 0;
   try {
     while (true) {
-      // Bandwidth priority: while real client traffic is in flight and no
-      // client has attached to this flight, drain one chunk per yield tick
-      // instead of stopping entirely — preload keeps advancing under load,
-      // and the moment a client joins (waiter) or traffic clears, the
-      // flight resumes full speed.
-      if (clientInflight > 0 && waiters.length === 0) {
+      // Bandwidth priority: halt a prefetch-origin flight while real client
+      // traffic is in flight — the player's own segments must never compete
+      // with background prefetch for the upstream pipe.
+      while (clientInflight > 0 && waiters.length === 0) {
         iterator.disarm();
         await new Promise((r) => setTimeout(r, PREFETCH_YIELD_POLL_MS));
         iterator.touch();
@@ -653,6 +651,7 @@ function extractSegmentURLs(text, baseURL) {
  */
 function prefetchSegment(url, headers) {
   if (!url || !headers) return;
+  if (clientInflight > 0) return; // player traffic has priority
   if (tsSegmentCache.has(url) || prefetchSet.has(url)) return;
   if (prefetchInflight >= PREFETCH_MAX_INFLIGHT) return;
   prefetchInflight++;
@@ -738,9 +737,8 @@ async function bufferAbyssChunk(upstreamRes) {
   const chunks = [];
   let total = 0;
   while (true) {
-    // Prefetch-only fetch: drain one chunk per yield tick while clients are
-    // active, instead of stopping (see bufferAndFanout).
-    if (clientInflight > 0) {
+    // Prefetch-only fetch: yield bandwidth to live client traffic.
+    while (clientInflight > 0) {
       iterator.disarm();
       await new Promise((r) => setTimeout(r, PREFETCH_YIELD_POLL_MS));
       iterator.touch();
@@ -839,6 +837,7 @@ function startAbyssChunkFlight(payload, totalSize, chunkSize, idx, tee) {
 }
 
 function notifyAbyssServed(payload, totalSize, chunkSize, idx) {
+  if (clientInflight > 0) return; // player traffic has priority
   // Prefetch the next 2 chunks (~10MB) ahead of the playhead.
   for (let ahead = 1; ahead <= 2; ahead++) {
     const nextIdx = idx + ahead;
