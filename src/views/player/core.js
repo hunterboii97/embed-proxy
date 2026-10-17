@@ -307,6 +307,78 @@ function makeSeekButton(backward) {
   return { tooltip: tip, button: btn };
 }
 
+// Same 720p-first ordering as the server variant picker: exact 720, else the
+// highest level below it, else the lowest level above.
+function pickStartLevel(levels) {
+  let below = -1;
+  let above = -1;
+  for (let i = 0; i < levels.length; i++) {
+    const h = levels[i].height || 0;
+    if (h === 720) return i;
+    if (h > 0 && h < 720) {
+      if (below < 0 || h > levels[below].height) below = i;
+    } else if (h > 720 && (above < 0 || h < levels[above].height)) {
+      above = i;
+    }
+  }
+  return below >= 0 ? below : above;
+}
+
+const AD_CAP_KEY = 'strmcx:ad-last';
+const AD_CAP_MS = 6 * 60 * 60 * 1000;
+const AD_INTERSTITIAL_SECONDS = 5;
+
+function maybeFireAd(ads, player) {
+  if (!ads || !player) return;
+  const redirects = Array.isArray(ads.redirects) ? ads.redirects.filter(Boolean) : [];
+  if (!redirects.length) return;
+
+  try {
+    const last = Number(localStorage.getItem(AD_CAP_KEY) || 0);
+    if (Number.isFinite(last) && Date.now() - last < AD_CAP_MS) return;
+  } catch { /* storage unavailable: in-session guard still applies */ }
+  try { localStorage.setItem(AD_CAP_KEY, String(Date.now())); } catch { /* private mode */ }
+
+  const url = redirects[Math.floor(Math.random() * redirects.length)];
+  let win = null;
+  try { win = window.open(url, '_blank'); } catch { /* blocked */ }
+  if (win) {
+    try { win.opener = null; } catch { /* cross-origin */ }
+    return;
+  }
+  if (ads.interstitial) showAdInterstitial(player, ads.interstitial);
+}
+
+// Popup-blocked fallback: a 5 s skippable panel over the (already playing)
+// video. The iframe is sandboxed without top-navigation, so the ad cannot
+// redirect or disturb the player page.
+function showAdInterstitial(player, url) {
+  const overlay = document.createElement('div');
+  overlay.className = 'strmcx-ad';
+  overlay.innerHTML =
+    '<div class="strmcx-ad__panel">' +
+    '<iframe class="strmcx-ad__frame" sandbox="allow-scripts allow-same-origin allow-popups allow-forms" referrerpolicy="no-referrer"></iframe>' +
+    '<div class="strmcx-ad__bar">' +
+    '<span class="strmcx-ad__note">Ad · closes in <span class="strmcx-ad__secs">' + AD_INTERSTITIAL_SECONDS + '</span>s</span>' +
+    '<button type="button" class="strmcx-ad__skip">Skip ad</button>' +
+    '</div></div>';
+  player.append(overlay);
+
+  setTimeout(() => {
+    try { overlay.querySelector('iframe').src = url; } catch { /* ignore */ }
+  }, 0);
+
+  let left = AD_INTERSTITIAL_SECONDS;
+  const secs = overlay.querySelector('.strmcx-ad__secs');
+  const close = () => { clearInterval(timer); overlay.remove(); };
+  const timer = setInterval(() => {
+    left -= 1;
+    if (left <= 0) close();
+    else secs.textContent = String(left);
+  }, 1000);
+  overlay.querySelector('.strmcx-ad__skip').addEventListener('click', close);
+}
+
 export async function createPlayer(options = {}) {
   const cfg = { ...parseParams(), ...options };
   const settings = loadSettings();
@@ -348,6 +420,106 @@ export async function createPlayer(options = {}) {
 
   if (cfg.aspect) player.style.setProperty('--strmcx-aspect', cfg.aspect);
   if (cfg.theater || settings.theater) document.documentElement.dataset.theater = '';
+
+  /* --- 720p-first start level + stream hardening ------------------------ */
+  // Vidstack's HLS provider hands over the hls.js instance before attaching
+  // media, so this runs while the manifest is still loading. startLevel only
+  // seeds the first fragment — ABR and the quality menu work normally after.
+  player.addEventListener('hls-instance', (event) => {
+    const hls = event.detail;
+    const Hls = window.Hls;
+    if (!hls || !Hls?.Events?.MANIFEST_PARSED) return;
+
+    try {
+      Object.assign(hls.config, {
+        enableWorker: true,
+        maxBufferLength: 60,
+        maxMaxBufferLength: 180,
+        backBufferLength: 30,
+        abrEwmaDefaultEstimate: 2000000,
+        // Finite, explicit retry budgets: a dead provider turns fatal in
+        // seconds instead of hanging on hls.js's 20 s / 120 s defaults.
+        manifestLoadPolicy: {
+          default: {
+            maxTimeToFirstByteMs: 10000,
+            maxLoadTimeMs: 20000,
+            timeoutRetry: { maxNumRetry: 2, retryDelayMs: 0, maxRetryDelayMs: 0 },
+            errorRetry: { maxNumRetry: 2, retryDelayMs: 1000, maxRetryDelayMs: 8000 },
+          },
+        },
+        playlistLoadPolicy: {
+          default: {
+            maxTimeToFirstByteMs: 10000,
+            maxLoadTimeMs: 20000,
+            timeoutRetry: { maxNumRetry: 2, retryDelayMs: 0, maxRetryDelayMs: 0 },
+            errorRetry: { maxNumRetry: 2, retryDelayMs: 1000, maxRetryDelayMs: 8000 },
+          },
+        },
+        fragLoadPolicy: {
+          default: {
+            maxTimeToFirstByteMs: 10000,
+            maxLoadTimeMs: 120000,
+            timeoutRetry: { maxNumRetry: 4, retryDelayMs: 0, maxRetryDelayMs: 0 },
+            // Two quick retries: a provider outage reaches fatal in seconds,
+            // so the failover chain can take over well inside 15 s.
+            errorRetry: { maxNumRetry: 2, retryDelayMs: 500, maxRetryDelayMs: 2000 },
+          },
+        },
+      });
+    } catch { /* config tweaks are best-effort; playback must not break */ }
+
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      const idx = pickStartLevel(hls.levels || []);
+      if (idx >= 0) hls.startLevel = idx;
+    });
+
+    hls.on(Hls.Events.ERROR, (_evt, data) => {
+      if (data?.fatal) handleFatalError();
+    });
+  });
+
+  /* --- source failover -------------------------------------------------- */
+  // The server embeds the remaining provider chain in cfg.fallbacks; only the
+  // first entry is used so every provider gets exactly one attempt. The new
+  // page resumes at the failure timestamp via ?start=<seconds>.
+  const failbackList = (Array.isArray(cfg.fallbacks) ? cfg.fallbacks : [])
+    .filter((u) => typeof u === 'string' && u.startsWith('/embed/') && !u.startsWith('//'));
+
+  let failoverStarted = false;
+  let fatalOverlay = null;
+
+  function showFatalOverlay(title, canRetry) {
+    if (fatalOverlay) return;
+    fatalOverlay = document.createElement('div');
+    fatalOverlay.className = 'strmcx-fatal';
+    fatalOverlay.innerHTML =
+      '<div class="strmcx-fatal__panel">' +
+      '<p class="strmcx-fatal__title"></p>' +
+      (canRetry ? '<button type="button" class="strmcx-fatal__retry">Retry</button>' : '') +
+      '</div>';
+    fatalOverlay.querySelector('.strmcx-fatal__title').textContent = title;
+    fatalOverlay.querySelector('.strmcx-fatal__retry')?.addEventListener('click', () => location.reload());
+    player.append(fatalOverlay);
+  }
+
+  function handleFatalError() {
+    if (failoverStarted) return;
+    failoverStarted = true;
+
+    const resumeAt = Math.max(0, Math.floor(player.currentTime || 0));
+    const next = failbackList[0];
+    if (!next) {
+      showFatalOverlay('Playback failed. Please try again.', true);
+      return;
+    }
+
+    showFatalOverlay('Stream error — switching to a backup source…', false);
+    // Let the overlay paint before the document is replaced.
+    setTimeout(() => {
+      const sep = next.includes('?') ? '&' : '?';
+      location.replace(next + sep + 'start=' + resumeAt);
+    }, 600);
+  }
 
   /* --- source ---------------------------------------------------------- */
   const source = cfg.src || cfg.playlist;
@@ -450,6 +622,19 @@ export async function createPlayer(options = {}) {
   player.addEventListener('can-play', showStartScreen, { once: true });
   player.addEventListener('play', hideStartScreen);
   if (player.state.canPlay) showStartScreen();
+
+  /* --- redirect ad (free mode) ------------------------------------------ */
+  // One direct-link ad on the very first play, capped at 1 per 6 h in
+  // localStorage. Playback has already started when this runs and nothing
+  // here is awaited; the ad loads in a separate tab/iframe, so it can never
+  // delay or interrupt the stream. Only the first play is eligible — never
+  // seek/pause/resume.
+  let adAttempted = false;
+  player.addEventListener('play', () => {
+    if (adAttempted) return;
+    adAttempted = true;
+    try { maybeFireAd(cfg.ads, player); } catch { /* ads never break playback */ }
+  });
 
   /* --- extra control-bar buttons --------------------------------------- */
   // The layout re-renders its controls template as reactive state settles,
@@ -725,7 +910,10 @@ export async function createPlayer(options = {}) {
   player.addEventListener('pause', () => host.send('strmcx-state-change', { state: 'pause' }));
   player.addEventListener('ended', () => host.send('strmcx-ended'));
   player.addEventListener('duration-change', () => host.send('strmcx-duration', { duration: player.duration }));
-  player.addEventListener('error', () => host.send('strmcx-error', { message: String(player.error?.message ?? 'unknown') }));
+  player.addEventListener('error', () => {
+    host.send('strmcx-error', { message: String(player.error?.message ?? 'unknown') });
+    handleFatalError();
+  });
   player.addEventListener('enter-fullscreen', () => host.send('strmcx-fullscreen', { active: true }));
   player.addEventListener('exit-fullscreen',  () => host.send('strmcx-fullscreen', { active: false }));
 

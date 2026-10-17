@@ -2,9 +2,9 @@ const { request } = require('undici');
 const crypto = require('node:crypto');
 const { Transform } = require('node:stream');
 
-const { cdnRules, isPrivateHost, getClientIP, isDomainAllowed, proxyRateLimitPerMin } = require('../../config');
+const { PORT, cdnRules, isPrivateHost, getClientIP, isDomainAllowed, proxyRateLimitPerMin, sharedSegmentTokens } = require('../../config');
 const { rateLimited } = require('../utils/ratelimit');
-const { decryptToken, encryptPlaylistResponse, genSoraToken } = require('../utils/crypto');
+const { decryptToken, encryptToken, encryptPlaylistResponse, genSoraToken } = require('../utils/crypto');
 const { rewriteM3U8, resolveAbsoluteURL } = require('../utils/m3u8');
 const { m3u8PlaylistCache, tsSegmentCache, abyssChunkCache, segmentIndex, stats } = require('../utils/cache');
 const { globalAgent, DEFAULT_UA } = require('../utils/http');
@@ -12,10 +12,31 @@ const { globalAgent, DEFAULT_UA } = require('../utils/http');
 // Segment engine tunables
 const SEGMENT_BUFFER_CAP = 16 * 1024 * 1024;    // Cache segments up to 16MB; larger = passthrough stream
 const ABYSS_MAX_CACHED_CHUNK = 12 * 1024 * 1024; // Abyss chunks are ~5MB; 12MB covers every real layout
-const PREFETCH_LOOKAHEAD = 15;                  // Prefetch next 15 segments (~2+ min ahead of playhead)
-const PREFETCH_MAX_INFLIGHT = 6;                // Global concurrent prefetch cap (bounded upstream load)
 const BODY_STALL_MS = parseInt(process.env.BODY_STALL_MS || '30000', 10); // Abort upstream bodies that go silent (tunable)
 const PREFETCH_YIELD_POLL_MS = 100;              // Re-check client traffic every 100ms while a prefetch is paused
+
+const prefetchBool = (name) => /^(1|true|yes|on)$/i.test(String(process.env[name] || '').trim());
+function prefetchInt(name, fallback, min, max) {
+  const parsed = parseInt(process.env[name], 10);
+  const value = Number.isFinite(parsed) ? parsed : fallback;
+  return Math.min(max, Math.max(min, value));
+}
+
+// Prefetch-under-load is opt-in: legacy mode keeps the hard "no prefetch while
+// any client is in flight" gate. Under load, prefetch gets its own bounded
+// budget and is never allowed to pause a client stream (or be paused itself —
+// a paused upstream body was the fragile part of the reverted yield build).
+const PREFETCH_UNDER_LOAD = prefetchBool('PREFETCH_UNDER_LOAD');
+const PREFETCH_MAX_INFLIGHT = prefetchInt('PREFETCH_MAX_INFLIGHT', PREFETCH_UNDER_LOAD ? 16 : 6, 1, 64);
+const PREFETCH_LOOKAHEAD = prefetchInt('PREFETCH_LOOKAHEAD', PREFETCH_UNDER_LOAD ? 24 : 15, 1, 120);
+const PREFETCH_WARM_COUNT = prefetchInt('PREFETCH_WARM_COUNT', PREFETCH_UNDER_LOAD ? 8 : 4, 0, 60);
+const PREFETCH_STALL_MS = prefetchInt('PREFETCH_STALL_MS', 20000, 1000, BODY_STALL_MS);
+
+// Production warms go through the nginx loopback (PREFETCH_LOOPBACK_BASE must
+// point at nginx, not this app): the response is stored on disk and in this
+// worker's RAM, and nginx later serves viewers without touching Node at all.
+const PREFETCH_VIA_LOOPBACK = prefetchBool('PREFETCH_VIA_LOOPBACK');
+const PREFETCH_LOOPBACK_BASE = (process.env.PREFETCH_LOOPBACK_BASE || `http://127.0.0.1:${PORT}`).replace(/\/+$/, '');
 
 const segFlight = new Map();   // Dedupe concurrent fetches (segments + abyss chunks, prefixed keys)
 const prefetchSet = new Set(); // Prefetch de-dup guard
@@ -27,14 +48,14 @@ let clientInflight = 0;        // Prefetches yield to real client traffic
  * arrives for BODY_STALL_MS the body is destroyed so the pending next()
  * rejects instead of hanging the request forever.
  */
-function timedIterator(body) {
+function timedIterator(body, stallMs = BODY_STALL_MS) {
   const iterator = body[Symbol.asyncIterator]();
   let timer = null;
   const arm = () => {
     clearTimeout(timer);
     timer = setTimeout(() => {
       destroyBody(body);
-    }, BODY_STALL_MS);
+    }, stallMs);
   };
   arm();
   return {
@@ -114,6 +135,20 @@ function corsHeaders() {
   };
 }
 
+// @fastify/cors reflects origins globally and marks replies Vary: Origin. A
+// shared cache cannot serve one viewer's reflected headers to another, so in
+// shared-token mode the media path must be origin-agnostic.
+function stripOriginVary(reply) {
+  const current = reply.getHeader('vary');
+  if (!current) return;
+  const kept = String(current)
+    .split(',')
+    .map(v => v.trim())
+    .filter(v => v && v.toLowerCase() !== 'origin');
+  if (kept.length) reply.header('Vary', kept.join(', '));
+  else reply.removeHeader('vary');
+}
+
 function isFakePngTs(buf) {
   return (
     buf.length >= 253 &&
@@ -162,7 +197,7 @@ async function fetchSegmentRaw(targetURL, headers) {
 async function bufferAndFanout(upstreamRes, flight) {
   const waiters = flight.waiters;
   const cl = parseInt(upstreamRes.headers['content-length'] || '0', 10);
-  const iterator = timedIterator(upstreamRes.body);
+  const iterator = timedIterator(upstreamRes.body, flight.stallMs);
   if (cl > SEGMENT_BUFFER_CAP) {
     return { kind: 'stream', upstreamRes, iterator, chunks: [] };
   }
@@ -171,10 +206,13 @@ async function bufferAndFanout(upstreamRes, flight) {
   let total = 0;
   try {
     while (true) {
-      // Bandwidth priority: halt a prefetch-origin flight while real client
-      // traffic is in flight — the player's own segments must never compete
-      // with background prefetch for the upstream pipe.
-      while (clientInflight > 0 && waiters.length === 0) {
+      // Bandwidth priority (legacy mode only): halt a prefetch-origin flight
+      // while real client traffic is in flight — the player's own segments
+      // must never compete with background prefetch for the upstream pipe.
+      // Under-load mode instead bounds prefetch by its own budget and lets
+      // these bodies run to completion: pausing/disarming mid-body is what
+      // made the reverted yield build unstable.
+      while (!PREFETCH_UNDER_LOAD && clientInflight > 0 && waiters.length === 0) {
         iterator.disarm();
         await new Promise((r) => setTimeout(r, PREFETCH_YIELD_POLL_MS));
         iterator.touch();
@@ -398,7 +436,7 @@ async function teeSegmentToClient(upstreamRes, tee, flight) {
  * late-joining clients (waiters) of a prefetch-origin flight get the arriving
  * chunks fanned out to them progressively.
  */
-function startSegmentFlight(cacheKey, targetURL, headers, tee) {
+function startSegmentFlight(cacheKey, targetURL, headers, tee, opts = {}) {
   const flight = (async () => {
     stats.segmentUpstream++;
     const upstreamRes = await fetchSegmentRaw(targetURL, headers);
@@ -428,6 +466,7 @@ function startSegmentFlight(cacheKey, targetURL, headers, tee) {
   flight.creatorTee = Boolean(tee);
   flight.waiters = [];
   flight.overCap = false;
+  flight.stallMs = opts.stallMs || BODY_STALL_MS;
   segFlight.set(cacheKey, flight);
   flight.then(() => segFlight.delete(cacheKey), () => segFlight.delete(cacheKey));
   return flight;
@@ -645,13 +684,39 @@ function extractSegmentURLs(text, baseURL) {
 }
 
 /**
- * Background prefetch: fills tsSegmentCache for upcoming segments so the
- * player's next requests are served from memory (~0ms). Yields to real client
- * traffic and shares in-flight fetches with clients (never double-fetches).
+ * Loopback warm: fetch the segment through the nginx-fronted proxy path so the
+ * response lands in nginx's disk cache AND this worker's RAM cache. The token
+ * minted here carries no ip claim; /p accepts that by design.
  */
-function prefetchSegment(url, headers) {
+async function prefetchSegmentViaLoopback(url, entry) {
+  const token = encryptToken({
+    url,
+    ref: entry.ref || '',
+    exp: Math.floor(Date.now() / 1000) + 86400
+  });
+  const res = await request(`${PREFETCH_LOOPBACK_BASE}/p/${token}/prefetch.bin`, {
+    method: 'GET',
+    headers: { 'user-agent': DEFAULT_UA },
+    dispatcher: globalAgent,
+    headersTimeout: PREFETCH_STALL_MS,
+    bodyTimeout: PREFETCH_STALL_MS
+  });
+  if (res.statusCode >= 400) {
+    destroyBody(res.body);
+    throw new Error(`Loopback prefetch status ${res.statusCode}`);
+  }
+  await res.body.dump();
+}
+
+/**
+ * Background prefetch: fills tsSegmentCache for upcoming segments so the
+ * player's next requests are served from memory (~0ms). Legacy mode yields to
+ * real client traffic (hard gate); under-load mode uses its own bounded
+ * budget, runs each body to completion, and shares flights with clients.
+ */
+function prefetchSegment(url, headers, entry) {
   if (!url || !headers) return;
-  if (clientInflight > 0) return; // player traffic has priority
+  if (!PREFETCH_UNDER_LOAD && clientInflight > 0) return; // legacy: player traffic has priority
   if (tsSegmentCache.has(url) || prefetchSet.has(url)) return;
   if (prefetchInflight >= PREFETCH_MAX_INFLIGHT) return;
   prefetchInflight++;
@@ -659,17 +724,24 @@ function prefetchSegment(url, headers) {
   prefetchSet.add(url);
   stats.segmentPrefetch++;
 
-  const flight = segFlight.get(url) || startSegmentFlight(url, url, headers, null);
-  flight.then((result) => {
-    if (result && result.kind === 'stream' && !result.streamConsumed && !result.claimed) {
-      // Oversized body nobody claimed — release it after a grace period.
-      setTimeout(() => {
-        if (!result.claimed) {
-          destroyBody(result.upstreamRes.body);
-        }
-      }, 15000);
-    }
-  }).catch(() => {}).finally(() => {
+  let work;
+  if (PREFETCH_VIA_LOOPBACK && entry) {
+    work = prefetchSegmentViaLoopback(url, entry);
+  } else {
+    const flight = segFlight.get(url) || startSegmentFlight(url, url, headers, null, { stallMs: PREFETCH_STALL_MS });
+    work = flight.then((result) => {
+      if (result && result.kind === 'stream' && !result.streamConsumed && !result.claimed) {
+        // Oversized body nobody claimed — release it after a grace period.
+        setTimeout(() => {
+          if (!result.claimed) {
+            destroyBody(result.upstreamRes.body);
+          }
+        }, 15000);
+      }
+    });
+  }
+
+  work.catch(() => {}).finally(() => {
     prefetchInflight--;
     stats.prefetchInflight = prefetchInflight;
     prefetchSet.delete(url);
@@ -685,7 +757,7 @@ function warmSegments(entry, skip, count) {
   if (!entry || !entry.segments) return;
   const end = Math.min(skip + count, entry.segments.length);
   for (let i = skip; i < end; i++) {
-    prefetchSegment(entry.segments[i], entry.upstreamHeaders);
+    prefetchSegment(entry.segments[i], entry.upstreamHeaders, entry);
   }
 }
 
@@ -700,7 +772,7 @@ function notifySegmentServed(servedURL) {
   for (let i = 1; i <= PREFETCH_LOOKAHEAD; i++) {
     const next = entry.segments[info.idx + i];
     if (!next) break;
-    prefetchSegment(next, entry.upstreamHeaders);
+    prefetchSegment(next, entry.upstreamHeaders, entry);
   }
 }
 
@@ -732,13 +804,14 @@ function abyssChunkCacheKey(payload, totalSize, chunkSize, idx) {
  * Buffers a full abyss chunk up to ABYSS_MAX_CACHED_CHUNK; larger responses
  * degrade to a plain stream (never cached).
  */
-async function bufferAbyssChunk(upstreamRes) {
-  const iterator = timedIterator(upstreamRes.body);
+async function bufferAbyssChunk(upstreamRes, stallMs = BODY_STALL_MS) {
+  const iterator = timedIterator(upstreamRes.body, stallMs);
   const chunks = [];
   let total = 0;
   while (true) {
-    // Prefetch-only fetch: yield bandwidth to live client traffic.
-    while (clientInflight > 0) {
+    // Prefetch-only fetch (legacy mode): yield bandwidth to live client
+    // traffic. Under-load mode never pauses a started body.
+    while (!PREFETCH_UNDER_LOAD && clientInflight > 0) {
       iterator.disarm();
       await new Promise((r) => setTimeout(r, PREFETCH_YIELD_POLL_MS));
       iterator.touch();
@@ -824,7 +897,7 @@ function startAbyssChunkFlight(payload, totalSize, chunkSize, idx, tee) {
       throw new Error(`Abyss chunk upstream status ${upstreamRes.statusCode}`);
     }
 
-    const result = tee ? await teeAbyssChunk(upstreamRes, tee) : await bufferAbyssChunk(upstreamRes);
+    const result = tee ? await teeAbyssChunk(upstreamRes, tee) : await bufferAbyssChunk(upstreamRes, PREFETCH_STALL_MS);
     if (result.kind === 'buffered' && result.body.length <= ABYSS_MAX_CACHED_CHUNK) {
       abyssChunkCache.set(key, result.body);
     }
@@ -837,7 +910,7 @@ function startAbyssChunkFlight(payload, totalSize, chunkSize, idx, tee) {
 }
 
 function notifyAbyssServed(payload, totalSize, chunkSize, idx) {
-  if (clientInflight > 0) return; // player traffic has priority
+  if (!PREFETCH_UNDER_LOAD && clientInflight > 0) return; // legacy: player traffic has priority
   // Prefetch the next 2 chunks (~10MB) ahead of the playhead.
   for (let ahead = 1; ahead <= 2; ahead++) {
     const nextIdx = idx + ahead;
@@ -1146,9 +1219,13 @@ async function registerProxyRoutes(fastify) {
     // cross-site playback of stolen tokens must stay blocked in-browser. The
     // global CORS plugin reflects origins onto replies, so strip that first and
     // echo only allowlisted embed origins (defense-in-depth; non-hijacked paths).
+    // Shared-token mode drops the echo and Vary entirely so a shared cache sees
+    // one origin-agnostic response per URL.
     reply.removeHeader('access-control-allow-origin');
     const reqOrigin = (req.headers['origin'] || '').trim();
-    if (reqOrigin && isDomainAllowed(reqOrigin, req.headers['host'])) {
+    if (sharedSegmentTokens) {
+      stripOriginVary(reply);
+    } else if (reqOrigin && isDomainAllowed(reqOrigin, req.headers['host'])) {
       reply.header('Access-Control-Allow-Origin', reqOrigin);
       reply.header('Vary', 'Origin');
     }
@@ -1173,8 +1250,9 @@ async function registerProxyRoutes(fastify) {
 
     // IP binding: public mint sites bake the requester's IP into the token;
     // replaying it from any other network is rejected here. Tokens without an
-    // ip claim are portable by design (licensed source API — SOURCE_API_ENABLED
-    // — and pre-upgrade tokens until they expire).
+    // ip claim are portable by design: shared-token mode (SHARED_SEGMENT_TOKENS)
+    // intentionally mints viewer-independent URLs so a shared cache can serve
+    // one copy, plus licensed source-API tokens and pre-upgrade tokens.
     if (payload.ip && payload.ip !== clientIP) {
       return reply.code(403).send({ error: 'Token IP mismatch' });
     }
@@ -1210,8 +1288,9 @@ async function registerProxyRoutes(fastify) {
     const m3u8CacheKey = `${targetURL}|pk:${pkParam}|enc:${isEncrypted}`;
 
     // FAST PATH: In-memory M3U8 cache stores the RAW upstream playlist. The
-    // rewrite + token minting run per requester so IP-bound segment tokens are
-    // never shared between viewers through the cache.
+    // rewrite + token minting run per requester; in shared-token mode the mint
+    // is deterministic (no IP, bucketed exp), so every viewer gets identical
+    // URLs and any downstream cache can serve one copy.
     if (isM3U8Target) {
       const entry = m3u8PlaylistCache.get(m3u8CacheKey);
       if (entry) {
@@ -1225,7 +1304,7 @@ async function registerProxyRoutes(fastify) {
           isEncrypted
         });
         reply.header('Content-Type', responseContentType);
-        reply.header('Cache-Control', 'no-cache');
+        reply.header('Cache-Control', sharedSegmentTokens ? 'public, max-age=60' : 'no-cache');
         return reply.code(entry.statusCode).send(responseBody);
       }
     }
@@ -1330,8 +1409,8 @@ async function registerProxyRoutes(fastify) {
           segmentIndex.set(segURLs[i], { playlistKey: m3u8CacheKey, idx: i });
         }
         // Warm the segments right after the first: the player's own request for
-        // segment 0 stays a tee (instant first bytes), 1..4 land in cache.
-        warmSegments(playlistEntry, 1, 4);
+        // segment 0 stays a tee (instant first bytes), 1..N land in cache.
+        warmSegments(playlistEntry, 1, PREFETCH_WARM_COUNT);
       }
 
       const { responseBody, responseContentType } = buildPlaylistResponse(playlistEntry, {
@@ -1344,7 +1423,7 @@ async function registerProxyRoutes(fastify) {
         isEncrypted
       });
       reply.header('Content-Type', responseContentType);
-      reply.header('Cache-Control', 'no-cache');
+      reply.header('Cache-Control', sharedSegmentTokens ? 'public, max-age=60' : 'no-cache');
       return reply.code(upstreamRes.statusCode).send(responseBody);
     }
 
@@ -1456,7 +1535,18 @@ module.exports = {
   _internals: {
     timedIterator,
     bufferAndFanout,
-    // Test hook: simulate concurrent client traffic for the prefetch yield gate.
-    _setClientInflight: (n) => { clientInflight = n; }
+    prefetchSegment,
+    // Test hooks: simulate concurrent client traffic and inspect prefetch state.
+    _setClientInflight: (n) => { clientInflight = n; },
+    _getPrefetchInflight: () => prefetchInflight,
+    _config: {
+      underLoad: PREFETCH_UNDER_LOAD,
+      maxInflight: PREFETCH_MAX_INFLIGHT,
+      lookahead: PREFETCH_LOOKAHEAD,
+      warmCount: PREFETCH_WARM_COUNT,
+      stallMs: PREFETCH_STALL_MS,
+      viaLoopback: PREFETCH_VIA_LOOPBACK,
+      loopbackBase: PREFETCH_LOOPBACK_BASE
+    }
   }
 };

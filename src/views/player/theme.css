@@ -224,3 +224,104 @@ html[data-color-scheme="light"] .strmcx-error { color: #111; }
   -webkit-backdrop-filter: none !important;
   will-change: auto !important;
 }
+
+/* ---- Popup-blocked ad fallback -----------------------------------------
+   Shown only in free-embed mode when the direct-link popup is blocked.
+   Sandboxed iframe + fixed 5 s auto-close; playback continues behind it. */
+.strmcx-ad {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 0.92);
+}
+
+.strmcx-ad__panel {
+  display: flex;
+  flex-direction: column;
+  width: min(92%, 640px);
+  height: min(80%, 420px);
+  overflow: hidden;
+  background: #0b0b0c;
+  border: 1px solid rgb(255 255 255 / 0.08);
+  border-radius: 10px;
+}
+
+.strmcx-ad__frame {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  background: #000;
+}
+
+.strmcx-ad__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #a1a1aa;
+}
+
+.strmcx-ad__skip {
+  padding: 5px 12px;
+  font: inherit;
+  color: #e4e4e7;
+  cursor: pointer;
+  background: #18181b;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  border-radius: 9999px;
+}
+
+.strmcx-ad__skip:hover {
+  color: #fff;
+  background: #27272a;
+}
+
+/* ---- Fatal stream error / failover overlay -----------------------------
+   Covers the player so a dead source never looks like an idle black screen.
+   With a backup provider the page navigates away; on the last provider a
+   Retry button reloads the page. */
+.strmcx-fatal {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  text-align: center;
+  background: rgb(0 0 0 / 0.88);
+}
+
+.strmcx-fatal__panel {
+  max-width: 340px;
+}
+
+.strmcx-fatal__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #f4f4f5;
+}
+
+.strmcx-fatal__retry {
+  margin-top: 16px;
+  padding: 8px 20px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: #e4e4e7;
+  cursor: pointer;
+  background: #18181b;
+  border: 1px solid rgb(255 255 255 / 0.12);
+  border-radius: 9999px;
+}
+
+.strmcx-fatal__retry:hover {
+  color: #fff;
+  background: #27272a;
+}
+

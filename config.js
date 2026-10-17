@@ -36,6 +36,33 @@ const allowedOrigins = originsStr.split(',').map(s => s.trim().toLowerCase()).fi
 let embedStr = process.env.ALLOWED_EMBED_DOMAINS || process.env.ALLOWED_ORIGINS || 'yumezone.live,*.yumezone.live,localhost,127.0.0.1';
 const allowedEmbedDomains = embedStr.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 
+// Free embed mode: any site may frame the player (CSP frame-ancestors *) and
+// viewer-independent embed HTML is publicly cacheable when shared tokens are
+// on. Off by default — allowlisted domains keep working when off.
+const freeEmbedMode = String(process.env.EMBED_MODE || '').trim().toLowerCase() === 'free';
+
+// Redirect-ad URLs for free mode. One direct link (Adsterra + Monetag, comma
+// separated) opens on the first play click; the interstitial is the
+// popup-blocked fallback rendered in a sandboxed iframe. Empty = no ads.
+const adDirectUrls = String(process.env.AD_DIRECT_URLS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter((s) => /^https?:\/\//i.test(s));
+const adInterstitialUrl = String(process.env.AD_INTERSTITIAL_URL || '').trim();
+
+// Shared token model: viewer-independent URLs are required for any shared
+// cache (nginx disk cache) to work. Off by default — IP-bound tokens remain
+// the legacy behavior and stay valid until they expire after a flip.
+// Expiry is rounded to a fixed bucket (+ grace) so every viewer minted in the
+// same window gets the same token, and a cached embed page never carries an
+// already-expired token across the bucket boundary.
+const sharedSegmentTokens = /^(1|true|yes|on)$/i.test(String(process.env.SHARED_SEGMENT_TOKENS || '').trim());
+const tokenBucketSeconds = parseInt(process.env.TOKEN_BUCKET_SECONDS || '86400', 10) || 86400;
+const tokenGraceSeconds = parseInt(process.env.TOKEN_GRACE_SECONDS || '3600', 10);
+if (tokenGraceSeconds < 0) {
+  throw new Error('TOKEN_GRACE_SECONDS must be >= 0');
+}
+
 // Master switch: RATE_LIMIT_ENABLED=false turns off ALL per-IP rate limits
 // (embed pages, /p stream tokens, downloads). Allowed domains then send
 // unlimited requests; the embed gate and IP-bound tokens still apply.
@@ -263,12 +290,26 @@ function isEmbedAllowed(req) {
   // Everything else — iframes, objects, and header-less HTTP clients — must
   // present a Referer/Origin from the allowlist. Fail closed: no signals at
   // all means a script, not a browser embed.
+  if (freeEmbedMode) {
+    if (isWebOrigin(referer) || isWebOrigin(origin)) return true;
+    return false;
+  }
   if (referer && isDomainAllowed(referer, host)) return true;
   if (origin && isDomainAllowed(origin, host)) return true;
   return false;
 }
 
+function isWebOrigin(value) {
+  try {
+    const u = new URL(value);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 function buildFrameAncestorsCSP(proxyHost) {
+  if (freeEmbedMode) return 'frame-ancestors *';
   const ancestors = ["'self'"];
   if (proxyHost) {
     const cleanHost = proxyHost.split(':')[0];
@@ -299,6 +340,12 @@ module.exports = {
   proxyRateLimitPerMin,
   downloadRateLimitPerMin,
   rateLimitEnabled,
+  sharedSegmentTokens,
+  tokenBucketSeconds,
+  tokenGraceSeconds,
+  freeEmbedMode,
+  adDirectUrls,
+  adInterstitialUrl,
   cdnRules,
   isPrivateHost,
   isDomainAllowed,

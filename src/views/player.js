@@ -40,12 +40,20 @@ try {
   console.error('Failed reading player.html:', e);
 }
 
-function renderCleanArtplayer(streamURL, subtitleTracks = []) {
-  const tracksJSON = JSON.stringify(subtitleTracks || []);
+function scriptSafeJSON(value) {
+  return JSON.stringify(value).replace(/</g, '\\u003c');
+}
+
+function renderCleanArtplayer(streamURL, subtitleTracks = [], ads = null, fallbacks = []) {
+  const tracksJSON = scriptSafeJSON(subtitleTracks || []);
+  const adsJSON = scriptSafeJSON(ads || null);
+  const fallbacksJSON = scriptSafeJSON(fallbacks || []);
 
   return playerHtmlTemplate
     .replace('{{STREAM_URL}}', streamURL)
-    .replace('{{RAW_TRACKS}}', tracksJSON);
+    .replace('{{RAW_TRACKS}}', tracksJSON)
+    .replace('{{ADS_CONFIG}}', adsJSON)
+    .replace('{{FALLBACKS}}', fallbacksJSON);
 }
 
 function renderCustomProxy404(requestPath = '', message = '') {

@@ -1,0 +1,33 @@
+# MikazaAPI worker unit. Six instances share one .env (one PROXY_SECRET).
+#
+#   systemctl enable --now mikaza-api@{1..6}
+#
+# %i maps to the port: instance 1 -> PORT=5001 ... instance 6 -> PORT=5006.
+# The raw ports bind to loopback only; nginx is the sole public listener.
+#
+# Deploy note: no dedicated service user is created. The worker runs as the
+# system default (root). If you prefer an unprivileged user, add User=/Group=
+# yourself — everything else here works unchanged.
+
+[Unit]
+Description=MikazaAPI worker %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/mikaza
+EnvironmentFile=/opt/mikaza/.env
+Environment=PORT=500%i
+Environment=LISTEN_HOST=127.0.0.1
+ExecStart=/usr/bin/node app.js
+Restart=always
+RestartSec=2
+KillSignal=SIGTERM
+TimeoutStopSec=10
+LimitNOFILE=200000
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

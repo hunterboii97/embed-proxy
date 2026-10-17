@@ -1,4 +1,7 @@
-const { isEmbedAllowed, buildFrameAncestorsCSP, getClientIP, embedRateLimitPerMin } = require('../../config');
+const {
+  isEmbedAllowed, buildFrameAncestorsCSP, getClientIP, embedRateLimitPerMin,
+  freeEmbedMode, sharedSegmentTokens, adDirectUrls, adInterstitialUrl
+} = require('../../config');
 const { rateLimited } = require('../utils/ratelimit');
 const { encryptToken } = require('../utils/crypto');
 const { renderCleanArtplayer, renderCustomProxy404 } = require('../views/player');
@@ -12,7 +15,18 @@ function applyEmbedHeaders(req, reply) {
   reply.header('Content-Type', 'text/html; charset=utf-8');
   reply.header('Content-Security-Policy', buildFrameAncestorsCSP(host));
   reply.header('X-Content-Type-Options', 'nosniff');
-  reply.header('Cache-Control', 'no-cache');
+  // Free mode + shared tokens makes the page byte-identical for every viewer,
+  // so a shared cache may serve it; otherwise tokens are viewer-bound.
+  const cacheable = freeEmbedMode && sharedSegmentTokens;
+  reply.header('Cache-Control', cacheable ? 'public, max-age=600' : 'no-cache');
+}
+
+function embedAds() {
+  if (!freeEmbedMode) return null;
+  const ads = {};
+  if (adDirectUrls.length) ads.redirects = adDirectUrls;
+  if (adInterstitialUrl) ads.interstitial = adInterstitialUrl;
+  return Object.keys(ads).length ? ads : null;
 }
 
 function proxyTracks(tracks, referer = '', clientIP = '') {
@@ -64,7 +78,14 @@ async function registerEmbedRoutes(fastify) {
       const proxiedM3U8 = `/p/${streamToken}/master.m3u8`;
       const proxiedTracks = proxyTracks(data.tracks, 'https://zokoanime.video/', clientIP);
 
-      const html = renderCleanArtplayer(proxiedM3U8, proxiedTracks);
+      // Remaining providers in the failover chain; the player page only ever
+      // navigates to the first entry, so each provider gets exactly one try.
+      const fallbacks = [
+        `/embed/kira/mal/${malId}/${ep}/${lang}`,
+        `/embed/haiku/mal/${malId}/${ep}/${lang}`,
+      ];
+
+      const html = renderCleanArtplayer(proxiedM3U8, proxiedTracks, embedAds(), fallbacks);
       return reply.send(html);
     } catch (err) {
       return reply.code(404).send(renderCustomProxy404(req.url, `Zoko stream error: ${err.message}`));
@@ -129,7 +150,8 @@ async function registerEmbedRoutes(fastify) {
 
       const html = renderCleanArtplayer(
         data.proxiedURL,
-        proxiedTracks
+        proxiedTracks,
+        embedAds()
       );
       return reply.send(html);
     } catch (err) {
@@ -222,7 +244,7 @@ async function registerEmbedRoutes(fastify) {
   fastify.get('/player/salt', handleSaltPlayer);
 
   // --- KIRA EMBEDS (formerly MegaPlay) ---
-  async function handleMegaplay(req, reply, targetPath, lang, episodeKey) {
+  async function handleMegaplay(req, reply, targetPath, lang, episodeKey, fallbacks = []) {
     applyEmbedHeaders(req, reply);
     const clientIP = getClientIP(req);
     try {
@@ -236,7 +258,7 @@ async function registerEmbedRoutes(fastify) {
       const proxiedM3U8 = `/p/${streamToken}/master.m3u8`;
       const proxiedTracks = proxyTracks(data.tracks, 'https://megaplay.buzz/', clientIP);
 
-      const html = renderCleanArtplayer(proxiedM3U8, proxiedTracks);
+      const html = renderCleanArtplayer(proxiedM3U8, proxiedTracks, embedAds(), fallbacks);
       return reply.send(html);
     } catch (err) {
       return reply.code(404).send(renderCustomProxy404(req.url, `Kira stream error: ${err.message}`));
@@ -248,7 +270,9 @@ async function registerEmbedRoutes(fastify) {
     const malId = parseInt(req.params.mal_id, 10);
     const ep = parseInt(req.params.ep, 10) || 1;
     const lang = req.params.lang || 'sub';
-    return handleMegaplay(req, reply, `mal/${malId}/${ep}/${lang}`, lang, `mega_mal_${malId}_${ep}_${lang}`);
+    return handleMegaplay(req, reply, `mal/${malId}/${ep}/${lang}`, lang, `mega_mal_${malId}_${ep}_${lang}`, [
+      `/embed/haiku/mal/${malId}/${ep}/${lang}`,
+    ]);
   };
   fastify.get('/embed/kira/mal/:mal_id/:ep/:lang', handleMegaMal);
   fastify.get('/embed/megaplay/mal/:mal_id/:ep/:lang', handleMegaMal);
@@ -258,7 +282,9 @@ async function registerEmbedRoutes(fastify) {
     const aniId = parseInt(req.params.anilist_id, 10);
     const ep = parseInt(req.params.ep, 10) || 1;
     const lang = req.params.lang || 'sub';
-    return handleMegaplay(req, reply, `ani/${aniId}/${ep}/${lang}`, lang, `mega_ani_${aniId}_${ep}_${lang}`);
+    return handleMegaplay(req, reply, `ani/${aniId}/${ep}/${lang}`, lang, `mega_ani_${aniId}_${ep}_${lang}`, [
+      `/embed/haiku/ani/${aniId}/${ep}/${lang}`,
+    ]);
   };
   fastify.get('/embed/kira/ani/:anilist_id/:ep/:lang', handleMegaAni);
   fastify.get('/embed/megaplay/ani/:anilist_id/:ep/:lang', handleMegaAni);

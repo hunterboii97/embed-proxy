@@ -1,5 +1,5 @@
 const crypto = require('node:crypto');
-const { proxySecretKey } = require('../../config');
+const { proxySecretKey, sharedSegmentTokens, tokenBucketSeconds, tokenGraceSeconds } = require('../../config');
 
 const megaplayAESKey = Buffer.alloc(32);
 Buffer.from('i?LMTAx0Q6,:}50U', 'utf8').copy(megaplayAESKey);
@@ -9,11 +9,13 @@ const pathKeyRegex = /\/([a-f0-9]{32})\/([a-f0-9]{32})\//i;
 const zokoObfKey = Buffer.from('otaku-embed-v1', 'utf8');
 
 /**
- * Token cache: same URL + same expiry = same token, no need to re-encrypt
- * Key: JSON.stringify(payload), Value: {token, exp}
+ * Token cache: same URL + same expiry = same token, no need to re-encrypt.
+ * Shared mode reuses a token until it expires — re-minting with a fresh IV
+ * would change the URL and miss the shared cache on every eviction.
+ * Key: JSON.stringify(payload), Value: {token, cachedAt, tokenExp}
  */
 const tokenCache = new Map();
-const TOKEN_CACHE_MAX = 20000;
+const TOKEN_CACHE_MAX = parseInt(process.env.TOKEN_CACHE_MAX || '50000', 10) || 50000;
 let tokenCacheLastPurge = Date.now();
 
 function purgeTokenCache() {
@@ -21,8 +23,25 @@ function purgeTokenCache() {
   if (now - tokenCacheLastPurge < 60000) return;
   tokenCacheLastPurge = now;
   for (const [k, v] of tokenCache) {
-    if (v.cachedAt + 900000 < now) tokenCache.delete(k);
+    const stale = sharedSegmentTokens
+      ? v.tokenExp < now
+      : v.cachedAt + 900000 < now;
+    if (stale) tokenCache.delete(k);
   }
+}
+
+/**
+ * Under SHARED_SEGMENT_TOKENS every token for the same target must be
+ * byte-identical for every viewer — that is what lets a shared cache store
+ * one copy. Drop the per-viewer IP claim and round expiry to a fixed bucket
+ * plus grace. Flag-off returns the payload untouched (legacy behavior).
+ */
+function sharedTokenClaims(payload) {
+  if (!sharedSegmentTokens) return payload;
+  const { ip, ...claims } = payload;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const exp = (Math.floor(nowSec / tokenBucketSeconds) + 1) * tokenBucketSeconds + tokenGraceSeconds;
+  return { ...claims, exp };
 }
 
 /**
@@ -30,32 +49,55 @@ function purgeTokenCache() {
  * Uses an in-memory cache to avoid re-encrypting the same URL within 5 minutes.
  */
 function encryptToken(payload, key = proxySecretKey) {
+  const claims = sharedTokenClaims(payload);
+
   // Only cache when a stable expiry is present (prevents unbounded growth)
-  if (payload.exp) {
-    const cacheKey = JSON.stringify(payload);
+  if (claims.exp) {
+    const cacheKey = JSON.stringify(claims);
     const cached = tokenCache.get(cacheKey);
     if (cached) return cached.token;
 
     const plaintext = Buffer.from(cacheKey, 'utf8');
-    const iv = crypto.randomBytes(12);
+    const iv = makeIV(plaintext, key);
     const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
     const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
     const tag = cipher.getAuthTag();
     const token = Buffer.concat([iv, ciphertext, tag]).toString('base64url');
 
-    if (tokenCache.size >= TOKEN_CACHE_MAX) tokenCache.clear();
-    tokenCache.set(cacheKey, { token, cachedAt: Date.now() });
+    if (tokenCache.size >= TOKEN_CACHE_MAX) {
+      // FIFO evict instead of clear(): wiping the map re-mints every live URL
+      // with a new IV, which would orphan warm shared-cache entries.
+      const overflow = tokenCache.size - TOKEN_CACHE_MAX + 1;
+      let removed = 0;
+      for (const k of tokenCache.keys()) {
+        tokenCache.delete(k);
+        if (++removed >= overflow) break;
+      }
+    }
+    tokenCache.set(cacheKey, { token, cachedAt: Date.now(), tokenExp: claims.exp * 1000 });
     purgeTokenCache();
     return token;
   }
 
-  const plaintext = Buffer.from(JSON.stringify(payload), 'utf8');
-  const iv = crypto.randomBytes(12);
+  const plaintext = Buffer.from(JSON.stringify(claims), 'utf8');
+  const iv = makeIV(plaintext, key);
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
   const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   const tag = cipher.getAuthTag();
   const combined = Buffer.concat([iv, ciphertext, tag]);
   return combined.toString('base64url');
+}
+
+/**
+ * Shared mode must mint byte-identical tokens on every worker: derive the IV
+ * deterministically from the plaintext and the secret. Distinct plaintexts
+ * still get distinct IVs; identical plaintexts intentionally share one token
+ * so a shared cache (nginx disk cache) sees one URL per segment.
+ * Legacy mode keeps a random IV per mint.
+ */
+function makeIV(plaintext, key) {
+  if (!sharedSegmentTokens) return crypto.randomBytes(12);
+  return crypto.createHmac('sha256', key).update(plaintext).digest().subarray(0, 12);
 }
 
 /**

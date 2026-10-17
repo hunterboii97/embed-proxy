@@ -117,6 +117,27 @@ function parseM3U8Variants(masterText, baseURL) {
   return variants;
 }
 
+// 720p-first default: exact 720, else highest below 720, else lowest above.
+// Keeps server-selected variants at a sane egress/bandwidth point; explicit
+// quality requests still go through exact/closest matching below.
+function pickAtMost720(variants) {
+  let exact = null;
+  let below = null;
+  let above = null;
+  for (const v of variants) {
+    const h = v.height || 0;
+    if (h === 720) { exact = v; break; }
+    if (h > 0 && h < 720) {
+      if (!below || h > below.height) below = v;
+    } else if (h > 720) {
+      if (!above || h < above.height) above = v;
+    }
+  }
+  if (exact || below || above) return exact || below || above;
+  // Masters without RESOLUTION metadata: keep the old highest-bandwidth pick.
+  return variants.reduce((best, v) => ((v.bandwidth || 0) > (best.bandwidth || 0) ? v : best), variants[0]);
+}
+
 async function resolveM3U8Quality(masterM3U8URL, referer, requestedQuality = 'best') {
   const headers = {};
   if (referer) {
@@ -162,9 +183,8 @@ async function resolveM3U8Quality(masterM3U8URL, referer, requestedQuality = 'be
     return { selectedURL: closest.url, referer };
   }
 
-  // Best / Default: pick highest resolution or highest bandwidth
-  variants.sort((a, b) => (b.height || 0) - (a.height || 0) || (b.bandwidth || 0) - (a.bandwidth || 0));
-  return { selectedURL: variants[0].url, referer };
+  // Best / Default: 720p-first (see pickAtMost720)
+  return { selectedURL: pickAtMost720(variants).url, referer };
 }
 
 module.exports = {
