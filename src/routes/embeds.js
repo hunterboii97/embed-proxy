@@ -265,7 +265,10 @@ async function registerEmbedRoutes(fastify) {
       const proxiedM3U8 = `/p/${streamToken}/master.m3u8`;
       const proxiedTracks = proxyTracks(data.tracks, 'https://megaplay.buzz/', clientIP);
 
-      const html = renderCleanArtplayer(proxiedM3U8, proxiedTracks, embedAds(tier), fallbacks, tier);
+      const html = renderCleanArtplayer(proxiedM3U8, proxiedTracks, embedAds(tier), fallbacks, tier, {
+        intro: data.intro,
+        outro: data.outro
+      });
       return reply.send(html);
     } catch (err) {
       return reply.code(404).send(renderCustomProxy404(req.url, `Kira stream error: ${err.message}`));

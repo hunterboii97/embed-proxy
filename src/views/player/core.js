@@ -380,7 +380,12 @@ function showAdInterstitial(player, url) {
 }
 
 export async function createPlayer(options = {}) {
-  const cfg = { ...parseParams(), ...options };
+  // Injected nulls must not erase query-string values (?intro/?outro).
+  const overrides = {};
+  for (const [key, value] of Object.entries(options)) {
+    if (value !== undefined && value !== null) overrides[key] = value;
+  }
+  const cfg = { ...parseParams(), ...overrides };
   const settings = loadSettings();
   const host = new HostLink();
 
@@ -601,6 +606,41 @@ export async function createPlayer(options = {}) {
 
   function hideSkip() { skip.hidden = true; }
 
+  /* --- intro / outro ranges on the seek bar ----------------------------- */
+  // Yellow segments matching MegaPlay's marker colour, drawn inside the
+  // slider box. The layout re-renders its controls, so they are re-added
+  // whenever the cached key no longer matches the DOM.
+  let markerKey = '';
+
+  function renderSkipMarkers(force = false) {
+    if (!(cfg.intro || cfg.outro)) return;
+    const slider = player.querySelector('.vds-time-slider');
+    if (!slider) return;
+    const duration = Number(player.duration) || 0;
+    const rangeKey = (r) => (r ? `${r.start}:${r.end}` : '');
+    const key = `${duration}|${rangeKey(cfg.intro)}|${rangeKey(cfg.outro)}`;
+    if (!force && key === markerKey && slider.querySelector('.strmcx-skip-range')) return;
+    markerKey = key;
+    slider.querySelectorAll('.strmcx-skip-range').forEach((n) => n.remove());
+    if (!(duration > 0)) return;
+
+    const add = (range, modifier) => {
+      if (!range) return;
+      const start = Math.max(0, Math.min(range.start, duration));
+      const end = Math.max(0, Math.min(range.end, duration));
+      if (!(end > start)) return;
+      const mark = document.createElement('div');
+      mark.className = `strmcx-skip-range ${modifier}`;
+      mark.style.left = `${(start / duration) * 100}%`;
+      mark.style.width = `${((end - start) / duration) * 100}%`;
+      slider.appendChild(mark);
+    };
+    add(cfg.intro, 'strmcx-skip-range--intro');
+    add(cfg.outro, 'strmcx-skip-range--outro');
+  }
+
+  renderSkipMarkers(true);
+
   /* --- next-episode overlay -------------------------------------------- */
   let nextOverlay = null;
   if (cfg.hasNext || cfg.nextOverlay) {
@@ -761,16 +801,26 @@ export async function createPlayer(options = {}) {
   }
 
   /* --- timeline: skip ranges + overlays + autoskip ---------------------- */
+  let lastSkipUiAt = 0;
   player.addEventListener('time-update', () => {
     const t = player.currentTime;
     const d = player.duration || Infinity;
+    const now = performance.now();
 
-    if (introBtn || outroBtn) {
-      const inIntro = cfg.intro && t >= cfg.intro.start && t < cfg.intro.end;
-      const inOutro = cfg.outro && t >= cfg.outro.start && t < cfg.outro.end;
-      if (introBtn) introBtn.hidden = !inIntro;
-      if (outroBtn) outroBtn.hidden = !inOutro;
-      skip.hidden = !(inIntro || inOutro);
+    // time-update fires once per animation frame (~144 Hz); skip chrome is
+    // cheap but not free, so refresh it at MegaPlay's 4 Hz time cadence.
+    if (now - lastSkipUiAt >= 250) {
+      lastSkipUiAt = now;
+
+      if (introBtn || outroBtn) {
+        const inIntro = cfg.intro && t >= cfg.intro.start && t < cfg.intro.end;
+        const inOutro = cfg.outro && t >= cfg.outro.start && t < cfg.outro.end;
+        if (introBtn) introBtn.hidden = !inIntro;
+        if (outroBtn) outroBtn.hidden = !inOutro;
+        skip.hidden = !(inIntro || inOutro);
+      }
+
+      renderSkipMarkers();
     }
 
     if (nextOverlay) {
@@ -920,7 +970,10 @@ export async function createPlayer(options = {}) {
   player.addEventListener('play',  () => host.send('strmcx-state-change', { state: 'play' }));
   player.addEventListener('pause', () => host.send('strmcx-state-change', { state: 'pause' }));
   player.addEventListener('ended', () => host.send('strmcx-ended'));
-  player.addEventListener('duration-change', () => host.send('strmcx-duration', { duration: player.duration }));
+  player.addEventListener('duration-change', () => {
+    host.send('strmcx-duration', { duration: player.duration });
+    renderSkipMarkers(true);
+  });
   player.addEventListener('error', () => {
     host.send('strmcx-error', { message: String(player.error?.message ?? 'unknown') });
     handleFatalError();

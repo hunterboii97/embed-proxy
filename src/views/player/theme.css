@@ -142,6 +142,29 @@ media-player:not([data-started]) .vds-start-duration {
 .strmcx-skip__btn:hover  { background: #e5e5e5; }
 .strmcx-skip__btn:active { transform: scale(0.96); }
 
+/* Intro/outro ranges on the seek bar — MegaPlay's marker yellow, sized to
+   sit just above Vidstack's track inside the 45px slider hit area. */
+.vds-time-slider { position: relative; }
+
+.strmcx-skip-range {
+  position: absolute;
+  top: 50%;
+  z-index: 3;
+  height: 10px;
+  margin-top: -5px;
+  pointer-events: none;
+  background: #fdd253;
+  border-radius: 9999px;
+  transform: scaleY(0.6);
+  transform-origin: center center;
+  transition: transform 150ms ease-in-out;
+}
+
+/* Keep the scrub thumb above the yellow range so the circle stays clean. */
+.vds-time-slider > .vds-slider-thumb {
+  z-index: 4;
+}
+
 /* ---- Next-episode overlay ---------------------------------------------- */
 .strmcx-next {
   position: absolute;

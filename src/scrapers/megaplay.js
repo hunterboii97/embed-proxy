@@ -15,6 +15,15 @@ function normalizeMegaplayPath(rawPath) {
   return clean;
 }
 
+// Upstream sends {start,end}; older payloads used [start,end].
+function normalizeRange(value) {
+  if (!value) return null;
+  const start = Number(Array.isArray(value) ? value[0] : value.start);
+  const end = Number(Array.isArray(value) ? value[1] : value.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+  return { start, end };
+}
+
 function parseMegaplaySourcesResponse(data) {
   let streamFile = '';
   const tracks = (data.tracks || []).map(t => ({
@@ -23,6 +32,8 @@ function parseMegaplaySourcesResponse(data) {
     kind: t.kind || 'captions',
     default: Boolean(t.default)
   }));
+  const intro = normalizeRange(data.intro);
+  const outro = normalizeRange(data.outro);
 
   // 1. Try decrypting enc first if present
   if (data.enc) {
@@ -47,7 +58,7 @@ function parseMegaplaySourcesResponse(data) {
     throw new Error('No stream file found in MegaPlay response');
   }
 
-  return { streamFile, tracks };
+  return { streamFile, tracks, intro, outro };
 }
 
 async function extractMegaplayHLS(targetPath) {

@@ -17,13 +17,15 @@
   if (window.top !== window.self) document.documentElement.dataset.embedded = "";
 
   // Injected by the server: proxied stream URL + proxied subtitle tracks
-  // (strm.cx contract: {file,label,lang,kind}).
+  // (strm.cx contract: {file,label,lang,kind}) and optional skip ranges.
   window.__YUME_PLAYER_CONFIG__ = {
     src: '{{STREAM_URL}}',
     tracks: {{RAW_TRACKS}} || [],
     ads: {{ADS_CONFIG}},
     fallbacks: {{FALLBACKS}},
-    tier: {{EMBED_TIER}}
+    tier: {{EMBED_TIER}},
+    intro: {{INTRO_JSON}},
+    outro: {{OUTRO_JSON}}
   };
 </script>
 

@@ -44,7 +44,7 @@ function scriptSafeJSON(value) {
   return JSON.stringify(value).replace(/</g, '\\u003c');
 }
 
-function renderCleanArtplayer(streamURL, subtitleTracks = [], ads = null, fallbacks = [], tier = 'free') {
+function renderCleanArtplayer(streamURL, subtitleTracks = [], ads = null, fallbacks = [], tier = 'free', skipRanges = {}) {
   const tracksJSON = scriptSafeJSON(subtitleTracks || []);
   const adsJSON = scriptSafeJSON(ads || null);
   const fallbacksJSON = scriptSafeJSON(fallbacks || []);
@@ -55,7 +55,9 @@ function renderCleanArtplayer(streamURL, subtitleTracks = [], ads = null, fallba
     .replace('{{RAW_TRACKS}}', tracksJSON)
     .replace('{{ADS_CONFIG}}', adsJSON)
     .replace('{{FALLBACKS}}', fallbacksJSON)
-    .replace('{{EMBED_TIER}}', tierJSON);
+    .replace('{{EMBED_TIER}}', tierJSON)
+    .replace('{{INTRO_JSON}}', scriptSafeJSON(skipRanges.intro || null))
+    .replace('{{OUTRO_JSON}}', scriptSafeJSON(skipRanges.outro || null));
 }
 
 function renderCustomProxy404(requestPath = '', message = '') {
