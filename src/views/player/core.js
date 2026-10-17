@@ -30,7 +30,7 @@ export function parseParams(search = location.search) {
       const parsed = JSON.parse(rawTracks);
       if (Array.isArray(parsed)) {
         // Same rule as the original: entries without `file` are dropped.
-        const processed = parsed
+        tracks = parsed
           .filter((t) => t && t.file)
           .map((t) => ({
             src: t.file,
@@ -39,24 +39,6 @@ export function parseParams(search = location.search) {
             kind: t.kind === 'captions' ? 'captions' : 'subtitles',
             default: false,
           }));
-
-        // Find English track and set as default (comprehensive language detection)
-        const englishTrack = processed.find(t => {
-          const lang = (t.language || t.label || '').toLowerCase();
-          return lang.includes('en') || lang.includes('eng') || lang.includes('english');
-        });
-
-        if (englishTrack) {
-          englishTrack.default = true;
-          // Move English track to the front
-          const index = processed.indexOf(englishTrack);
-          if (index > 0) {
-            processed.splice(index, 1);
-            processed.unshift(englishTrack);
-          }
-        }
-
-        tracks = processed;
       }
     } catch {
       /* malformed JSON is ignored, matching upstream behaviour */
