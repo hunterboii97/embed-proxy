@@ -1,6 +1,6 @@
 const {
   isEmbedAllowed, buildFrameAncestorsCSP, getClientIP, getEmbedTier, embedRateLimitPerMin,
-  freeEmbedMode, adDirectUrls, adInterstitialUrl
+  freeEmbedMode, adDirectUrls, adInterstitialUrl, adminTelemetryEnabled
 } = require('../../config');
 const { rateLimited } = require('../utils/ratelimit');
 const { encryptToken } = require('../utils/crypto');
@@ -26,6 +26,19 @@ function embedAds(tier) {
   if (adDirectUrls.length) ads.redirects = adDirectUrls;
   if (adInterstitialUrl) ads.interstitial = adInterstitialUrl;
   return Object.keys(ads).length ? ads : null;
+}
+
+// Self-reported viewer data is opt-in. Content/episode come from the route,
+// never from upstream HTML, so nothing extra is fetched on the embed path.
+function telemetryMeta(provider, content, episode, tier) {
+  if (!adminTelemetryEnabled) return null;
+  return {
+    enabled: true,
+    provider,
+    tier: tier === 'partner' ? 'partner' : 'free',
+    content: String(content || '').slice(0, 64),
+    episode: String(episode || '').slice(0, 64)
+  };
 }
 
 function proxyTracks(tracks, referer = '', clientIP = '') {
@@ -85,7 +98,15 @@ async function registerEmbedRoutes(fastify) {
         `/embed/haiku/mal/${malId}/${ep}/${lang}`,
       ];
 
-      const html = renderCleanArtplayer(proxiedM3U8, proxiedTracks, embedAds(tier), fallbacks, tier);
+      const html = renderCleanArtplayer(
+        proxiedM3U8,
+        proxiedTracks,
+        embedAds(tier),
+        fallbacks,
+        tier,
+        {},
+        telemetryMeta('zoko', `mal:${malId}`, ep, tier)
+      );
       return reply.send(html);
     } catch (err) {
       return reply.code(404).send(renderCustomProxy404(req.url, `Zoko stream error: ${err.message}`));
@@ -157,7 +178,9 @@ async function registerEmbedRoutes(fastify) {
         proxiedTracks,
         embedAds(tier),
         [],
-        tier
+        tier,
+        {},
+        telemetryMeta('haiku', slug || (hash ? `hash:${hash.slice(0, 12)}` : ''), `${season}x${ep}`, tier)
       );
       return reply.send(html);
     } catch (err) {
@@ -265,10 +288,26 @@ async function registerEmbedRoutes(fastify) {
       const proxiedM3U8 = `/p/${streamToken}/master.m3u8`;
       const proxiedTracks = proxyTracks(data.tracks, 'https://megaplay.buzz/', clientIP);
 
-      const html = renderCleanArtplayer(proxiedM3U8, proxiedTracks, embedAds(tier), fallbacks, tier, {
-        intro: data.intro,
-        outro: data.outro
-      });
+      const malMatch = targetPath.match(/^mal\/(\d+)/);
+      const aniMatch = targetPath.match(/^ani\/(\d+)/);
+      const s2Match = targetPath.match(/^s-2\/([^/]+)/);
+      const contentLabel = malMatch ? `mal:${malMatch[1]}`
+        : aniMatch ? `ani:${aniMatch[1]}`
+          : s2Match ? `s2:${s2Match[1]}` : '';
+      const episodeLabel = (malMatch || aniMatch) ? (targetPath.split('/')[2] || '') : '';
+
+      const html = renderCleanArtplayer(
+        proxiedM3U8,
+        proxiedTracks,
+        embedAds(tier),
+        fallbacks,
+        tier,
+        {
+          intro: data.intro,
+          outro: data.outro
+        },
+        telemetryMeta('kira', contentLabel, episodeLabel, tier)
+      );
       return reply.send(html);
     } catch (err) {
       return reply.code(404).send(renderCustomProxy404(req.url, `Kira stream error: ${err.message}`));

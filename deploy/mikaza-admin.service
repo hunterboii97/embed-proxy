@@ -1,0 +1,33 @@
+# MikazaAPI admin monitoring collector.
+#
+# Separate process from the player workers: it owns SQLite, aggregation and
+# the /admin dashboard. If it dies or is slow, playback is unaffected.
+#
+#   systemctl enable --now mikaza-admin
+#
+# No dedicated service user (same policy as mikaza-api@). Nice/MemoryMax keep
+# the collector at lower priority than the workers.
+
+[Unit]
+Description=MikazaAPI admin collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/mikaza
+EnvironmentFile=/opt/mikaza/.env
+ExecStart=/usr/bin/node admin/collector.js
+Restart=always
+RestartSec=3
+Nice=10
+MemoryHigh=768M
+MemoryMax=1G
+IOWeight=50
+KillSignal=SIGTERM
+TimeoutStopSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

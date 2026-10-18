@@ -44,7 +44,7 @@ function scriptSafeJSON(value) {
   return JSON.stringify(value).replace(/</g, '\\u003c');
 }
 
-function renderCleanArtplayer(streamURL, subtitleTracks = [], ads = null, fallbacks = [], tier = 'free', skipRanges = {}) {
+function renderCleanArtplayer(streamURL, subtitleTracks = [], ads = null, fallbacks = [], tier = 'free', skipRanges = {}, telemetry = null) {
   const tracksJSON = scriptSafeJSON(subtitleTracks || []);
   const adsJSON = scriptSafeJSON(ads || null);
   const fallbacksJSON = scriptSafeJSON(fallbacks || []);
@@ -56,6 +56,7 @@ function renderCleanArtplayer(streamURL, subtitleTracks = [], ads = null, fallba
     .replace('{{ADS_CONFIG}}', adsJSON)
     .replace('{{FALLBACKS}}', fallbacksJSON)
     .replace('{{EMBED_TIER}}', tierJSON)
+    .replace('{{TELEMETRY_JSON}}', scriptSafeJSON(telemetry || null))
     .replace('{{INTRO_JSON}}', scriptSafeJSON(skipRanges.intro || null))
     .replace('{{OUTRO_JSON}}', scriptSafeJSON(skipRanges.outro || null));
 }

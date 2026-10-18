@@ -35,6 +35,12 @@ const app = Fastify({
   }
 });
 
+// Admin telemetry is opt-in and entirely outside the request hot path: a
+// flag-gated hook counts requests and posts a loopback snapshot every 30 s.
+if (/^(1|true|yes|on)$/i.test(String(process.env.ADMIN_METRICS || '').trim())) {
+  require('./src/admin/worker-metrics').attach(app);
+}
+
 // Enable Permissive High-Performance CORS
 app.register(cors, {
   origin: true,

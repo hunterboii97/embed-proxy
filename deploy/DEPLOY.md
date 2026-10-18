@@ -34,9 +34,8 @@ NVMe cache), Cloudflare DNS as today. All configs here are written, not applied.
   Add the commented nginx `limit_req` below if you want a global per-IP cap.
   `RATE_LIMIT_ENABLED=false` turns the app limits off entirely.
 - **Metrics:** the `/metrics` endpoint is not part of this build (Phase 0 work
-  is parked on local branch `backup/phase0-metrics`). Per-worker state is
-  visible through `systemctl status` / journald and nginx's `X-Cache-Status`
-  response header.
+  is parked on local branch `backup/phase0-metrics`). Live monitoring is the
+  separate admin collector in section 7; it never runs inside the workers.
 
 ## 1. Prerequisites
 
@@ -116,6 +115,50 @@ Disk cache usage:
 Player end-to-end: open `https://<host>/player/zoko?mal=21&ep=1&lang=sub`,
 press play, seek ±10/±30/±120 s, then block a segment in devtools and confirm
 the player switches source and resumes at the same timestamp.
+
+## 7. Admin monitoring (collector)
+
+One extra process owns SQLite and the dashboard; workers push snapshots over
+loopback, so playback never waits on the collector. Add to `.env`:
+
+    ADMIN_METRICS=1
+    ADMIN_INGEST_TOKEN=<openssl rand -hex 32>
+    ADMIN_TELEMETRY=1
+    ADMIN_ALLOWED_IPS=<your public IP>
+    ADMIN_EDGE_LOG=/var/log/nginx/mikaza-edge.json.log
+    ADMIN_NGINX_STATUS=http://127.0.0.1:8099/nginx_status
+
+`ADMIN_ALLOWED_IPS` is the only way in (empty = loopback only); everyone else
+gets a plain 404. `ADMIN_SNAPSHOT_MS` defaults to 30000 (min 15000).
+
+nginx already writes the JSON access log, proxies `/admin` and exposes
+loopback-only `stub_status` (section 5 config). Refresh Cloudflare ranges once
+and after any IP change:
+
+    bash deploy/update-cloudflare-ips.sh
+    nginx -t && systemctl reload nginx
+
+Start the collector, then restart workers so they pick up `ADMIN_METRICS`:
+
+    cp deploy/mikaza-admin.service /etc/systemd/system/
+    systemctl daemon-reload
+    systemctl enable --now mikaza-admin
+    systemctl restart 'mikaza-api@*'
+
+Verify:
+
+    curl -s http://127.0.0.1:5100/admin/api/health
+    curl -s -o /dev/null -w '%{http_code}\n' -H 'X-Real-IP: <your public IP>' http://127.0.0.1:5100/admin
+    curl -s -o /dev/null -w '%{http_code}\n' -H 'X-Real-IP: 203.0.113.9' http://127.0.0.1:5100/admin
+
+Expect `200` for the allowed IP and `404` otherwise (the `X-Real-IP` header is
+honoured because the curl socket is loopback). Then open `https://<host>/admin`
+from an allowlisted network.
+
+State lives in `data/admin/monitoring.db` (WAL, collector-only writes).
+Retention is bounded by `ADMIN_DB_MAX_MB` (512 default) plus the `ADMIN_*_DAYS`
+vars; pruning runs every 15 min. To reset stats, stop `mikaza-admin` and delete
+`data/admin/`.
 
 ## Optional: global per-IP rate limit at nginx
 

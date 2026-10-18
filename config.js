@@ -84,6 +84,11 @@ const embedRateLimitPerMin = parseInt(process.env.EMBED_RATE_LIMIT_PER_MIN || '3
 const proxyRateLimitPerMin = parseInt(process.env.PROXY_RATE_LIMIT_PER_MIN || '30000', 10);
 const downloadRateLimitPerMin = parseInt(process.env.DOWNLOAD_RATE_LIMIT_PER_MIN || '30', 10);
 
+// Player beacons for the admin dashboard. Off by default; the collector must
+// agree (both services read the same .env). Injected per embed page only when
+// true, so the player's telemetry module is dormant otherwise.
+const adminTelemetryEnabled = /^(1|true|yes|on)$/i.test(String(process.env.ADMIN_TELEMETRY || '').trim());
+
 // Comprehensive CDN Rules matching main.go with exact Referer / Origin header spoofing
 const cdnRules = [
   {
@@ -397,6 +402,7 @@ module.exports = {
   freeEmbedMode,
   adDirectUrls,
   adInterstitialUrl,
+  adminTelemetryEnabled,
   cdnRules,
   isPrivateHost,
   isDomainAllowed,

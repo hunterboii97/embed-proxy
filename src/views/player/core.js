@@ -9,6 +9,8 @@
  * No ads. No third-party calls. Every byte is served from your own origin.
  * ==========================================================================*/
 
+import { createTelemetry } from './telemetry.js';
+
 export const PROTOCOL = 'strmcx/v1';
 
 /* -------------------------------------------------------------------------- *
@@ -388,6 +390,10 @@ export async function createPlayer(options = {}) {
   const cfg = { ...parseParams(), ...overrides };
   const settings = loadSettings();
   const host = new HostLink();
+  const telemetry = createTelemetry({
+    ...(cfg.telemetry && typeof cfg.telemetry === 'object' ? cfg.telemetry : {}),
+    tier: cfg.tier
+  });
 
   // Creating <media-player> before Vidstack defines it leaves a plain own
   // `src` property that shadows the prototype accessor, and the element never
@@ -422,6 +428,7 @@ export async function createPlayer(options = {}) {
 
   const container = document.getElementById('app');
   container.replaceChildren(player);
+  if (telemetry) telemetry.attach(player);
 
   if (cfg.aspect) player.style.setProperty('--strmcx-aspect', cfg.aspect);
   if (cfg.theater || settings.theater) document.documentElement.dataset.theater = '';
@@ -434,6 +441,7 @@ export async function createPlayer(options = {}) {
     const hls = event.detail;
     const Hls = window.Hls;
     if (!hls || !Hls?.Events?.MANIFEST_PARSED) return;
+    if (telemetry) telemetry.setHls(hls);
 
     try {
       Object.assign(hls.config, {
@@ -490,7 +498,10 @@ export async function createPlayer(options = {}) {
     });
 
     hls.on(Hls.Events.ERROR, (_evt, data) => {
-      if (data?.fatal) handleFatalError();
+      if (data?.fatal) {
+        if (telemetry) telemetry.fatal(data.details || 'fatal stream error');
+        handleFatalError();
+      }
     });
   });
 
@@ -529,6 +540,7 @@ export async function createPlayer(options = {}) {
       return;
     }
 
+    if (telemetry) telemetry.emit('fallback', { message: 'switching to backup source' });
     showFatalOverlay('Stream error — switching to a backup source…', false);
     // Let the overlay paint before the document is replaced.
     setTimeout(() => {

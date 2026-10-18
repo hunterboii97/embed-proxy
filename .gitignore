@@ -16,3 +16,5 @@ vendor/
 .vscode/
 node_modules/
 scratch/
+# collector/database state is local to each host
+data/
