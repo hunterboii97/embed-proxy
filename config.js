@@ -95,6 +95,13 @@ const flixDownloadQuotaDir = process.env.FLIX_DOWNLOAD_QUOTA_DIR || path.join(__
 // true, so the player's telemetry module is dormant otherwise.
 const adminTelemetryEnabled = /^(1|true|yes|on)$/i.test(String(process.env.ADMIN_TELEMETRY || '').trim());
 
+// Shell-first embeds: the HTML paints immediately and a JSON resolve call does
+// the upstream extraction. The whole resolve is capped (0 disables the cap)
+// and a fallback provider is hedged in after the stagger delay when the
+// primary has not answered yet.
+const embedResolveTimeoutMs = parseInt(process.env.EMBED_RESOLVE_TIMEOUT_MS || '4000', 10) || 4000;
+const embedHedgeStaggerMs = parseInt(process.env.EMBED_HEDGE_STAGGER_MS || '1500', 10);
+
 // Comprehensive CDN Rules matching main.go with exact Referer / Origin header spoofing
 const cdnRules = [
   {
@@ -320,6 +327,14 @@ function isEmbedBlocked(req) {
     matchesDomainList(req.headers['origin'] || '', blockedEmbedDomains);
 }
 
+// Same deny list, applied to a raw URL string (the resolve call reports the
+// embedding page's URL in its `ref` query parameter, because the browser
+// sends our own origin as Referer for same-origin fetches).
+function isBlockedEmbedSource(value) {
+  if (!blockedEmbedDomains.length) return false;
+  return matchesDomainList(value || '', blockedEmbedDomains);
+}
+
 // Tier is decided once per embed-page request from the embedding site's
 // Referer/Origin. Direct visits have no parent site and default to free.
 // Legacy allowlist mode (free mode off) has no ads, so every allowed page is
@@ -412,11 +427,14 @@ module.exports = {
   adDirectUrls,
   adInterstitialUrl,
   adminTelemetryEnabled,
+  embedResolveTimeoutMs,
+  embedHedgeStaggerMs,
   cdnRules,
   isPrivateHost,
   isDomainAllowed,
   isEmbedAllowed,
   isEmbedBlocked,
+  isBlockedEmbedSource,
   getEmbedTier,
   getClientIP,
   buildFrameAncestorsCSP

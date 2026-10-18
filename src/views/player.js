@@ -44,21 +44,20 @@ function scriptSafeJSON(value) {
   return JSON.stringify(value).replace(/</g, '\\u003c');
 }
 
-function renderCleanArtplayer(streamURL, subtitleTracks = [], ads = null, fallbacks = [], tier = 'free', skipRanges = {}, telemetry = null) {
-  const tracksJSON = scriptSafeJSON(subtitleTracks || []);
-  const adsJSON = scriptSafeJSON(ads || null);
-  const fallbacksJSON = scriptSafeJSON(fallbacks || []);
-  const tierJSON = JSON.stringify(tier === 'partner' ? 'partner' : 'free');
-
+// The embed HTML is a static shell: it paints immediately, contains no
+// viewer-specific data, and asks the resolve endpoint for the stream after
+// boot. Everything the server used to inject is decided at resolve time.
+function renderPlayerShell(resolveURL) {
   return playerHtmlTemplate
-    .replace('{{STREAM_URL}}', streamURL)
-    .replace('{{RAW_TRACKS}}', tracksJSON)
-    .replace('{{ADS_CONFIG}}', adsJSON)
-    .replace('{{FALLBACKS}}', fallbacksJSON)
-    .replace('{{EMBED_TIER}}', tierJSON)
-    .replace('{{TELEMETRY_JSON}}', scriptSafeJSON(telemetry || null))
-    .replace('{{INTRO_JSON}}', scriptSafeJSON(skipRanges.intro || null))
-    .replace('{{OUTRO_JSON}}', scriptSafeJSON(skipRanges.outro || null));
+    .replace('{{RESOLVE_JSON}}', scriptSafeJSON(resolveURL || ''))
+    .replace('{{STREAM_URL}}', '')
+    .replace('{{RAW_TRACKS}}', '[]')
+    .replace('{{ADS_CONFIG}}', 'null')
+    .replace('{{FALLBACKS}}', '[]')
+    .replace('{{EMBED_TIER}}', '"free"')
+    .replace('{{TELEMETRY_JSON}}', 'null')
+    .replace('{{INTRO_JSON}}', 'null')
+    .replace('{{OUTRO_JSON}}', 'null');
 }
 
 function renderCustomProxy404(requestPath = '', message = '') {
@@ -226,7 +225,7 @@ function registerPlayerAssetRoutes(fastify) {
 }
 
 module.exports = {
-  renderCleanArtplayer,
+  renderPlayerShell,
   renderCustomProxy404,
   registerPlayerAssetRoutes
 };

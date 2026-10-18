@@ -1,6 +1,6 @@
-const { fetchText, fetchJSON } = require('../utils/http');
+const { fetchText, fetchJSON, withTimeout } = require('../utils/http');
 const { decryptMegaplayEnc } = require('../utils/crypto');
-const { megaplayStreamCache, megaplayGapCache, stats } = require('../utils/cache');
+const { megaplayStreamCache, megaplayGapCache, megaplayLangGapCache, stats } = require('../utils/cache');
 const { resolveMalId } = require('./resolver');
 const { singleflight } = require('../utils/singleflight');
 
@@ -61,7 +61,7 @@ function parseMegaplaySourcesResponse(data) {
   return { streamFile, tracks, intro, outro };
 }
 
-async function extractMegaplayHLS(targetPath) {
+async function extractMegaplayHLS(targetPath, signal) {
   const normPath = normalizeMegaplayPath(targetPath);
   if (megaplayStreamCache.has(normPath)) {
     stats.megaplayHits++;
@@ -75,7 +75,8 @@ async function extractMegaplayHLS(targetPath) {
       referer: 'https://anikoto.cz/',
       'sec-fetch-dest': 'iframe',
       'sec-fetch-mode': 'navigate'
-    }
+    },
+    signal: withTimeout(signal, 4000)
   });
 
   if (htmlRes.statusCode !== 200 || !htmlRes.body) {
@@ -107,10 +108,11 @@ async function extractMegaplayHLS(targetPath) {
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 4000); // cap the whole race at 4s
+  const raceSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
 
   const fetchSources = async (url) => {
     try {
-      const res = await fetchJSON(url, { headers, signal: controller.signal });
+      const res = await fetchJSON(url, { headers, signal: raceSignal });
       if (res.statusCode === 200 && res.data) {
         return parseMegaplaySourcesResponse(res.data);
       }
@@ -142,11 +144,11 @@ async function extractMegaplayHLS(targetPath) {
   return result;
 }
 
-async function extractMegaplayHLSAniFirst(path) {
+async function extractMegaplayHLSAniFirst(path, signal) {
   const normPath = normalizeMegaplayPath(path);
   const match = normPath.match(aniPathRegex);
   if (!match) {
-    return extractMegaplayHLS(path);
+    return extractMegaplayHLS(path, signal);
   }
 
   const [, aniId, ep, lang] = match;
@@ -156,7 +158,7 @@ async function extractMegaplayHLSAniFirst(path) {
   const knownMalId = megaplayGapCache.get(normPath);
   if (knownMalId) {
     try {
-      return await extractMegaplayHLS(`mal/${knownMalId}/${ep}/${lang}`);
+      return await extractMegaplayHLS(`mal/${knownMalId}/${ep}/${lang}`, signal);
     } catch {
       megaplayGapCache.delete(normPath);
     }
@@ -165,12 +167,12 @@ async function extractMegaplayHLSAniFirst(path) {
   // AniList shelf stays primary; the MAL resolve + fetch only happens when
   // AniList actually misses, so healthy paths waste zero upstream work.
   try {
-    return await extractMegaplayHLS(path);
+    return await extractMegaplayHLS(path, signal);
   } catch (aniErr) {
-    const malId = await resolveMalId(parseInt(aniId, 10));
+    const malId = await resolveMalId(parseInt(aniId, 10), signal);
     if (malId > 0) {
       try {
-        const result = await extractMegaplayHLS(`mal/${malId}/${ep}/${lang}`);
+        const result = await extractMegaplayHLS(`mal/${malId}/${ep}/${lang}`, signal);
         megaplayGapCache.set(normPath, malId);
         return result;
       } catch {}
@@ -179,11 +181,22 @@ async function extractMegaplayHLSAniFirst(path) {
   }
 }
 
-async function extractMegaplayHLSWithFallback(originalPath) {
+async function extractMegaplayHLSWithFallback(originalPath, signal) {
   const normPath = normalizeMegaplayPath(originalPath);
   return singleflight(`kira|${normPath}`, async () => {
+    // A language shelf known to be dead (e.g. hin) would otherwise cost a
+    // failing upstream probe on every single resolve.
+    const memoLangPath = megaplayLangGapCache.get(normPath);
+    if (memoLangPath) {
+      try {
+        return await extractMegaplayHLSAniFirst(memoLangPath, signal);
+      } catch {
+        megaplayLangGapCache.delete(normPath);
+      }
+    }
+
     try {
-      return await extractMegaplayHLSAniFirst(normPath);
+      return await extractMegaplayHLSAniFirst(normPath, signal);
     } catch (err) {
       // If language was dub or sub, try fallback language
       const parts = normPath.split('/');
@@ -191,7 +204,9 @@ async function extractMegaplayHLSWithFallback(originalPath) {
         const currentLang = parts[parts.length - 1];
         const fallbackLang = currentLang === 'dub' ? 'sub' : 'dub';
         const fallbackPath = [...parts.slice(0, -1), fallbackLang].join('/');
-        return await extractMegaplayHLSAniFirst(fallbackPath);
+        const result = await extractMegaplayHLSAniFirst(fallbackPath, signal);
+        megaplayLangGapCache.set(normPath, fallbackPath);
+        return result;
       }
       throw err;
     }

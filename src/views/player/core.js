@@ -529,6 +529,22 @@ export async function createPlayer(options = {}) {
     player.append(fatalOverlay);
   }
 
+  // Carry the real embedding site across failover navigations: this page's
+  // own URL would otherwise become the next page's document.referrer.
+  function failbackURL(next, resumeAt) {
+    const params = new URLSearchParams({ start: String(Math.max(0, Math.floor(resumeAt || 0))) });
+    const embedRef = window.__YUME_EMBED_REF__;
+    if (embedRef) params.set('embedref', embedRef);
+    return next + (next.includes('?') ? '&' : '?') + params.toString();
+  }
+
+  function goToFallback(next, resumeAt, delay = 600) {
+    if (telemetry) telemetry.emit('fallback', { message: 'switching to backup source' });
+    showFatalOverlay('Stream error — switching to a backup source…', false);
+    // Let the overlay paint before the document is replaced.
+    setTimeout(() => location.replace(failbackURL(next, resumeAt)), delay);
+  }
+
   function handleFatalError() {
     if (failoverStarted) return;
     failoverStarted = true;
@@ -539,14 +555,38 @@ export async function createPlayer(options = {}) {
       showFatalOverlay('Playback failed. Please try again.', true);
       return;
     }
+    goToFallback(next, resumeAt);
+  }
 
-    if (telemetry) telemetry.emit('fallback', { message: 'switching to backup source' });
-    showFatalOverlay('Stream error — switching to a backup source…', false);
-    // Let the overlay paint before the document is replaced.
-    setTimeout(() => {
-      const sep = next.includes('?') ? '&' : '?';
-      location.replace(next + sep + 'start=' + resumeAt);
-    }, 600);
+  /* --- slow-start watchdog ---------------------------------------------- */
+  // Playback failures normally surface as an hls.js fatal error. This covers
+  // the remaining case: no fatal, no can-play — a silent black screen. It does
+  // not cancel loading; if the stream recovers, the panel disappears.
+  let slowOverlay = null;
+  let slowTimer = null;
+
+  function clearSlowWatchdog() {
+    clearTimeout(slowTimer);
+    slowOverlay?.remove();
+    slowOverlay = null;
+  }
+
+  function showSlowOverlay() {
+    if (slowOverlay || fatalOverlay) return;
+    slowOverlay = document.createElement('div');
+    slowOverlay.className = 'strmcx-fatal';
+    slowOverlay.innerHTML =
+      '<div class="strmcx-fatal__panel">' +
+      '<p class="strmcx-fatal__title">Still loading — this source is slow.</p>' +
+      '<div class="strmcx-fatal__actions">' +
+      '<button type="button" class="strmcx-fatal__retry" data-act="retry">Retry</button>' +
+      (failbackList[0] ? '<button type="button" class="strmcx-fatal__retry" data-act="backup">Use backup</button>' : '') +
+      '</div></div>';
+    slowOverlay.querySelector('[data-act="retry"]').addEventListener('click', () => location.reload());
+    slowOverlay.querySelector('[data-act="backup"]')?.addEventListener('click', () => {
+      goToFallback(failbackList[0], Math.max(0, Math.floor(player.currentTime || 0)), 150);
+    });
+    player.append(slowOverlay);
   }
 
   /* --- source ---------------------------------------------------------- */
@@ -559,6 +599,12 @@ export async function createPlayer(options = {}) {
   player.src = source;
   if (cfg.poster) player.poster = cfg.poster;
   if (cfg.title) player.title = cfg.title;
+
+  slowTimer = setTimeout(() => {
+    if (!player.state.canPlay && !fatalOverlay) showSlowOverlay();
+  }, 15000);
+  player.addEventListener('can-play', clearSlowWatchdog, { once: true });
+  player.addEventListener('playing', clearSlowWatchdog, { once: true });
 
   /* --- restored settings ---------------------------------------------- */
   player.addEventListener('can-play', () => {

@@ -54,7 +54,10 @@ app.register(cors, {
 app.register(compression, {
   encodings: ['gzip', 'deflate'],
   threshold: 1024, // Compress responses > 1KB
-  compressibleTypes: ['application/vnd.apple.mpegurl', 'text/plain', 'text/html']
+  // @fastify/compress reads `customTypes` (not compressibleTypes). The default
+  // list covers html/css/js/json; HLS playlists need to be added explicitly
+  // because mime-db marks their type non-compressible.
+  customTypes: /text\/(?!event-stream)|(?:\+|\/)json(?:;|$)|(?:\+|\/)text(?:;|$)|(?:\+|\/)xml(?:;|$)|octet-stream(?:;|$)|application\/vnd\.apple\.mpegurl(?:;|$)/i
 });
 
 // Register Sub-routers

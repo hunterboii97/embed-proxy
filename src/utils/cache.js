@@ -92,6 +92,15 @@ const megaplayGapCache = new LRUCache({
   updateAgeOnGet: true
 });
 
+// 4c. MegaPlay language-gap memo (1 Hour TTL)
+// Some /:lang shelves (e.g. hin) have no player page and cost a dead probe on
+// every request. Remember the working fallback language for that path.
+const megaplayLangGapCache = new LRUCache({
+  max: 20000,
+  ttl: 60 * 60 * 1000,
+  updateAgeOnGet: true
+});
+
 // 5. Anime Title & MAL/AniList Mapping Cache (24 Hours TTL)
 const animeTitleCache = new LRUCache({
   max: 50000,
@@ -103,6 +112,14 @@ const malIdCache = new LRUCache({
   max: 50000,
   ttl: 24 * 60 * 60 * 1000,
   updateAgeOnGet: true
+});
+
+// 7. Resolve failure memo: a dead source (or a 4 s timeout) is remembered
+// briefly so repeated viewers do not each re-run the full upstream probe.
+const resolveErrorTtlMs = parseInt(process.env.EMBED_RESOLVE_ERROR_TTL_MS || '30000', 10) || 30000;
+const resolveErrorCache = new LRUCache({
+  max: 20000,
+  ttl: resolveErrorTtlMs
 });
 
 module.exports = {
@@ -118,5 +135,7 @@ module.exports = {
   megaplayStreamCache,
   animeTitleCache,
   malIdCache,
-  megaplayGapCache
+  megaplayGapCache,
+  megaplayLangGapCache,
+  resolveErrorCache
 };

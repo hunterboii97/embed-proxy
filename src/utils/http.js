@@ -73,6 +73,13 @@ setGlobalDispatcher(globalAgent);
 
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
+// Combine a caller's deadline with a per-request cap. Either abort wins, so a
+// hung upstream can never outlive the route's resolve budget.
+function withTimeout(signal, ms) {
+  const timeout = AbortSignal.timeout(ms);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
 async function fetchText(url, options = {}) {
   const headers = {
     'user-agent': DEFAULT_UA,
@@ -131,6 +138,7 @@ async function fetchStream(url, options = {}) {
 module.exports = {
   globalAgent,
   DEFAULT_UA,
+  withTimeout,
   fetchText,
   fetchJSON,
   fetchStream

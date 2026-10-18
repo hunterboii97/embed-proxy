@@ -1,4 +1,5 @@
-const { fetchText } = require('../utils/http');
+const { fetchText, withTimeout } = require('../utils/http');
+const { firstValue } = require('../utils/first-value');
 const { encryptToken, decryptAbyssDatas } = require('../utils/crypto');
 const { resolveAnimeTitle } = require('./resolver');
 const { singleflight } = require('../utils/singleflight');
@@ -15,14 +16,14 @@ const reAbyssDirect = /https?:\/\/(?:player\.)?abyssplayer\.com\/([a-zA-Z0-9_-]+
 const reDatasConst = /const datas = "([^"]+)"/;
 const slugRegex = /https?:\/\/animesalt\.cx\/series\/([a-zA-Z0-9\-]+)\/?/g;
 
-async function resolveAnimeSaltSlug(anilistID, malID, manualSlug) {
+async function resolveAnimeSaltSlug(anilistID, malID, manualSlug, signal) {
   if (manualSlug) return manualSlug;
   const cacheKey = `ani:${anilistID}_mal:${malID}`;
   if (animeSaltSlugCache.has(cacheKey)) {
     return animeSaltSlugCache.get(cacheKey);
   }
 
-  const title = await resolveAnimeTitle(anilistID, malID);
+  const title = await resolveAnimeTitle(anilistID, malID, signal);
   if (!title) {
     throw new Error(`Could not resolve anime title for ani:${anilistID} mal:${malID}`);
   }
@@ -44,7 +45,8 @@ async function resolveAnimeSaltSlug(anilistID, malID, manualSlug) {
 
   // FAST DIRECT PROBE: Check if targetSlug exists directly on animesalt.cx/series/{slug}/
   const directProbe = fetchText(`https://animesalt.cx/series/${targetSlug}/`, {
-    headers: { referer: 'https://animesalt.cx/' }
+    headers: { referer: 'https://animesalt.cx/' },
+    signal: withTimeout(signal, 2500)
   }).then(res => {
     if (res.statusCode === 200) {
       return targetSlug;
@@ -55,7 +57,10 @@ async function resolveAnimeSaltSlug(anilistID, malID, manualSlug) {
   // Search queries in parallel
   const searchPromises = queries.map(q => {
     const searchURL = `https://animesalt.cx/?s=${encodeURIComponent(q)}`;
-    return fetchText(searchURL, { headers: { referer: 'https://animesalt.cx/' } })
+    return fetchText(searchURL, {
+      headers: { referer: 'https://animesalt.cx/' },
+      signal: withTimeout(signal, 2500)
+    })
       .then(res => {
         if (res.statusCode === 200 && res.body) {
           const matches = [...res.body.matchAll(slugRegex)];
@@ -71,8 +76,9 @@ async function resolveAnimeSaltSlug(anilistID, malID, manualSlug) {
       .catch(() => null);
   });
 
-  const results = await Promise.all([directProbe, ...searchPromises]);
-  const foundSlug = results.find(s => Boolean(s)) || targetSlug;
+  // First usable hit wins; the direct slug probe and the searches run in
+  // parallel, so waiting for every query only added latency.
+  const foundSlug = await firstValue([directProbe, ...searchPromises], targetSlug);
 
   if (foundSlug) {
     animeSaltSlugCache.set(cacheKey, foundSlug);
@@ -99,16 +105,16 @@ function abyssResult(entry, clientIP) {
   };
 }
 
-async function extractAnimeSaltStream(slug, season = 1, ep = 1, hashDirect = '', requestedLang = 'hin', clientIP = '') {
+async function extractAnimeSaltStream(slug, season = 1, ep = 1, hashDirect = '', requestedLang = 'hin', clientIP = '', signal) {
   requestedLang = (requestedLang || 'hin').toLowerCase().trim();
   if (season <= 0) season = 1;
   if (ep <= 0) ep = 1;
   const flightKey = `salt|${slug}:${season}:${ep}:${hashDirect}:${requestedLang}`;
-  const entry = await singleflight(flightKey, () => extractAnimeSaltStreamUncached(slug, season, ep, hashDirect, requestedLang));
+  const entry = await singleflight(flightKey, () => extractAnimeSaltStreamUncached(slug, season, ep, hashDirect, requestedLang, signal));
   return abyssResult(entry, clientIP);
 }
 
-async function extractAnimeSaltStreamUncached(slug, season = 1, ep = 1, hashDirect = '', requestedLang = 'hin') {
+async function extractAnimeSaltStreamUncached(slug, season = 1, ep = 1, hashDirect = '', requestedLang = 'hin', signal) {
   requestedLang = (requestedLang || 'hin').toLowerCase().trim();
   if (season <= 0) season = 1;
   if (ep <= 0) ep = 1;
@@ -132,7 +138,8 @@ async function extractAnimeSaltStreamUncached(slug, season = 1, ep = 1, hashDire
       const epRes = await fetchText(episodeReferer, {
         headers: {
           referer: `https://animesalt.cx/series/${slug}/`
-        }
+        },
+        signal: withTimeout(signal, 3000)
       });
 
       if (epRes.statusCode === 200 && epRes.body) {
@@ -245,7 +252,8 @@ async function extractAnimeSaltStreamUncached(slug, season = 1, ep = 1, hashDire
   }
 
   const abyssRes = await fetchText(selectedLink, {
-    headers: { referer: 'https://animesalt.cx/' }
+    headers: { referer: 'https://animesalt.cx/' },
+    signal: withTimeout(signal, 3000)
   });
 
   if (abyssRes.statusCode !== 200 || !abyssRes.body) {

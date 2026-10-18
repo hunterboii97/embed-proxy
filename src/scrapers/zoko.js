@@ -1,11 +1,11 @@
-const { fetchText } = require('../utils/http');
+const { fetchText, withTimeout } = require('../utils/http');
 const { deobfuscateZokoPayload } = require('../utils/crypto');
 const { zokoStreamCache, stats } = require('../utils/cache');
 const { singleflight } = require('../utils/singleflight');
 
 const zokoPRegex = /window\.__P\s*=\s*"([^"]+)"/;
 
-async function extractZokoHLS(malID, ep = 1, track = 'sub') {
+async function extractZokoHLS(malID, ep = 1, track = 'sub', signal) {
   if (track !== 'dub' && track !== 'sub') track = 'sub';
   if (ep <= 0) ep = 1;
   if (!malID || malID <= 0) {
@@ -26,7 +26,8 @@ async function extractZokoHLS(malID, ep = 1, track = 'sub') {
       headers: {
         referer: 'https://zokoanime.video/',
         accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-      }
+      },
+      signal: withTimeout(signal, 4000)
     });
 
     if (res.statusCode !== 200 || !res.body) {

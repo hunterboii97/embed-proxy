@@ -1,8 +1,9 @@
-const { fetchText, fetchJSON } = require('../utils/http');
+const { fetchText, fetchJSON, withTimeout } = require('../utils/http');
+const { firstValue } = require('../utils/first-value');
 const { animeTitleCache, malIdCache } = require('../utils/cache');
 const { singleflight } = require('../utils/singleflight');
 
-async function resolveMalId(idNum) {
+async function resolveMalId(idNum, signal) {
   if (!idNum || idNum <= 0) return 0;
   if (malIdCache.has(idNum)) return malIdCache.get(idNum);
 
@@ -14,7 +15,7 @@ async function resolveMalId(idNum) {
 
   // 1. AniZip API
   promises.push(
-    fetchJSON(`https://api.ani.zip/mappings?anilist_id=${idNum}`)
+    fetchJSON(`https://api.ani.zip/mappings?anilist_id=${idNum}`, { signal: withTimeout(signal, 2500) })
       .then(res => {
         if (res.data?.mappings?.mal_id > 0) {
           return res.data.mappings.mal_id;
@@ -30,7 +31,8 @@ async function resolveMalId(idNum) {
     fetchJSON('https://graphql.anilist.co', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ query: gqlQuery, variables: { id: idNum } })
+      body: JSON.stringify({ query: gqlQuery, variables: { id: idNum } }),
+      signal: withTimeout(signal, 2500)
     })
       .then(res => {
         if (res.data?.data?.Media?.idMal > 0) {
@@ -41,8 +43,9 @@ async function resolveMalId(idNum) {
       .catch(() => 0)
   );
 
-  const results = await Promise.all(promises);
-  const found = results.find(id => id > 0) || 0;
+  // First usable answer wins: AniList usually replies in ~300 ms while Jikan
+  // can stall for seconds, and waiting for every source delayed embed resolves.
+  const found = await firstValue(promises, 0);
   if (found > 0) {
     malIdCache.set(idNum, found);
   }
@@ -50,7 +53,7 @@ async function resolveMalId(idNum) {
   });
 }
 
-async function resolveAnimeTitle(anilistID, malID) {
+async function resolveAnimeTitle(anilistID, malID, signal) {
   if ((!anilistID || anilistID <= 0) && (!malID || malID <= 0)) return '';
   const cacheKey = `ani:${anilistID}_mal:${malID}`;
   if (animeTitleCache.has(cacheKey)) return animeTitleCache.get(cacheKey);
@@ -66,7 +69,7 @@ async function resolveAnimeTitle(anilistID, malID) {
       ? `https://api.ani.zip/mappings?anilist_id=${anilistID}`
       : `https://api.ani.zip/mappings?mal_id=${malID}`;
     promises.push(
-      fetchJSON(url)
+      fetchJSON(url, { signal: withTimeout(signal, 2500) })
         .then(res => {
           const t = res.data?.titles?.en || res.data?.titles?.canonical || res.data?.titles?.rj;
           return t || '';
@@ -89,7 +92,8 @@ async function resolveAnimeTitle(anilistID, malID) {
       fetchJSON('https://graphql.anilist.co', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ query, variables })
+        body: JSON.stringify({ query, variables }),
+        signal: withTimeout(signal, 2500)
       })
         .then(res => {
           const title = res.data?.data?.Media?.title;
@@ -102,7 +106,7 @@ async function resolveAnimeTitle(anilistID, malID) {
   // 3. Jikan / MAL API
   if (malID > 0) {
     promises.push(
-      fetchJSON(`https://api.jikan.moe/v4/anime/${malID}`)
+      fetchJSON(`https://api.jikan.moe/v4/anime/${malID}`, { signal: withTimeout(signal, 2500) })
         .then(res => {
           const data = res.data?.data;
           return data?.title_english || data?.title || '';
@@ -111,9 +115,8 @@ async function resolveAnimeTitle(anilistID, malID) {
     );
   }
 
-  // Fast resolution: return first non-empty title
-  const results = await Promise.all(promises);
-  const found = results.find(t => Boolean(t)) || '';
+  // Fast resolution: return the first non-empty title (see resolveMalId).
+  const found = await firstValue(promises, '');
   if (found) {
     animeTitleCache.set(cacheKey, found);
   }
