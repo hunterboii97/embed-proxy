@@ -581,7 +581,11 @@
     const originList = $('ov-origins');
     originList.replaceChildren();
     if (!origins.length) {
-      originList.append(empty('Embed requests appear here once nginx sees Referer headers.', 'No embedding sites yet'));
+      originList.append(empty(
+        'Embed requests with Referer headers will appear here. ' +
+        'Visit an embed page from a different domain to generate data.',
+        'No embedding sites yet'
+      ));
     } else {
       originList.append(...origins.map((origin) => h('div', { class: 'site-row' },
         h('div', { class: 'site-head' },
@@ -661,6 +665,32 @@
     });
 
     $('sidebar-meta').textContent = `v${meta.version || '?'} · ${meta.node || ''} · up ${fmtDuration((meta.uptimeMs || 0) / 1000)}`;
+
+    // Populate new overview sections
+    const system = data.system || {};
+
+    statGrid($('ov-system'), [
+      { label: 'CPU', value: fmtPct(system.cpuPct || 0), sub: 'online workers', tone: (system.cpuPct || 0) >= 80 ? 'warn' : '' },
+      { label: 'Memory', value: fmtBytes((system.rssMB || 0) * MB), sub: 'worker processes', tone: (system.rssMB || 0) >= 6000 ? 'warn' : '' },
+      { label: 'Cache', value: fmtBytes((system.cacheMB || 0) * MB), sub: 'segment cache', tone: '' }
+    ]);
+
+    // Calculate cache stats from system data
+    const cacheTotal = (system.cacheMB || 0) * MB;
+    const cacheSize = data.live ? data.live.cacheHitPct || 0 : 0;
+
+    statGrid($('ov-cache'), [
+      { label: 'Hit rate', value: fmtPct(cacheSize), sub: 'from worker data', tone: cacheSize >= 80 ? 'good' : cacheSize >= 50 ? '' : 'warn' },
+      { label: 'Size', value: fmtBytes(cacheTotal), sub: 'RAM used', tone: '' },
+      { label: 'Workers', value: workers.online || 0, sub: `/${workers.expected || 1}`, tone: workers.online >= (workers.expected || 1) ? 'good' : 'warn' }
+    ]);
+
+    const db = data.db || {};
+    statGrid($('ov-db'), [
+      { label: 'Size', value: fmtBytes(db.size || 0), sub: 'on disk', tone: '' },
+      { label: 'Retention', value: `${db.rawHours || 24}h`, sub: 'raw snapshots', tone: '' },
+      { label: 'Pruned', value: db.overCap ? 'Yes' : 'No', sub: db.overCap ? 'over cap' : 'within limit', tone: db.overCap ? 'warn' : 'good' }
+    ]);
   }
 
   /* --------------------------------------------------------------------- *
@@ -1002,7 +1032,11 @@
     Charts.release(grid);
     grid.replaceChildren();
     if (!workers.length) {
-      grid.append(empty('Worker snapshots arrive every 30 s once ADMIN_METRICS is enabled.', 'No workers reporting'));
+      grid.append(empty(
+        'Set ADMIN_METRICS=1 and ADMIN_INGEST_TOKEN in your worker .env, then restart the workers. ' +
+        'Snapshots arrive every 30 s from workers reporting to the collector.',
+        'No workers reporting'
+      ));
       return;
     }
 
@@ -1400,6 +1434,12 @@
   }
 
   function init() {
+    if (typeof window.Charts === 'undefined') {
+      console.error('Charts library not loaded');
+      $('error-banner').textContent = 'Charts library failed to load. Please refresh the page.';
+      $('error-banner').hidden = false;
+      return;
+    }
     wireStatic();
     connectSse();
     setConn('pending');

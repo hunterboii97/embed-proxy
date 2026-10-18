@@ -83,6 +83,42 @@ function attach(app) {
     const cls = code >= 500 ? '5xx' : code >= 400 ? '4xx' : code >= 300 ? '3xx' : '2xx';
     statusClasses[cls] += 1;
     if (!STREAM_ROUTES.has(route) && reply.elapsedTime > slowMs) counters.slow += 1;
+
+    // Log slow requests and errors
+    if (code >= 500 || (!STREAM_ROUTES.has(route) && reply.elapsedTime > slowMs)) {
+      const logBody = {
+        ts: Date.now(),
+        level: code >= 500 ? 'error' : 'warn',
+        source: 'worker',
+        kind: code >= 500 ? 'server_error' : 'slow_request',
+        message: `${code} ${req.raw.method} ${req.raw.url} (${Math.round(reply.elapsedTime)}ms)`,
+        data: {
+          worker: workerId,
+          route,
+          statusCode: code,
+          elapsed: Math.round(reply.elapsedTime)
+        }
+      };
+      // Send log to collector
+      const logReq = http.request({
+        host: '127.0.0.1',
+        port: collectorPort,
+        path: '/internal/log',
+        method: 'POST',
+        agent,
+        timeout: 2000,
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(JSON.stringify(logBody)),
+          'X-Admin-Token': token
+        }
+      }, (res) => {
+        res.resume();
+      });
+      logReq.on('error', () => {});
+      logReq.on('timeout', () => logReq.destroy());
+      logReq.end(JSON.stringify(logBody));
+    }
   });
 
   const loopTimer = setInterval(() => {

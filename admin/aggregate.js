@@ -237,6 +237,9 @@ function getOverview({ store, edge, ingest, config, alerts }) {
   const latest = Array.from(ingest.latestWorkers.values());
   const inflight = latest.reduce((sum, w) => sum + number(w.inflight), 0);
   const prefetch = latest.reduce((sum, w) => sum + number(w.prefetch), 0);
+  const totalRss = latest.reduce((sum, w) => sum + (w.rssMB || 0), 0);
+  const avgCpu = latest.length ? latest.reduce((sum, w) => sum + (w.cpuPct || 0), 0) / latest.length : 0;
+  const totalCache = latest.reduce((sum, w) => sum + (w.cacheMB || 0), 0);
 
   const liveBucket = live.bucket || emptyTotals();
   const liveFresh = live.lastLineAt && now - live.lastLineAt < 15000;
@@ -387,6 +390,23 @@ function getOverview({ store, edge, ingest, config, alerts }) {
       inflight,
       prefetch,
       liveEdge: liveMerged
+    },
+    workers: {
+      ...workers,
+      latest
+    },
+    db: (() => {
+      const size = store.dbSizeBytes();
+      return {
+        size,
+        rawHours: config.retention.rawHours,
+        overCap: size > config.dbMaxMB * 1024 * 1024
+      };
+    })(),
+    system: {
+      cpuPct: avgCpu || 0,
+      rssMB: totalRss || 0,
+      cacheMB: totalCache || 0
     },
     series: slimPoints(range.points),
     totals24h: {

@@ -319,6 +319,60 @@ function createIngest({ config, store, logger }) {
     const snap = normalizeSnapshot(body, now);
     try {
       store.recordSnapshots([snap], now);
+
+      // Without an nginx log source, derive traffic from worker counters so
+      // the dashboard has data. With ADMIN_EDGE_LOG set, the edge ingestor
+      // owns edge_minute and adding counters here would double-count.
+      if (!config.edgeLogPath) {
+        const minute = Math.floor(now / 60000);
+        const data = snap.data ? (() => {
+          try { return JSON.parse(snap.data); } catch { return {}; }
+        })() : {};
+        const routes = data.routes || {};
+        const status = data.status || {};
+
+        const edgeBucket = {
+          requests: snap.requests || 0,
+          bytes: 0, // Worker doesn't track bytes
+          s2xx: status['2xx'] || 0,
+          s3xx: status['3xx'] || 0,
+          s4xx: status['4xx'] || 0,
+          s5xx: status['5xx'] || 0,
+          s403: 0,
+          s404: 0,
+          s429: 0,
+          s499: 0,
+          s502: 0,
+          cache_hit: snap.cacheHits || 0,
+          cache_miss: snap.cacheUpstream || 0,
+          cache_bypass: 0,
+          rt_sum: 0,
+          rt_max: 0,
+          rt_b0: 0, rt_b1: 0, rt_b2: 0, rt_b3: 0,
+          rt_b4: 0, rt_b5: 0, rt_b6: 0, rt_b7: 0,
+          route_seg: routes.seg || 0,
+          route_playlist: routes.playlist || 0,
+          route_embed: routes.embed || 0,
+          route_api: routes.api || 0,
+          route_docs: routes.docs || 0,
+          route_asset: routes.asset || 0,
+          route_telemetry: routes.telemetry || 0,
+          route_download: routes.download || 0,
+          route_other: routes.other || 0,
+          p_zoko: 0, p_kira: 0, p_haiku: 0
+        };
+
+        try {
+          store.db.prepare(`
+            INSERT INTO edge_minute (bucket, ${Object.keys(edgeBucket).join(', ')})
+            VALUES (?, ${Object.keys(edgeBucket).map(() => '?').join(', ')})
+            ON CONFLICT(bucket) DO UPDATE SET
+              ${Object.keys(edgeBucket).map(k => `${k} = ${k} + excluded.${k}`).join(', ')}
+          `).run(minute, ...Object.values(edgeBucket));
+        } catch (error) {
+          // Best effort - don't fail snapshot if edge aggregation fails
+        }
+      }
     } catch (error) {
       logger(`[ingest] snapshot failed: ${error.message}`, 'error');
       return false;

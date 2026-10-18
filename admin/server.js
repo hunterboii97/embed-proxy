@@ -198,6 +198,36 @@ function createAdminServer({ config, store, edge, ingest, alerts, system, logger
     send(res, 204, 'text/plain; charset=utf-8', '');
   }
 
+  async function handleWorkerLog(req, res) {
+    if (req.method !== 'POST') return sendNotFound(res);
+    const ip = resolveClientIP(req);
+    if (!config.ingestToken || !safeEqual(req.headers['x-admin-token'], config.ingestToken)) {
+      return sendNotFound(res);
+    }
+    if (!requireLoopback(req, res)) return;
+    let body;
+    try {
+      body = JSON.parse(await readBody(req, 8192));
+    } catch {
+      return send(res, 204, 'text/plain; charset=utf-8', '');
+    }
+    try {
+      if (body && body.ts && body.level && body.message) {
+        store.insertEvents([{
+          ts: body.ts,
+          level: body.level || 'info',
+          source: body.source || 'worker',
+          kind: body.kind || 'log',
+          message: String(body.message || '').slice(0, 512),
+          data: body.data ? JSON.stringify(body.data).slice(0, 1024) : null
+        }]);
+      }
+    } catch (error) {
+      // Best effort - don't fail
+    }
+    send(res, 204, 'text/plain; charset=utf-8', '');
+  }
+
   async function handleSnapshot(req, res) {
     if (req.method !== 'POST') return sendNotFound(res);
     const ip = resolveClientIP(req);
@@ -334,6 +364,14 @@ function createAdminServer({ config, store, edge, ingest, alerts, system, logger
       handleSnapshot(req, res).catch((error) => {
         logger(`[snapshot] ${error.message}`, 'warn');
         if (!res.headersSent) sendJson(res, 500, { error: 'snapshot failed' });
+      });
+      return;
+    }
+
+    if (pathname === '/internal/log') {
+      handleWorkerLog(req, res).catch((error) => {
+        logger(`[worker-log] ${error.message}`, 'warn');
+        if (!res.headersSent) send(res, 204, 'text/plain; charset=utf-8', '');
       });
       return;
     }
