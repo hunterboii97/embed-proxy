@@ -199,23 +199,10 @@ async function openFlixDownload(fileId, options = {}) {
   return requestFlixDownload(fileId, options);
 }
 
-// Resolves the chain to just the signed CDN URL, for callers that need to feed
-// it to another process (FFmpeg) instead of proxying the body themselves.
-async function resolveFlixDownloadUrl(fileId, { signal } = {}) {
-  const { res, url, video } = await requestFlixDownload(fileId, {
-    method: 'GET',
-    range: 'bytes=0-0',
-    signal
-  });
-  try { await res.body.dump(); } catch {}
-  return { url, video };
-}
-
 module.exports = {
   FlixcloudError,
   devalueUnflatten,
   fetchFlixMetadata,
   buildDownloadUrl,
-  openFlixDownload,
-  resolveFlixDownloadUrl
+  openFlixDownload
 };

@@ -16,7 +16,7 @@ Our service operates three streaming servers:
 - **Multi-Server Support**: Three streaming servers with automatic failover
 - **postMessage API**: Real-time events for progress tracking and auto-next episode
 - **MP4 Downloads**: Real-time zero-transcode downloads (requires FFmpeg)
-- **Library Downloads**: `/download/kaiju/ani/...` proxies sub and remuxes dub to English audio with Mikaza-API naming
+- **Library Downloads**: `/download/kaiju/ani/...` proxies original multi-audio episodes with Mikaza-API naming
 - **Multi-Audio Support**: Japanese, English, Hindi, Tamil, and Telugu audio tracks
 - **ID Resolution**: Automatic MyAnimeList and AniList ID resolution
 - **Encrypted Streaming**: AES-GCM encrypted stream tokens with CDN spoofing
@@ -52,29 +52,28 @@ Our service operates three streaming servers:
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
-| `GET` | `/download/kaiju/ani/{anilist_id}/{ep}/{sub\|dub}` | Episode download with the selected audio (Flixcloud; requires FFmpeg + `DOWNLOAD_ENABLED`) |
+| `GET` | `/download/kaiju/ani/{anilist_id}/{ep}` | Original episode file with all audio tracks and subtitles (Flixcloud; requires `DOWNLOAD_ENABLED`) |
 | `GET` | `/api/download?server={kira\|naoka\|haiku}&mal={mal}&ep={ep}&q={quality}&lang={lang}` | MP4 download (requires FFmpeg) |
 | `GET` | `/p/{encrypted_token}` | Encrypted HLS/TS/VTT proxy |
 | `GET` | `/health` | Service health check |
 
 ### Library Downloads
 
-`/download/kaiju/ani/{anilist_id}/{ep}/{sub|dub}` resolves the Flixcloud file
-listed by Reanime and names the result:
+`/download/kaiju/ani/{anilist_id}/{ep}` resolves the Flixcloud file listed by
+Reanime and proxies it as-is, named:
 
 ```
-[Mikaza-API] - Mushoku Tensei III: Jobless Reincarnation (Ep 01)(Dub).mkv
+[Mikaza-API] - Mushoku Tensei III: Jobless Reincarnation (Ep 01).mkv
 ```
 
-Reanime exposes one dual-audio file for both languages. **Sub** proxies that
-original file as-is (Japanese is the default track; Range/resume supported).
-**Dub** is remuxed with FFmpeg (stream copy, no re-encode) to keep only the
-English audio plus all subtitles; that variant is MKV and does not support
-Range/resume. `kaiju` is the current library source; future sources plug into
-the same path shape. The signed CDN URL is IP-bound and expires in ~15 minutes.
-Disabled unless `DOWNLOAD_ENABLED=true`. Each IP gets **1 request per minute**
-and **5 per 24 hours** for GETs (`HEAD` is free); the shared quota lives under
-`data/download-quota` (gitignored).
+The source is the original multi-audio MKV with Japanese and English tracks
+plus every subtitle, so the file plays either language depending on the
+player's track selection. Range requests and `HEAD` are supported. `kaiju` is
+the current library source; future sources plug into the same path shape. The
+signed CDN URL is IP-bound and expires in ~15 minutes, so the proxy resolves it
+per request. Disabled unless `DOWNLOAD_ENABLED=true`. Each IP gets **1 request
+per minute** and **5 per 24 hours** for GETs (`HEAD` is free); the shared quota
+lives under `data/download-quota` (gitignored).
 
 ---
 

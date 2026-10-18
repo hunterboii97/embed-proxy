@@ -4,13 +4,6 @@ const { singleflight } = require('../utils/singleflight');
 const REANIME_API = 'https://reanime.to/api/flix';
 const FLIXCLOUD_LINK_RE = /^https?:\/\/(?:[a-z0-9-]+\.)?flixcloud\.[a-z]+\/(?:d|e|embed|watch|file|v)\/([A-Za-z0-9_-]+)/i;
 
-function normalizeLang(value) {
-  const s = String(value || '').toLowerCase();
-  if (s.includes('dub')) return 'dub';
-  if (s.includes('sub')) return 'sub';
-  return s;
-}
-
 // Reanime returns flixcloud player links (/e/<id>?v=N). The download API for
 // the same file lives at /d/<id>; only the file id is needed to resolve it.
 function parseFlixcloudId(link) {
@@ -32,11 +25,8 @@ async function fetchFlixServers(aniId, ep) {
   for (const s of servers) {
     const fileId = parseFlixcloudId(s?.dataLink);
     if (!fileId) continue;
-    const lang = normalizeLang(s.dataType);
-    if (lang !== 'sub' && lang !== 'dub') continue;
     out.push({
       name: String(s.serverName || ''),
-      lang,
       link: String(s.dataLink),
       fileId
     });
@@ -44,18 +34,17 @@ async function fetchFlixServers(aniId, ep) {
   return out;
 }
 
-// serverNum is 1-based and counts only entries for the requested language.
-// Exact duplicate links are collapsed so a mirrored entry does not burn a slot.
-function pickFlixServer(servers, serverNum, lang) {
+// serverNum is 1-based over unique links. Sub and dub entries point at the
+// same file, so exact duplicate links are collapsed before counting slots.
+function pickFlixServer(servers, serverNum) {
   const seen = new Set();
-  const forLang = [];
+  const unique = [];
   for (const s of servers) {
-    if (s.lang !== lang) continue;
     if (seen.has(s.link)) continue;
     seen.add(s.link);
-    forLang.push(s);
+    unique.push(s);
   }
-  return forLang[serverNum - 1] || null;
+  return unique[serverNum - 1] || null;
 }
 
 function listFlixServers(aniId, ep) {
