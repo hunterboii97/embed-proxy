@@ -857,6 +857,13 @@
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">
+                        <i class="fas fa-download"></i>
+                    </div>
+                    <h3>Direct Downloads</h3>
+                    <p>Full episodes from the Kaiju library, remuxed to sub or dub</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">
                         <i class="fas fa-message"></i>
                     </div>
                     <h3>postMessage API</h3>
@@ -1050,6 +1057,19 @@
                         <div class="endpoint-content">
                             <h4>Naoka (AniList ID)</h4>
                             <span class="endpoint-url">/embed/naoka/ani/{anilist_id}/{ep}/{lang}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="doc-card">
+                <h3><i class="fas fa-download"></i> Kaiju Downloads</h3>
+                <div class="endpoint-list">
+                    <div class="endpoint-item">
+                        <span class="method">GET</span>
+                        <div class="endpoint-content">
+                            <h4>Episode Download</h4>
+                            <span class="endpoint-url">/download/kaiju/ani/{anilist_id}/{ep}/{sub|dub}</span>
                         </div>
                     </div>
                 </div>
@@ -1378,6 +1398,7 @@
                 }
             }
         });
+
 
         // Clean URL handling: prevent '#section' in browser URL bar while smoothly scrolling
         document.querySelectorAll('a[href^="#"]').forEach(link => {

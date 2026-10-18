@@ -83,6 +83,12 @@ const rateLimitEnabled = !/^(false|0|off|no)$/i.test(String(process.env.RATE_LIM
 const embedRateLimitPerMin = parseInt(process.env.EMBED_RATE_LIMIT_PER_MIN || '3000', 10);
 const proxyRateLimitPerMin = parseInt(process.env.PROXY_RATE_LIMIT_PER_MIN || '30000', 10);
 const downloadRateLimitPerMin = parseInt(process.env.DOWNLOAD_RATE_LIMIT_PER_MIN || '30', 10);
+// Flixcloud downloads stream multi-GB files straight through the worker, so
+// they get a much tighter budget than the legacy HLS remux downloads. The
+// quota is shared across all workers via data/download-quota.
+const flixDownloadRateLimitPerMin = parseInt(process.env.FLIX_DOWNLOAD_RATE_LIMIT_PER_MIN || '1', 10);
+const flixDownloadDailyLimit = parseInt(process.env.FLIX_DOWNLOAD_DAILY_LIMIT || '5', 10);
+const flixDownloadQuotaDir = process.env.FLIX_DOWNLOAD_QUOTA_DIR || path.join(__dirname, 'data', 'download-quota');
 
 // Player beacons for the admin dashboard. Off by default; the collector must
 // agree (both services read the same .env). Injected per embed page only when
@@ -395,6 +401,9 @@ module.exports = {
   embedRateLimitPerMin,
   proxyRateLimitPerMin,
   downloadRateLimitPerMin,
+  flixDownloadRateLimitPerMin,
+  flixDownloadDailyLimit,
+  flixDownloadQuotaDir,
   rateLimitEnabled,
   sharedSegmentTokens,
   tokenBucketSeconds,

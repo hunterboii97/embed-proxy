@@ -16,6 +16,7 @@ const { registerProxyRoutes } = require('./src/routes/proxy');
 const { registerEmbedRoutes } = require('./src/routes/embeds');
 const { registerApiRoutes } = require('./src/routes/api');
 const { registerDownloadRoutes } = require('./src/routes/download');
+const { registerFlixDownloadRoutes } = require('./src/routes/download-flix');
 
 // Self-hosted hls.js bundle (served from memory — no CDN round-trip / JS-delay)
 let hlsBundle = null;
@@ -61,6 +62,7 @@ app.register(registerProxyRoutes);
 app.register(registerEmbedRoutes);
 app.register(registerApiRoutes);
 app.register(registerDownloadRoutes);
+app.register(registerFlixDownloadRoutes);
 registerPlayerAssetRoutes(app);
 
 // Self-hosted hls.js (long-cacheable, same-origin = no external DNS/TLS)
