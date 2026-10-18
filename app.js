@@ -15,7 +15,6 @@ const { renderCustomProxy404, registerPlayerAssetRoutes } = require('./src/views
 const { registerProxyRoutes } = require('./src/routes/proxy');
 const { registerEmbedRoutes } = require('./src/routes/embeds');
 const { registerApiRoutes } = require('./src/routes/api');
-const { registerDownloadRoutes } = require('./src/routes/download');
 const { registerFlixDownloadRoutes } = require('./src/routes/download-flix');
 
 // Self-hosted hls.js bundle (served from memory — no CDN round-trip / JS-delay)
@@ -64,7 +63,6 @@ app.register(compression, {
 app.register(registerProxyRoutes);
 app.register(registerEmbedRoutes);
 app.register(registerApiRoutes);
-app.register(registerDownloadRoutes);
 app.register(registerFlixDownloadRoutes);
 registerPlayerAssetRoutes(app);
 
@@ -80,8 +78,15 @@ app.get('/hls.min.js', async (req, reply) => {
 
 // Interactive Sandbox Documentation & Live Embed Generator
 const docsHandler = async (req, reply) => {
-  const host = req.headers['host'] || `localhost:${PORT}`;
-  const proto = req.headers['x-forwarded-proto'] || (req.socket.encrypted ? 'https' : 'http');
+  // Host is attacker-controlled on direct connections; only a plain
+  // hostname/IPv4[:port] or [IPv6][:port] may become the embed base URL.
+  const rawHost = String(req.headers['host'] || '');
+  const hostValid =
+    rawHost.length <= 255 &&
+    (/^[A-Za-z0-9.-]+(:\d{1,5})?$/.test(rawHost) || /^\[[0-9A-Fa-f:.]+\](:\d{1,5})?$/.test(rawHost));
+  const host = hostValid ? rawHost : `localhost:${PORT}`;
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  const proto = forwardedProto === 'https' || req.socket.encrypted ? 'https' : 'http';
   const baseURL = `${proto}://${host}`;
 
   reply.header('Content-Type', 'text/html; charset=utf-8');

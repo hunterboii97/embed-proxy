@@ -535,6 +535,9 @@ export async function createPlayer(options = {}) {
     const params = new URLSearchParams({ start: String(Math.max(0, Math.floor(resumeAt || 0))) });
     const embedRef = window.__YUME_EMBED_REF__;
     if (embedRef) params.set('embedref', embedRef);
+    // Partner status rides in a signed token; the next shell reuses it instead
+    // of re-deriving tier from a same-origin Referer.
+    if (cfg.tierToken) params.set('tier', cfg.tierToken);
     return next + (next.includes('?') ? '&' : '?') + params.toString();
   }
 

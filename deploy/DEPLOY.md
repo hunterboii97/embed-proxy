@@ -39,7 +39,7 @@ NVMe cache), Cloudflare DNS as today. All configs here are written, not applied.
 
 ## 1. Prerequisites
 
-    node -v              # must be v24 (or >= 18)
+    node -v              # must be v24 (minimum v20.3 — AbortSignal.any)
     nginx -v
     cd /opt && git clone <mikara repo> mikaza && cd mikaza
 

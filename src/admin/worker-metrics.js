@@ -38,7 +38,7 @@ function routeClass(rawUrl) {
   if (uri === '/docs' || uri === '/') return 'docs';
   if (uri.startsWith('/player-assets/') || uri === '/hls.min.js') return 'asset';
   if (uri === '/telemetry') return 'telemetry';
-  if (uri === '/download' || uri.startsWith('/download/') || uri.startsWith('/api/download')) return 'download';
+  if (uri.startsWith('/download/')) return 'download';
   return 'other';
 }
 

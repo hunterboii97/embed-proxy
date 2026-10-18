@@ -82,10 +82,9 @@ const rateLimitEnabled = !/^(false|0|off|no)$/i.test(String(process.env.RATE_LIM
 // them (even via shared NAT/carrier IPs); they exist as flood protection only.
 const embedRateLimitPerMin = parseInt(process.env.EMBED_RATE_LIMIT_PER_MIN || '3000', 10);
 const proxyRateLimitPerMin = parseInt(process.env.PROXY_RATE_LIMIT_PER_MIN || '30000', 10);
-const downloadRateLimitPerMin = parseInt(process.env.DOWNLOAD_RATE_LIMIT_PER_MIN || '30', 10);
 // Flixcloud downloads stream multi-GB files straight through the worker, so
-// they get a much tighter budget than the legacy HLS remux downloads. The
-// quota is shared across all workers via data/download-quota.
+// they get a tight budget. The quota is shared across all workers via
+// data/download-quota.
 const flixDownloadRateLimitPerMin = parseInt(process.env.FLIX_DOWNLOAD_RATE_LIMIT_PER_MIN || '1', 10);
 const flixDownloadDailyLimit = parseInt(process.env.FLIX_DOWNLOAD_DAILY_LIMIT || '5', 10);
 const flixDownloadQuotaDir = process.env.FLIX_DOWNLOAD_QUOTA_DIR || path.join(__dirname, 'data', 'download-quota');
@@ -235,20 +234,45 @@ const cdnRules = [
 
 function isPrivateHost(hostname) {
   if (!hostname) return true;
-  const h = hostname.toLowerCase().trim();
-  if (h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '0.0.0.0') return true;
+  let h = String(hostname).toLowerCase().trim();
+  if (h.startsWith('[') && h.endsWith(']')) h = h.slice(1, -1);
+  const zone = h.indexOf('%');
+  if (zone >= 0) h = h.slice(0, zone);
+  if (h === 'localhost' || h.endsWith('.localhost')) return true;
   if (h.endsWith('.local') || h.endsWith('.internal')) return true;
 
-  // Check IPv4 private ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16)
-  const ipv4Match = h.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  const ipv4Match = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (ipv4Match) {
-    const b0 = parseInt(ipv4Match[1], 10);
-    const b1 = parseInt(ipv4Match[2], 10);
-    if (b0 === 10) return true;
-    if (b0 === 172 && b1 >= 16 && b1 <= 31) return true;
-    if (b0 === 192 && b1 === 168) return true;
-    if (b0 === 169 && b1 === 254) return true;
-    if (b0 === 127) return true;
+    const [a, b, c] = ipv4Match.slice(1).map(n => parseInt(n, 10));
+    if (a > 255 || b > 255 || parseInt(ipv4Match[3], 10) > 255 || parseInt(ipv4Match[4], 10) > 255) return true;
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;          // CGNAT 100.64/10
+    if (a === 169 && b === 254) return true;                    // link-local
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 192 && b === 0 && (c === 0 || c === 2)) return true;
+    if (a === 198 && (b === 18 || b === 19)) return true;       // benchmarking
+    if (a === 198 && b === 51 && c === 100) return true;        // TEST-NET-2
+    if (a === 203 && b === 0 && c === 113) return true;         // TEST-NET-3
+    if (a >= 224) return true;                                  // multicast + reserved
+    return false;
+  }
+
+  if (h.includes(':')) {
+    if (h === '::' || h === '::1') return true;
+    const mapped = h.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+    if (mapped) return isPrivateHost(mapped[1]);
+    const mappedHex = h.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+    if (mappedHex) {
+      const hi = parseInt(mappedHex[1], 16);
+      const lo = parseInt(mappedHex[2], 16);
+      return isPrivateHost(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
+    }
+    const first = parseInt(h.split(':')[0] || '0', 16);
+    if ((first & 0xfe00) === 0xfc00) return true;               // fc00::/7 ULA
+    if ((first & 0xffc0) === 0xfe80) return true;               // fe80::/10 link-local
+    if ((first & 0xff00) === 0xff00) return true;               // ff00::/8 multicast
+    return false;
   }
   return false;
 }
@@ -336,16 +360,25 @@ function isBlockedEmbedSource(value) {
 }
 
 // Tier is decided once per embed-page request from the embedding site's
-// Referer/Origin. Direct visits have no parent site and default to free.
+// Referer/Origin. Direct visits and our own player pages (failover
+// navigations, reloads) have no parent site and default to free — a
+// signed ?tier token carries partner status across those navigations.
 // Legacy allowlist mode (free mode off) has no ads, so every allowed page is
 // treated as partner for the priority lane.
 function getEmbedTier(req) {
   if (!freeEmbedMode) return 'partner';
-  const host = req.headers['host'] || '';
-  const referer = req.headers['referer'] || '';
-  const origin = req.headers['origin'] || '';
-  if (referer && isDomainAllowed(referer, host)) return 'partner';
-  if (origin && isDomainAllowed(origin, host)) return 'partner';
+  const host = String(req.headers['host'] || '').split(':')[0].toLowerCase();
+  for (const value of [req.headers['referer'], req.headers['origin']]) {
+    if (!value) continue;
+    let refHost = '';
+    try {
+      refHost = new URL(value).hostname.toLowerCase();
+    } catch {
+      continue;
+    }
+    if (!refHost || refHost === host) continue;
+    if (isDomainAllowed(refHost, '')) return 'partner';
+  }
   return 'free';
 }
 
@@ -415,7 +448,6 @@ module.exports = {
   blockedEmbedDomains,
   embedRateLimitPerMin,
   proxyRateLimitPerMin,
-  downloadRateLimitPerMin,
   flixDownloadRateLimitPerMin,
   flixDownloadDailyLimit,
   flixDownloadQuotaDir,

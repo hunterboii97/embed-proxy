@@ -1289,7 +1289,7 @@
     </footer>
 
     <script>
-        const BASE_ORIGIN = "{{BASE_URL}}";
+        const BASE_ORIGIN = {{BASE_URL_JSON}};
 
         function buildUrl(server, id, ep, lang) {
             id = encodeURIComponent(String(id).trim());

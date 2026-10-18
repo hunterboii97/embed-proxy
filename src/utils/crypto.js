@@ -126,10 +126,45 @@ function decryptToken(tokenStr, key = proxySecretKey) {
 }
 
 /**
+ * Tier tokens: a small HMAC-signed bearer credential minted at the shell
+ * request from the embedding site (Referer/Origin) and validated on resolve
+ * and on failover navigations. Kept separate from encryptToken because shared
+ * segment tokens deliberately drop per-viewer claims; the tier claim must
+ * survive that transformation untouched.
+ */
+const TIER_TOKEN_TTL_S = 6 * 60 * 60;
+const tierTokenRegex = /^t1\.(partner|free)\.(\d{1,12})\.([A-Za-z0-9_-]{43})$/;
+
+function signTierToken(tier, ttlSeconds = TIER_TOKEN_TTL_S) {
+  const tierName = tier === 'partner' ? 'partner' : 'free';
+  const exp = Math.floor(Date.now() / 1000) + Math.max(60, ttlSeconds | 0);
+  const payload = `t1.${tierName}.${exp}`;
+  const sig = crypto.createHmac('sha256', proxySecretKey).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+function verifyTierToken(token) {
+  if (typeof token !== 'string' || token.length > 200) return null;
+  const m = token.match(tierTokenRegex);
+  if (!m) return null;
+  const tier = m[1];
+  const exp = parseInt(m[2], 10);
+  if (!Number.isFinite(exp) || exp * 1000 <= Date.now()) return null;
+  const expected = crypto.createHmac('sha256', proxySecretKey).update(`t1.${tier}.${exp}`).digest();
+  let given;
+  try {
+    given = Buffer.from(m[3], 'base64url');
+  } catch {
+    return null;
+  }
+  if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return null;
+  return tier;
+}
+
+/**
  * Encrypts rewritten M3U8 playlist with client hex key using AES-256-GCM
  */
-function encryptPlaylistResponse(text, hexKey) {
-  const keyBytes = Buffer.from(hexKey, 'hex');
+function encryptPlaylistResponse(text, hexKey) {  const keyBytes = Buffer.from(hexKey, 'hex');
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', keyBytes, iv);
   const ciphertext = Buffer.concat([cipher.update(Buffer.from(text, 'utf8')), cipher.final()]);
@@ -241,6 +276,8 @@ function genSoraToken(filePath, size) {
 module.exports = {
   encryptToken,
   decryptToken,
+  signTierToken,
+  verifyTierToken,
   encryptPlaylistResponse,
   decryptMegaplayEnc,
   deobfuscateZokoPayload,

@@ -1,11 +1,11 @@
 const {
   isEmbedAllowed, buildFrameAncestorsCSP, getClientIP, embedRateLimitPerMin,
   freeEmbedMode, adDirectUrls, adInterstitialUrl, adminTelemetryEnabled,
-  isDomainAllowed, isBlockedEmbedSource,
+  isBlockedEmbedSource, getEmbedTier,
   embedResolveTimeoutMs, embedHedgeStaggerMs
 } = require('../../config');
 const { rateLimited } = require('../utils/ratelimit');
-const { encryptToken } = require('../utils/crypto');
+const { encryptToken, signTierToken, verifyTierToken } = require('../utils/crypto');
 const { renderPlayerShell, renderCustomProxy404 } = require('../views/player');
 const { extractZokoHLS } = require('../scrapers/zoko');
 const { resolveAnimeSaltSlug, extractAnimeSaltStream } = require('../scrapers/animesalt');
@@ -25,6 +25,11 @@ function embedCSP(req) {
 // Shell-first: the HTML carries no stream, token, tier or ad data, so it is
 // identical for every embedding site and safe to cache. Everything viewer-
 // specific is decided by the resolve call below.
+//
+// Partner tier is minted here from the embedding site's actual Referer/Origin
+// (or reused from a signed ?tier token on failover navigations) and travels to
+// resolve as a signed token — the client can no longer claim partner with a
+// forged `ref`. Partner shells are viewer-specific and never shared-cached.
 function sendShell(req, reply) {
   const qIndex = req.url.indexOf('?');
   const path = qIndex < 0 ? req.url : req.url.slice(0, qIndex);
@@ -32,10 +37,23 @@ function sendShell(req, reply) {
   params.delete('resolve');
   params.set('resolve', '1');
 
+  let tierToken = '';
+  if (freeEmbedMode) {
+    const tier = verifyTierToken(req.query && req.query.tier) || getEmbedTier(req);
+    if (tier === 'partner') {
+      tierToken = signTierToken('partner');
+      params.set('tier', tierToken);
+    }
+  }
+  if (!tierToken) params.delete('tier');
+
   reply.header('Content-Type', 'text/html; charset=utf-8');
   reply.header('Content-Security-Policy', embedCSP(req));
   reply.header('X-Content-Type-Options', 'nosniff');
-  reply.header('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
+  reply.header(
+    'Cache-Control',
+    tierToken ? 'private, no-store' : 'public, max-age=60, stale-while-revalidate=300'
+  );
   return reply.send(renderPlayerShell(`${path}?${params.toString()}`));
 }
 
@@ -47,14 +65,12 @@ function sendHtmlError(req, reply, status, message) {
   return reply.code(status).send(renderCustomProxy404(req.url, message));
 }
 
-// The resolve fetch is same-origin, so the browser reports our own origin as
-// Referer. The embedding site's URL rides in `ref` (document.referrer on the
-// first load, ?embedref after a failover navigation).
+// The resolve fetch is same-origin, so its Referer is our own origin and its
+// `ref` is client-supplied. Partner status therefore comes only from the
+// signed token minted at the shell request, never from `ref`.
 function resolveTier(req) {
   if (!freeEmbedMode) return 'partner';
-  const ref = String(req.query.ref || '');
-  if (ref && isDomainAllowed(ref, req.headers['host'] || '')) return 'partner';
-  return 'free';
+  return verifyTierToken(req.query && req.query.tier) === 'partner' ? 'partner' : 'free';
 }
 
 function embedAds(tier) {
@@ -208,6 +224,11 @@ async function resolveRoute(req, reply, key, run) {
   try {
     const body = await run(controller.signal);
     resolveErrorCache.delete(key);
+    // Hand the player a fresh token so a failover navigation keeps partner
+    // status without trusting document.referrer.
+    if (freeEmbedMode && body && body.tier === 'partner') {
+      body.tierToken = signTierToken('partner');
+    }
     return reply.send(body);
   } catch (err) {
     let message = err?.message || 'Stream resolve failed';

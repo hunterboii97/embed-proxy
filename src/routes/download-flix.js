@@ -154,7 +154,7 @@ async function registerFlixDownloadRoutes(fastify) {
     if (method !== 'HEAD') {
       let quota;
       try {
-        quota = consumeDownloadQuota(getClientIP(req), {
+        quota = await consumeDownloadQuota(getClientIP(req), {
           dir: flixDownloadQuotaDir,
           perMinute: flixDownloadRateLimitPerMin,
           perDay: flixDownloadDailyLimit

@@ -1,10 +1,9 @@
-# High-Performance Node.js 20 Alpine Image with FFmpeg
+# High-Performance Node.js 20 Alpine Image
 FROM node:20-alpine
 
 WORKDIR /app
 
-# Install FFmpeg for real-time MP4 zero-transcode remuxing
-RUN apk add --no-cache ffmpeg ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata
 
 COPY package*.json ./
 RUN npm ci --only=production

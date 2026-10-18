@@ -8,6 +8,7 @@ const { decryptToken, encryptToken, encryptPlaylistResponse, genSoraToken } = re
 const { rewriteM3U8, resolveAbsoluteURL } = require('../utils/m3u8');
 const { m3u8PlaylistCache, tsSegmentCache, abyssChunkCache, segmentIndex, stats } = require('../utils/cache');
 const { globalAgent, DEFAULT_UA } = require('../utils/http');
+const { createWaiterSink } = require('../utils/waiter-sink');
 
 // Segment engine tunables
 const SEGMENT_BUFFER_CAP = 16 * 1024 * 1024;    // Cache segments up to 16MB; larger = passthrough stream
@@ -264,7 +265,7 @@ async function bufferAndFanout(upstreamRes, flight) {
 
       for (let i = waiters.length - 1; i >= 0; i--) {
         const w = waiters[i];
-        if (!w || w.rawRes.destroyed) {
+        if (!w || w.rawRes.destroyed || (w.sink && w.sink.dead)) {
           waiters.splice(i, 1);
           continue;
         }
@@ -286,13 +287,14 @@ async function bufferAndFanout(upstreamRes, flight) {
               ...corsHeaders(),
               ...(w.extraHeaders || {})
             });
-            if (first.length > strip && !w.rawRes.write(first.subarray(strip))) await waitDrain(w.rawRes);
-            for (let j = 1; j < chunks.length; j++) {
-              if (w.rawRes.destroyed) break;
-              if (!w.rawRes.write(chunks[j])) await waitDrain(w.rawRes);
-            }
-          } else if (buf.length > 0 && !w.rawRes.write(buf)) {
-            await waitDrain(w.rawRes);
+            // A stalled waiter must never hold up the shared upstream read
+            // loop (and every other client on it): writes go into a bounded
+            // per-waiter queue; overflow destroys only that waiter.
+            w.sink = createWaiterSink(w.rawRes);
+            if (first.length > strip) w.sink.write(first.subarray(strip));
+            for (let j = 1; j < chunks.length; j++) w.sink.write(chunks[j]);
+          } else if (buf.length > 0 && w.sink) {
+            w.sink.write(buf);
           }
         } catch {
           waiters.splice(i, 1);
@@ -303,7 +305,10 @@ async function bufferAndFanout(upstreamRes, flight) {
     for (const w of waiters) {
       // Waiters that never got headers are served the full buffered body by
       // handleSegmentRequest once the flight completes.
-      if (w && w.headersSent && !w.rawRes.destroyed && !w.rawRes.writableEnded) w.rawRes.end();
+      if (w && w.headersSent) {
+        if (w.sink) w.sink.end();
+        else if (!w.rawRes.destroyed && !w.rawRes.writableEnded) w.rawRes.end();
+      }
     }
     waiters.length = 0;
   } catch (err) {
@@ -347,10 +352,10 @@ async function teeSegmentToClient(upstreamRes, tee, flight) {
   let sniffed = false;
   let strip = 0;
 
-  async function fanToWaiters(buf) {
+  function fanToWaiters(buf) {
     for (let i = waiters.length - 1; i >= 0; i--) {
       const w = waiters[i];
-      if (!w || w.rawRes.destroyed) {
+      if (!w || w.rawRes.destroyed || (w.sink && w.sink.dead)) {
         waiters.splice(i, 1);
         continue;
       }
@@ -372,13 +377,11 @@ async function teeSegmentToClient(upstreamRes, tee, flight) {
             ...corsHeaders(),
             ...(w.extraHeaders || {})
           });
-          if (first.length > wstrip && !w.rawRes.write(first.subarray(wstrip))) await waitDrain(w.rawRes);
-          for (let j = 1; j < chunks.length; j++) {
-            if (w.rawRes.destroyed) break;
-            if (!w.rawRes.write(chunks[j])) await waitDrain(w.rawRes);
-          }
-        } else if (buf.length > 0 && !w.rawRes.write(buf)) {
-          await waitDrain(w.rawRes);
+          w.sink = createWaiterSink(w.rawRes);
+          if (first.length > wstrip) w.sink.write(first.subarray(wstrip));
+          for (let j = 1; j < chunks.length; j++) w.sink.write(chunks[j]);
+        } else if (buf.length > 0 && w.sink) {
+          w.sink.write(buf);
         }
       } catch {
         waiters.splice(i, 1);
@@ -422,7 +425,7 @@ async function teeSegmentToClient(upstreamRes, tee, flight) {
         }
       }
 
-      await fanToWaiters(buf);
+      fanToWaiters(buf);
 
       const out = strip > 0 ? buf.subarray(strip) : buf;
       if (out.length > 0 && !rawRes.destroyed) {
@@ -436,7 +439,10 @@ async function teeSegmentToClient(upstreamRes, tee, flight) {
 
     if (!rawRes.writableEnded && !rawRes.destroyed) rawRes.end();
     for (const w of waiters) {
-      if (w && w.headersSent && !w.rawRes.destroyed && !w.rawRes.writableEnded) w.rawRes.end();
+      if (w && w.headersSent) {
+        if (w.sink) w.sink.end();
+        else if (!w.rawRes.destroyed && !w.rawRes.writableEnded) w.rawRes.end();
+      }
     }
     waiters.length = 0;
   } catch (err) {
@@ -615,6 +621,7 @@ async function handleSegmentRequest(req, reply, targetURL, upstreamHeaders, dlNa
       if (!reply.raw.headersSent) {
         reply.code(502).send({ error: `Upstream gateway error: ${err.message}` });
       } else if (!reply.raw.writableEnded) {
+        reply.hijack();
         reply.raw.destroy();
       }
       return true;
@@ -636,8 +643,12 @@ async function handleSegmentRequest(req, reply, targetURL, upstreamHeaders, dlNa
           ...(extraHeaders || {})
         });
         rawRes.end(entry.body);
-      } else if (waiter && waiter.headersSent && !reply.raw.destroyed && !reply.raw.writableEnded) {
-        reply.raw.end();
+      } else if (waiter && waiter.headersSent) {
+        // The fanned-out reply is driven by the shared flight's sink; the
+        // route owns the raw response from here on.
+        reply.hijack();
+        if (waiter.sink) waiter.sink.end();
+        else if (!reply.raw.destroyed && !reply.raw.writableEnded) reply.raw.end();
       }
       notifyURL = targetURL;
       return true;
@@ -646,7 +657,10 @@ async function handleSegmentRequest(req, reply, targetURL, upstreamHeaders, dlNa
     // Oversized stream result
     if (result.streamConsumed) {
       if (isCreator) return true; // already proxied by the tee
-      if (waiter && waiter.headersSent) return true; // already fanned out
+      if (waiter && waiter.headersSent) {
+        reply.hijack();
+        return true; // already fanned out
+      }
       return passthroughSegment(targetURL, upstreamHeaders, reply, extraHeaders);
     }
     if (!result.claimed) {

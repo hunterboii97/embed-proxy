@@ -15,7 +15,6 @@ Our service operates three streaming servers:
 - **Ad-Free OLED Player**: Clean video player with zero ads, popups, or trackers
 - **Multi-Server Support**: Three streaming servers with automatic failover
 - **postMessage API**: Real-time events for progress tracking and auto-next episode
-- **MP4 Downloads**: Real-time zero-transcode downloads (requires FFmpeg)
 - **Library Downloads**: `/download/kaiju/ani/...` proxies original multi-audio episodes with Mikaza-API naming
 - **Multi-Audio Support**: Japanese, English, Hindi, Tamil, and Telugu audio tracks
 - **ID Resolution**: Automatic MyAnimeList and AniList ID resolution
@@ -53,7 +52,6 @@ Our service operates three streaming servers:
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
 | `GET` | `/download/kaiju/ani/{anilist_id}/{ep}` | Original episode file with all audio tracks and subtitles (Flixcloud; requires `DOWNLOAD_ENABLED`) |
-| `GET` | `/api/download?server={kira\|naoka\|haiku}&mal={mal}&ep={ep}&q={quality}&lang={lang}` | MP4 download (requires FFmpeg) |
 | `GET` | `/p/{encrypted_token}` | Encrypted HLS/TS/VTT proxy |
 | `GET` | `/health` | Service health check |
 
@@ -163,11 +161,10 @@ window.addEventListener("message", function (event) {
 | `ALLOWED_EMBED_DOMAINS` | `localhost,127.0.0.1` | Embed allowlist. Requests from any other origin get a bare `403` (no page). Also drives the `frame-ancestors` CSP. |
 | `ALLOWED_ORIGINS` | `localhost,127.0.0.1` | CORS-allowed origins (no wildcard; foreign origins get no `Access-Control-Allow-Origin`). |
 | `SOURCE_API_ENABLED` | *off* | Enables the JSON source API (`/api/*/source`). Off = `403`. Licensed deployments only. |
-| `DOWNLOAD_ENABLED` | *off* | Enables `/download` (both variants) + `/api/download`. Off = `403`. |
+| `DOWNLOAD_ENABLED` | *off* | Enables `/download/kaiju/ani/...`. Off = `403`. |
 | `RATE_LIMIT_ENABLED` | `true` | Master switch for all per-IP rate limits. `false` = unlimited requests (embed gate + IP-bound tokens still apply). |
 | `EMBED_RATE_LIMIT_PER_MIN` | `3000` | Per-IP embed-page rate limit (`429` when exceeded). Defaults are generous so real viewers never trip them; `0` disables. |
 | `PROXY_RATE_LIMIT_PER_MIN` | `30000` | Per-IP `/p/*` stream/token rate limit. `0` disables. |
-| `DOWNLOAD_RATE_LIMIT_PER_MIN` | `30` | Per-IP download rate limit. `0` disables. |
 | `FLIX_DOWNLOAD_RATE_LIMIT_PER_MIN` | `1` | Per-IP budget for `/download/kaiju/...` (shared across workers). `0` disables. |
 | `FLIX_DOWNLOAD_DAILY_LIMIT` | `5` | Per-IP downloads per rolling 24 hours (shared across workers). `0` disables. |
 | `FLIX_DOWNLOAD_QUOTA_DIR` | `./data/download-quota` | Shared quota store used by all workers. |
