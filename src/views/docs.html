@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
     <title>MikazaAPI — Anime Embed Streaming Service</title>
-    <meta name="description" content="High-performance anime streaming API with ad-free embed player, multi-server support, and real-time postMessage events.">
+    <meta name="description" content="High-performance anime streaming API with minimal-ads embed player, multi-server support, and real-time postMessage events.">
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23000' stroke='%23333' stroke-width='2'/%3E%3Cpath d='M24 18v28l22-14z' fill='%23fff'/%3E%3C/svg%3E">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -819,8 +819,8 @@
         <section class="hero">
             <h1>MikazaAPI</h1>
             <p>
-                Professional anime streaming API with ad-free embed player, multi-server support,
-                real-time postMessage events, and instant MP4 downloads.
+                Professional anime streaming API with minimal-ads embed player, multi-server support,
+                real-time postMessage events, and instant MKV downloads.
             </p>
             <div class="hero-actions">
                 <a href="#tester" class="btn btn-primary">
@@ -845,8 +845,8 @@
                     <div class="feature-icon">
                         <i class="fas fa-shield-halved"></i>
                     </div>
-                    <h3>Ad-Free Player</h3>
-                    <p>Clean OLED video player with zero ads or popups</p>
+                    <h3>Minimal Ads</h3>
+                    <p>Clean OLED video player with minimal ads</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">
@@ -860,7 +860,7 @@
                         <i class="fas fa-download"></i>
                     </div>
                     <h3>Direct Downloads</h3>
-                    <p>Full episodes from the Kaiju library, with every audio track and subtitle</p>
+                    <p>Full episodes from our library, with every audio track and subtitle</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon">
@@ -897,29 +897,6 @@
                     </div>
                     <h3>Skip Timings</h3>
                     <p>Intro/outro skip detection with metadata</p>
-                </div>
-            </div>
-        </section>
-
-        <!-- Important Note -->
-        <section class="api-section" id="important-note">
-            <div class="section-header">
-                <h2>Important Note</h2>
-                <p>Usage and contact information</p>
-            </div>
-            <div class="doc-card">
-                <h3><i class="fas fa-info-circle"></i> Usage</h3>
-                <p>
-                    Looking to integrate our embed player into your anime streaming site? We offer this, paid embed with low monthly charges to help you get started. Maintaining reliable servers and infrastructure comes with ongoing costs, so our embed is designed to keep things affordable while delivering a smooth, dependable experience. As a partner, you'll get priority support, exclusive features, an ad-free experience for your users, and you can even demand custom features.
-                </p>
-                <p style="margin-top: 1rem;">
-                    Feel free to contact us on Discord!
-                </p>
-                <div style="margin-top: 1.5rem;">
-                    <a href="https://discord.com/users/865816996594450532" target="_blank" class="btn btn-secondary" style="display: inline-flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; padding: 0.6rem 1.2rem;">
-                        <i class="fab fa-discord"></i>
-                        Contact on Discord
-                    </a>
                 </div>
             </div>
         </section>
@@ -1063,7 +1040,7 @@
             </div>
 
             <div class="doc-card">
-                <h3><i class="fas fa-download"></i> Kaiju Downloads</h3>
+                <h3><i class="fas fa-download"></i> Download Endpoints</h3>
                 <div class="endpoint-list">
                     <div class="endpoint-item">
                         <span class="method">GET</span>
@@ -1129,11 +1106,6 @@
                                 <td><code>{ currentTime, duration }</code></td>
                                 <td>Periodic watch-time logging</td>
                             </tr>
-                            <tr>
-                                <td><code>YUME_SWITCH_SERVER</code></td>
-                                <td><code>{ server: string }</code></td>
-                                <td>User switched server</td>
-                            </tr>
                         </tbody>
                     </table>
                 </div>
@@ -1155,10 +1127,6 @@
   if (data.event === "complete") {
     console.log("Episode finished!");
     loadNextEpisode();
-  }
-
-  if (data.type === "YUME_SWITCH_SERVER") {
-    console.log("Switched to:", data.server);
   }
 });</pre>
                 </div>

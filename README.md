@@ -12,7 +12,7 @@ Our service operates three streaming servers:
 
 ## 🚀 Key Features
 
-- **Ad-Free OLED Player**: Clean video player with zero ads, popups, or trackers
+- **Minimal-Ads OLED Player**: Clean OLED video player with minimal ads
 - **Multi-Server Support**: Three streaming servers with automatic failover
 - **postMessage API**: Real-time events for progress tracking and auto-next episode
 - **Library Downloads**: `/download/kaiju/ani/...` proxies original multi-audio episodes with Mikaza-API naming
@@ -127,7 +127,6 @@ The embedded player sends events via `window.postMessage`:
 | `time` | `{ time, duration, percent }` | Playback progress |
 | `complete` | `{ event: "complete" }` | Episode finished (auto-next) |
 | `watching-log` | `{ currentTime, duration }` | Periodic watch-time logging |
-| `YUME_SWITCH_SERVER` | `{ server: string }` | User switched server |
 
 ### JavaScript Example
 ```javascript
