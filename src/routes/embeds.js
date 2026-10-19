@@ -66,7 +66,10 @@ async function playlistReachable(targetURL, ref, signal) {
       dispatcher: globalAgent,
       signal: probeSignal
     });
-    try { await res.body.dump(); } catch { /* aborted mid-body */ }
+    // Headers alone are not enough: a dead CDN can accept the connection and
+    // then stall the body, which is exactly how the player would hang. The
+    // playlist must finish downloading inside the probe budget.
+    await res.body.dump();
     return res.statusCode < 400;
   } catch {
     return false;
@@ -591,6 +594,20 @@ async function registerEmbedRoutes(fastify) {
         }
       ];
       if (saltHedge) {
+        // Zoko runs before haiku: it resolves in ~0.5 s while a dead kira
+        // source burns the whole probe budget, and animesalt can miss newly
+        // airing titles entirely. A healthy kira still settles before this
+        // candidate is launched.
+        candidates.push({
+          name: 'zoko',
+          run: async (signal) => {
+            const mal = saltHedge.malId || await resolveMalId(saltHedge.aniId, signal);
+            if (!mal) {
+              throw resolveFailure(`Could not resolve MAL ID for AniList ID: ${saltHedge.aniId}`, 404);
+            }
+            return runZoko(req, { malId: mal, ep: saltHedge.ep, lang }, tier, signal);
+          }
+        });
         candidates.push({
           name: 'haiku',
           run: (signal) => runSalt(req, { ...saltHedge, season: 1, hash: '', lang }, tier, signal)
@@ -608,8 +625,11 @@ async function registerEmbedRoutes(fastify) {
       targetPath: `mal/${malId}/${ep}/${lang}`,
       lang,
       key: `mega_mal_${malId}_${ep}_${lang}`,
-      kiraFallbacks: [`/embed/haiku/mal/${malId}/${ep}/${lang}`],
-      saltHedge: { malId }
+      kiraFallbacks: [
+        `/embed/zoko/mal/${malId}/${ep}/${lang}`,
+        `/embed/haiku/mal/${malId}/${ep}/${lang}`
+      ],
+      saltHedge: { malId, ep }
     });
   };
   fastify.get('/embed/kira/mal/:mal_id/:ep/:lang', handleMegaMal);
@@ -623,8 +643,11 @@ async function registerEmbedRoutes(fastify) {
       targetPath: `ani/${aniId}/${ep}/${lang}`,
       lang,
       key: `mega_ani_${aniId}_${ep}_${lang}`,
-      kiraFallbacks: [`/embed/haiku/ani/${aniId}/${ep}/${lang}`],
-      saltHedge: { aniId }
+      kiraFallbacks: [
+        `/embed/zoko/ani/${aniId}/${ep}/${lang}`,
+        `/embed/haiku/ani/${aniId}/${ep}/${lang}`
+      ],
+      saltHedge: { aniId, ep }
     });
   };
   fastify.get('/embed/kira/ani/:anilist_id/:ep/:lang', handleMegaAni);
@@ -652,8 +675,11 @@ async function registerEmbedRoutes(fastify) {
         targetPath: `mal/${malId}/${ep}/${lang}`,
         lang,
         key: `mega_player_mal_${malId}_${ep}_${lang}`,
-        kiraFallbacks: [`/embed/haiku/mal/${malId}/${ep}/${lang}`],
-        saltHedge: { malId }
+        kiraFallbacks: [
+          `/embed/zoko/mal/${malId}/${ep}/${lang}`,
+          `/embed/haiku/mal/${malId}/${ep}/${lang}`
+        ],
+        saltHedge: { malId, ep }
       });
     }
     if (aniId > 0) {
@@ -661,8 +687,11 @@ async function registerEmbedRoutes(fastify) {
         targetPath: `ani/${aniId}/${ep}/${lang}`,
         lang,
         key: `mega_player_ani_${aniId}_${ep}_${lang}`,
-        kiraFallbacks: [`/embed/haiku/ani/${aniId}/${ep}/${lang}`],
-        saltHedge: { aniId }
+        kiraFallbacks: [
+          `/embed/zoko/ani/${aniId}/${ep}/${lang}`,
+          `/embed/haiku/ani/${aniId}/${ep}/${lang}`
+        ],
+        saltHedge: { aniId, ep }
       });
     }
     return sendHtmlError(req, reply, 400, 'Missing mal or ani query parameter');
