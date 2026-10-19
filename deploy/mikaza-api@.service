@@ -1,8 +1,8 @@
-# MikazaAPI worker unit. Six instances share one .env (one PROXY_SECRET).
+# MikazaAPI worker unit. Four instances share one .env (one PROXY_SECRET).
 #
-#   systemctl enable --now mikaza-api@{1..6}
+#   systemctl enable --now mikaza-api@{1..4}
 #
-# %i maps to the port: instance 1 -> PORT=5001 ... instance 6 -> PORT=5006.
+# %i maps to the port: instance 1 -> PORT=5001 ... instance 4 -> PORT=5004.
 # The raw ports bind to loopback only; nginx is the sole public listener.
 #
 # Deploy note: no dedicated service user is created. The worker runs as the
