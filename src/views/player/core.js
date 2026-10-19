@@ -451,20 +451,20 @@ export async function createPlayer(options = {}) {
         backBufferLength: 30,
         abrEwmaDefaultEstimate: 2000000,
         // Finite, explicit retry budgets: a dead provider turns fatal in
-        // seconds instead of hanging on hls.js's 20 s / 120 s defaults.
+        // ~10 s instead of hanging on hls.js's 20 s / 120 s defaults.
         manifestLoadPolicy: {
           default: {
-            maxTimeToFirstByteMs: 10000,
-            maxLoadTimeMs: 20000,
-            timeoutRetry: { maxNumRetry: 2, retryDelayMs: 0, maxRetryDelayMs: 0 },
+            maxTimeToFirstByteMs: 5000,
+            maxLoadTimeMs: 15000,
+            timeoutRetry: { maxNumRetry: 1, retryDelayMs: 0, maxRetryDelayMs: 0 },
             errorRetry: { maxNumRetry: 2, retryDelayMs: 1000, maxRetryDelayMs: 8000 },
           },
         },
         playlistLoadPolicy: {
           default: {
-            maxTimeToFirstByteMs: 10000,
-            maxLoadTimeMs: 20000,
-            timeoutRetry: { maxNumRetry: 2, retryDelayMs: 0, maxRetryDelayMs: 0 },
+            maxTimeToFirstByteMs: 5000,
+            maxLoadTimeMs: 15000,
+            timeoutRetry: { maxNumRetry: 1, retryDelayMs: 0, maxRetryDelayMs: 0 },
             errorRetry: { maxNumRetry: 2, retryDelayMs: 1000, maxRetryDelayMs: 8000 },
           },
         },

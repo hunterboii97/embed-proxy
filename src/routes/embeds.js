@@ -2,16 +2,76 @@ const {
   isEmbedAllowed, buildFrameAncestorsCSP, getClientIP, embedRateLimitPerMin,
   freeEmbedMode, adDirectUrls, adInterstitialUrl, adminTelemetryEnabled,
   isBlockedEmbedSource, getEmbedTier,
-  embedResolveTimeoutMs, embedHedgeStaggerMs
+  embedResolveTimeoutMs, embedHedgeStaggerMs, cdnRules
 } = require('../../config');
+const { request } = require('undici');
 const { rateLimited } = require('../utils/ratelimit');
 const { encryptToken, signTierToken, verifyTierToken } = require('../utils/crypto');
 const { renderPlayerShell, renderCustomProxy404 } = require('../views/player');
 const { extractZokoHLS } = require('../scrapers/zoko');
 const { resolveAnimeSaltSlug, extractAnimeSaltStream } = require('../scrapers/animesalt');
-const { extractMegaplayHLSWithFallback } = require('../scrapers/megaplay');
+const { extractMegaplayHLSWithFallback, normalizeMegaplayPath } = require('../scrapers/megaplay');
 const { resolveMalId } = require('../scrapers/resolver');
-const { resolveErrorCache } = require('../utils/cache');
+const { resolveErrorCache, zokoStreamCache, megaplayStreamCache } = require('../utils/cache');
+const { globalAgent, DEFAULT_UA } = require('../utils/http');
+
+// Providers can resolve to a CDN host that is currently blackholing. The
+// resolve itself "succeeds", so without a probe the player would sit through
+// its manifest retries (tens of seconds) before the backup source is tried.
+const PLAYLIST_PROBE_MS = 2200;
+const deadPayloads = new WeakSet();
+
+function markSourceDead(payload) {
+  deadPayloads.add(payload);
+  return payload;
+}
+
+function playlistProbeHeaders(targetURL, ref) {
+  const parsed = new URL(targetURL);
+  const host = parsed.hostname.toLowerCase();
+  let referer = ref || '';
+  let origin = '';
+  let secSite = 'cross-site';
+  for (const rule of cdnRules) {
+    if (rule.matches(host)) {
+      if (!referer) referer = rule.referer;
+      origin = rule.origin;
+      secSite = rule.secSite;
+      break;
+    }
+  }
+  if (!referer) referer = `${parsed.protocol}//${parsed.host}/`;
+  if (!origin) origin = `${parsed.protocol}//${parsed.host}`;
+  return {
+    'user-agent': DEFAULT_UA,
+    referer,
+    origin,
+    'sec-fetch-dest': 'empty',
+    'sec-fetch-mode': 'cors',
+    'sec-fetch-site': secSite
+  };
+}
+
+// Only playlists are probed: a segment fetch would download media. A healthy
+// CDN answers the master playlist in ~100 ms; the budget stays well inside the
+// resolve deadline so a dead host cannot delay the hedge.
+async function playlistReachable(targetURL, ref, signal) {
+  if (!/\.m3u8(?:$|\?)/i.test(targetURL.split('#')[0])) return true;
+  const timeout = AbortSignal.timeout(PLAYLIST_PROBE_MS);
+  const probeSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
+  try {
+    const res = await request(targetURL, {
+      method: 'GET',
+      headers: playlistProbeHeaders(targetURL, ref),
+      dispatcher: globalAgent,
+      signal: probeSignal
+    });
+    try { await res.body.dump(); } catch { /* aborted mid-body */ }
+    return res.statusCode < 400;
+  } catch {
+    return false;
+  }
+}
 
 function isResolveRequest(req) {
   const flag = req.query && req.query.resolve;
@@ -151,6 +211,7 @@ function raceProviders(candidates, signal) {
     let next = 0;
     let active = 0;
     let settled = false;
+    let firstResult = null;
     const errors = [];
 
     const cleanup = () => {
@@ -172,7 +233,10 @@ function raceProviders(candidates, signal) {
       cleanup();
       reject(err);
     };
-    const onAbort = () => fail(resolveFailure('Stream resolve aborted', 504));
+    // A dead source still beats no source: the player's own failover chain can
+    // use it as a last resort, exactly as it did before resolve-time probing.
+    const finish = () => (firstResult ? succeed(firstResult) : fail(resolveFailure(errors.join(' | '), 404)));
+    const onAbort = () => (firstResult ? succeed(firstResult) : fail(resolveFailure('Stream resolve aborted', 504)));
 
     if (signal) {
       if (signal.aborted) return onAbort();
@@ -188,12 +252,20 @@ function raceProviders(candidates, signal) {
 
       Promise.resolve()
         .then(() => candidate.run(controller.signal))
-        .then(succeed, (err) => {
+        .then((value) => {
+          if (settled) return;
+          if (!value || !deadPayloads.has(value)) return succeed(value);
+          if (!firstResult) firstResult = value;
+          errors.push(`${candidate.name}: source unreachable`);
+          active--;
+          if (next < candidates.length) launch();
+          else if (active === 0) finish();
+        }, (err) => {
           errors.push(`${candidate.name}: ${err?.message || err}`);
           active--;
           if (settled) return;
           if (next < candidates.length) launch();
-          else if (active === 0) fail(resolveFailure(errors.join(' | '), 404));
+          else if (active === 0) finish();
         });
 
       if (next < candidates.length) {
@@ -252,13 +324,15 @@ async function resolveRoute(req, reply, key, run) {
 
 async function runZoko(req, { malId, ep, lang }, tier, signal) {
   const clientIP = getClientIP(req);
+  const ref = 'https://zokoanime.video/';
   const data = await extractZokoHLS(malId, ep, lang, signal);
   if (!data.streamFile) throw resolveFailure('Zoko returned empty stream src');
+  const reachable = await playlistReachable(data.streamFile, ref, signal);
 
-  return payload({
+  const result = payload({
     tier,
-    src: proxiedPlaylist(data.streamFile, 'https://zokoanime.video/', clientIP),
-    tracks: proxyTracks(data.tracks, 'https://zokoanime.video/', clientIP),
+    src: proxiedPlaylist(data.streamFile, ref, clientIP),
+    tracks: proxyTracks(data.tracks, ref, clientIP),
     // The player only ever navigates to the first entry.
     fallbacks: [
       `/embed/kira/mal/${malId}/${ep}/${lang}`,
@@ -266,11 +340,18 @@ async function runZoko(req, { malId, ep, lang }, tier, signal) {
     ],
     telemetry: telemetryMeta('zoko', `mal:${malId}`, ep, tier)
   });
+  if (!reachable) {
+    zokoStreamCache.delete(`${malId}:${ep <= 0 ? 1 : ep}:${lang === 'dub' ? 'dub' : 'sub'}`);
+    markSourceDead(result);
+  }
+  return result;
 }
 
 async function runKira(req, { targetPath, tier, fallbacks }, signal) {
   const clientIP = getClientIP(req);
+  const ref = 'https://megaplay.buzz/';
   const data = await extractMegaplayHLSWithFallback(targetPath, signal);
+  const reachable = await playlistReachable(data.streamFile, ref, signal);
 
   const malMatch = targetPath.match(/^mal\/(\d+)/);
   const aniMatch = targetPath.match(/^ani\/(\d+)/);
@@ -280,15 +361,20 @@ async function runKira(req, { targetPath, tier, fallbacks }, signal) {
       : s2Match ? `s2:${s2Match[1]}` : '';
   const episodeLabel = (malMatch || aniMatch) ? (targetPath.split('/')[2] || '') : '';
 
-  return payload({
+  const result = payload({
     tier,
-    src: proxiedPlaylist(data.streamFile, 'https://megaplay.buzz/', clientIP),
-    tracks: proxyTracks(data.tracks, 'https://megaplay.buzz/', clientIP),
+    src: proxiedPlaylist(data.streamFile, ref, clientIP),
+    tracks: proxyTracks(data.tracks, ref, clientIP),
     fallbacks,
     telemetry: telemetryMeta('kira', contentLabel, episodeLabel, tier),
     intro: data.intro,
     outro: data.outro
   });
+  if (!reachable) {
+    megaplayStreamCache.delete(normalizeMegaplayPath(targetPath));
+    markSourceDead(result);
+  }
+  return result;
 }
 
 async function runSalt(req, { slug, aniId, malId, season, ep, hash, lang }, tier, signal) {
@@ -584,5 +670,7 @@ async function registerEmbedRoutes(fastify) {
 }
 
 module.exports = {
-  registerEmbedRoutes
+  registerEmbedRoutes,
+  raceProviders,
+  markSourceDead
 };
