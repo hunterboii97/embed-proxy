@@ -71,7 +71,7 @@ player's track selection. Range requests and `HEAD` are supported. `kaiju` is
 the current library source; future sources plug into the same path shape. The
 signed CDN URL is IP-bound and expires in ~15 minutes, so the proxy resolves it
 per request. Disabled unless `DOWNLOAD_ENABLED=true`. Each IP gets **1 request
-per minute** and **5 per 24 hours** for GETs (`HEAD` is free); the shared quota
+per minute** for GETs (`HEAD` is free) with no daily cap; the shared quota
 lives under `data/download-quota` (gitignored).
 
 **Nut Server** — `/download/nut/ani/{anilist_id}/{ep}/{sub|dub}` resolves the
@@ -87,7 +87,7 @@ Range requests and `HEAD` are supported. The signed CDN link is fetched per
 episode and reused until shortly before it expires (~3 hours), so repeat
 requests do not re-hit the source. Requires `ANIPM_COOKIE` (an `ani_token`
 session value or a full `Cookie:` header). Each IP gets **1 request per
-minute** and **5 per 24 hours** for GETs (`HEAD` is free); the shared quota
+minute** for GETs (`HEAD` is free) with no daily cap; the shared quota
 lives under `data/anipm-quota` (gitignored). At most
 `ANIPM_DOWNLOAD_CONCURRENCY` GET streams run per worker; `HEAD` probes do not
 use a stream slot.
@@ -190,12 +190,12 @@ window.addEventListener("message", function (event) {
 | `EMBED_RATE_LIMIT_PER_MIN` | `3000` | Per-IP embed-page rate limit (`429` when exceeded). Defaults are generous so real viewers never trip them; `0` disables. |
 | `PROXY_RATE_LIMIT_PER_MIN` | `30000` | Per-IP `/p/*` stream/token rate limit. `0` disables. |
 | `FLIX_DOWNLOAD_RATE_LIMIT_PER_MIN` | `1` | Per-IP budget for `/download/kaiju/...` (shared across workers). `0` disables. |
-| `FLIX_DOWNLOAD_DAILY_LIMIT` | `5` | Per-IP downloads per rolling 24 hours (shared across workers). `0` disables. |
+| `FLIX_DOWNLOAD_DAILY_LIMIT` | `0` | Per-IP downloads per rolling 24 hours (shared across workers). `0` (default) = unlimited. |
 | `FLIX_DOWNLOAD_QUOTA_DIR` | `./data/download-quota` | Shared quota store used by all workers. |
 | `ANIPM_COOKIE` | *(required for Nut)* | ani.pm session: just the `ani_token` value or a full `Cookie:` header. Required for `/download/nut/...`; missing = `503`. |
 | `ANIPM_CDN_HOSTS` | `hianime.fun` | Comma-separated CDN host suffixes the redirect may point at. Anything else is rejected. |
 | `ANIPM_DOWNLOAD_RATE_LIMIT_PER_MIN` | `1` | Per-IP budget for `/download/nut/...` (shared across workers). `0` disables. |
-| `ANIPM_DOWNLOAD_DAILY_LIMIT` | `5` | Per-IP ani.pm downloads per rolling 24 hours (shared across workers). `0` disables. |
+| `ANIPM_DOWNLOAD_DAILY_LIMIT` | `0` | Per-IP ani.pm downloads per rolling 24 hours (shared across workers). `0` (default) = unlimited. |
 | `ANIPM_DOWNLOAD_QUOTA_DIR` | `./data/anipm-quota` | Shared ani.pm quota store used by all workers. |
 | `ANIPM_DOWNLOAD_CONCURRENCY` | `2` | Max concurrent ani.pm GET streams per worker; extra GETs get `503` + `Retry-After`. `HEAD` is exempt. |
 | `ANIPM_LINK_GATE_DIR` | `./data/anipm-gate` | Shared link-generation gate used by all workers. |

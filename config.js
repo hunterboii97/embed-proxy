@@ -86,7 +86,7 @@ const proxyRateLimitPerMin = parseInt(process.env.PROXY_RATE_LIMIT_PER_MIN || '3
 // they get a tight budget. The quota is shared across all workers via
 // data/download-quota.
 const flixDownloadRateLimitPerMin = parseInt(process.env.FLIX_DOWNLOAD_RATE_LIMIT_PER_MIN || '1', 10);
-const flixDownloadDailyLimit = parseInt(process.env.FLIX_DOWNLOAD_DAILY_LIMIT || '5', 10);
+const flixDownloadDailyLimit = parseInt(process.env.FLIX_DOWNLOAD_DAILY_LIMIT || '0', 10);
 const flixDownloadQuotaDir = process.env.FLIX_DOWNLOAD_QUOTA_DIR || path.join(__dirname, 'data', 'download-quota');
 
 // ani.pm downloads: the archive lookup is a signed-in POST, so the deployment
@@ -103,7 +103,7 @@ const anipmCdnHosts = String(process.env.ANIPM_CDN_HOSTS || 'hianime.fun')
   .map((s) => s.trim().toLowerCase())
   .filter(Boolean);
 const anipmDownloadRateLimitPerMin = parseInt(process.env.ANIPM_DOWNLOAD_RATE_LIMIT_PER_MIN || '1', 10);
-const anipmDownloadDailyLimit = parseInt(process.env.ANIPM_DOWNLOAD_DAILY_LIMIT || '5', 10);
+const anipmDownloadDailyLimit = parseInt(process.env.ANIPM_DOWNLOAD_DAILY_LIMIT || '0', 10);
 const anipmDownloadQuotaDir = process.env.ANIPM_DOWNLOAD_QUOTA_DIR || path.join(__dirname, 'data', 'anipm-quota');
 const anipmDownloadConcurrency = Math.max(1, parseInt(process.env.ANIPM_DOWNLOAD_CONCURRENCY || '2', 10) || 2);
 // ani.pm rate-limits link generation (~14 POSTs per 10 s per IP, then a bare
