@@ -89,6 +89,30 @@ const flixDownloadRateLimitPerMin = parseInt(process.env.FLIX_DOWNLOAD_RATE_LIMI
 const flixDownloadDailyLimit = parseInt(process.env.FLIX_DOWNLOAD_DAILY_LIMIT || '5', 10);
 const flixDownloadQuotaDir = process.env.FLIX_DOWNLOAD_QUOTA_DIR || path.join(__dirname, 'data', 'download-quota');
 
+// ani.pm downloads: the archive lookup is a signed-in POST, so the deployment
+// stores one session cookie. Only the HttpOnly ani_token is required — it is
+// not IP-bound, so a token copied from a logged-in browser keeps working.
+// A bare JWT is accepted and prefixed automatically.
+const rawAnipmCookie = String(process.env.ANIPM_COOKIE || '').trim();
+const anipmCookie = rawAnipmCookie && !rawAnipmCookie.includes('=')
+  ? `ani_token=${rawAnipmCookie}`
+  : rawAnipmCookie;
+// Redirect target allowlist for the signed file URL (comma separated suffixes).
+const anipmCdnHosts = String(process.env.ANIPM_CDN_HOSTS || 'hianime.fun')
+  .split(',')
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
+const anipmDownloadRateLimitPerMin = parseInt(process.env.ANIPM_DOWNLOAD_RATE_LIMIT_PER_MIN || '1', 10);
+const anipmDownloadDailyLimit = parseInt(process.env.ANIPM_DOWNLOAD_DAILY_LIMIT || '5', 10);
+const anipmDownloadQuotaDir = process.env.ANIPM_DOWNLOAD_QUOTA_DIR || path.join(__dirname, 'data', 'anipm-quota');
+const anipmDownloadConcurrency = Math.max(1, parseInt(process.env.ANIPM_DOWNLOAD_CONCURRENCY || '2', 10) || 2);
+// ani.pm rate-limits link generation (~14 POSTs per 10 s per IP, then a bare
+// 429 for a couple of seconds). One shared gate paces all workers; 1 s spacing
+// keeps the deployment at ~10 per 10 s.
+const anipmLinkGateDir = process.env.ANIPM_LINK_GATE_DIR || path.join(__dirname, 'data', 'anipm-gate');
+const anipmLinkMinGapMs = Math.max(100, parseInt(process.env.ANIPM_LINK_MIN_GAP_MS || '1000', 10) || 1000);
+const anipmLinkCooldownMs = Math.max(1000, parseInt(process.env.ANIPM_LINK_COOLDOWN_MS || '5000', 10) || 5000);
+
 // Player beacons for the admin dashboard. Off by default; the collector must
 // agree (both services read the same .env). Injected per embed page only when
 // true, so the player's telemetry module is dormant otherwise.
@@ -396,9 +420,15 @@ function isEmbedAllowed(req) {
   // Hard-deny list applies in every mode, before the allowlist/free checks.
   if (isEmbedBlocked(req)) return false;
 
-  // Everything else — iframes, objects, and header-less HTTP clients — must
-  // present a Referer/Origin from the allowlist. Fail closed: no signals at
-  // all means a script, not a browser embed.
+  // Header-less clients (privacy browsers, VPNs, header-stripping proxies)
+  // send no Fetch Metadata and no Referer. A modern iframe always sends
+  // Sec-Fetch-Dest: iframe, even under Referrer-Policy: no-referrer, so a
+  // request with no Sec-Fetch-Dest at all is treated as a direct visit.
+  if (!secFetchDest && !referer && !origin) return true;
+
+  // Everything else — iframes and objects — must present a Referer/Origin
+  // from the allowlist. Fail closed: a modern iframe with no signals is an
+  // embed trying to hide its origin.
   if (freeEmbedMode) {
     if (isWebOrigin(referer) || isWebOrigin(origin)) return true;
     return false;
@@ -451,6 +481,15 @@ module.exports = {
   flixDownloadRateLimitPerMin,
   flixDownloadDailyLimit,
   flixDownloadQuotaDir,
+  anipmCookie,
+  anipmCdnHosts,
+  anipmDownloadRateLimitPerMin,
+  anipmDownloadDailyLimit,
+  anipmDownloadQuotaDir,
+  anipmDownloadConcurrency,
+  anipmLinkGateDir,
+  anipmLinkMinGapMs,
+  anipmLinkCooldownMs,
   rateLimitEnabled,
   sharedSegmentTokens,
   tokenBucketSeconds,

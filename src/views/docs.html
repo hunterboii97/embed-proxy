@@ -820,7 +820,7 @@
             <h1>MikazaAPI</h1>
             <p>
                 Professional anime streaming API with minimal-ads embed player, multi-server support,
-                real-time postMessage events, and instant MKV downloads.
+                real-time postMessage events, and instant MKV/MP4 downloads.
             </p>
             <div class="hero-actions">
                 <a href="#tester" class="btn btn-primary">
@@ -1045,8 +1045,15 @@
                     <div class="endpoint-item">
                         <span class="method">GET</span>
                         <div class="endpoint-content">
-                            <h4>Episode Download</h4>
+                            <h4>Kaiju Server</h4>
                             <span class="endpoint-url">/download/kaiju/ani/{anilist_id}/{ep}</span>
+                        </div>
+                    </div>
+                    <div class="endpoint-item">
+                        <span class="method">GET</span>
+                        <div class="endpoint-content">
+                            <h4>Nut Server</h4>
+                            <span class="endpoint-url">/download/nut/ani/{anilist_id}/{ep}/{sub|dub}</span>
                         </div>
                     </div>
                 </div>
