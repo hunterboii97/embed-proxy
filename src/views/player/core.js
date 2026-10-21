@@ -437,6 +437,20 @@ export async function createPlayer(options = {}) {
   // Vidstack's HLS provider hands over the hls.js instance before attaching
   // media, so this runs while the manifest is still loading. startLevel only
   // seeds the first fragment — ABR and the quality menu work normally after.
+
+  /* --- error classification and recovery --------------------------------- */
+  const MAX_FATAL_ERRORS = 3;
+  let fatalErrorCount = 0;
+  let lastFatalErrorTime = 0;
+  let lastFatalErrorType = null;
+  let lastSeekTime = 0;
+  let hlsManifestParsed = false;
+
+  const RECOVERABLE_ERRORS = new Set([
+    'networkError',
+    'keyLoadError'
+  ]);
+
   player.addEventListener('hls-instance', (event) => {
     const hls = event.detail;
     const Hls = window.Hls;
@@ -493,16 +507,51 @@ export async function createPlayer(options = {}) {
     }
 
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      hlsManifestParsed = true;
       const idx = pickStartLevel(hls.levels || []);
       if (idx >= 0) hls.startLevel = idx;
     });
 
     hls.on(Hls.Events.ERROR, (_evt, data) => {
-      if (data?.fatal) {
+      if (!data?.fatal) return;
+
+      const errorType = data.type;
+      const now = Date.now();
+
+      // Reset counter if different error type or enough time passed
+      if (errorType !== lastFatalErrorType || now - lastFatalErrorTime > 10000) {
+        fatalErrorCount = 0;
+      }
+
+      lastFatalErrorType = errorType;
+      lastFatalErrorTime = now;
+      fatalErrorCount++;
+
+      // Check if error occurred shortly after seek (buffer underrun)
+      const timeSinceSeek = now - lastSeekTime;
+      if (timeSinceSeek < 3000) {
+        console.warn('Error shortly after seek, allowing HLS recovery');
+        return;
+      }
+
+      // Check if error is recoverable
+      if (RECOVERABLE_ERRORS.has(errorType)) {
+        // Allow HLS.js retries to handle it
+        console.warn(`Recoverable HLS error (${errorType}), allowing retries...`);
+        return;
+      }
+
+      // Only failover if same fatal error occurs multiple times
+      if (fatalErrorCount >= MAX_FATAL_ERRORS) {
         if (telemetry) telemetry.fatal(data.details || 'fatal stream error');
         handleFatalError();
       }
     });
+  });
+
+  // Track seek operations for error handling
+  player.addEventListener('seeking', () => {
+    lastSeekTime = Date.now();
   });
 
   /* --- source failover -------------------------------------------------- */
@@ -541,7 +590,21 @@ export async function createPlayer(options = {}) {
     return next + (next.includes('?') ? '&' : '?') + params.toString();
   }
 
+  function getCurrentProvider() {
+    const urlMatch = location.pathname.match(/\/embed\/(\w+)\//);
+    return urlMatch ? urlMatch[1] : null;
+  }
+
   function goToFallback(next, resumeAt, delay = 600) {
+    const currentProvider = getCurrentProvider();
+    const nextProvider = next.match(/\/embed\/(\w+)\//)?.[1];
+
+    // Don't reload if fallback is same provider
+    if (currentProvider && nextProvider && currentProvider === nextProvider) {
+      showFatalOverlay('Playback failed. Please try refreshing.', true);
+      return;
+    }
+
     if (telemetry) telemetry.emit('fallback', { message: 'switching to backup source' });
     showFatalOverlay('Stream error — switching to a backup source…', false);
     // Let the overlay paint before the document is replaced.
@@ -585,7 +648,23 @@ export async function createPlayer(options = {}) {
       '<button type="button" class="strmcx-fatal__retry" data-act="retry">Retry</button>' +
       (failbackList[0] ? '<button type="button" class="strmcx-fatal__retry" data-act="backup">Use backup</button>' : '') +
       '</div></div>';
-    slowOverlay.querySelector('[data-act="retry"]').addEventListener('click', () => location.reload());
+
+    // Retry button: attempt HLS recovery first, then reload
+    slowOverlay.querySelector('[data-act="retry"]').addEventListener('click', () => {
+      // Check if HLS instance exists and try to recover
+      const hlsInstance = player.querySelector('video')?.hls;
+      if (hlsInstance) {
+        try {
+          hlsInstance.startLoad();
+          clearSlowWatchdog();
+          return;
+        } catch (e) {
+          console.warn('HLS recovery failed, reloading page');
+        }
+      }
+      location.reload();
+    });
+
     slowOverlay.querySelector('[data-act="backup"]')?.addEventListener('click', () => {
       goToFallback(failbackList[0], Math.max(0, Math.floor(player.currentTime || 0)), 150);
     });
@@ -604,11 +683,16 @@ export async function createPlayer(options = {}) {
   if (cfg.title) player.title = cfg.title;
 
   slowTimer = setTimeout(() => {
-    // Only show slow overlay if player is not in a loading state and still can't play
-    if (!player.state.canPlay && !fatalOverlay && !player.state.waiting) {
+    // Check multiple loading states before showing slow overlay
+    const isSeekingRecent = (Date.now() - lastSeekTime) < 20000;
+    const isHlsLoading = hlsManifestParsed === false;
+    const isPlayerLoading = player.state.waiting || player.state.buffering || player.state.loading;
+
+    // Only show if not in loading state and not in seek grace period
+    if (!player.state.canPlay && !fatalOverlay && !isPlayerLoading && !isSeekingRecent && hlsManifestParsed) {
       showSlowOverlay();
     }
-  }, 30000); // Increased from 15s to 30s to reduce false positives
+  }, 60000); // Increased from 30s to 60s to reduce false positives
   player.addEventListener('can-play', clearSlowWatchdog, { once: true });
   player.addEventListener('playing', clearSlowWatchdog, { once: true });
 
