@@ -503,6 +503,16 @@ export async function createPlayer(options = {}) {
         handleFatalError();
       }
     });
+
+    // Clear retry timer on successful recovery
+    hls.on(Hls.Events.FRAG_LOADED, () => {
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+        retryCount = 0;
+        console.log('Stream recovered - retry counter reset');
+      }
+    });
   });
 
   /* --- source failover -------------------------------------------------- */
@@ -514,6 +524,11 @@ export async function createPlayer(options = {}) {
 
   let failoverStarted = false;
   let fatalOverlay = null;
+
+  /* --- retry state (must be declared before HLS handlers) ----------------- */
+  const MAX_RETRY_COUNT = 3;
+  let retryCount = 0;
+  let retryTimer = null;
 
   function showFatalOverlay(title, canRetry) {
     if (fatalOverlay) return;
@@ -548,11 +563,31 @@ export async function createPlayer(options = {}) {
     setTimeout(() => location.replace(failbackURL(next, resumeAt)), delay);
   }
 
+  /* --- failover with retry logic ------------------------------------------ */
+  // Retry the current source before failing over. Temporary network glitches
+  // shouldn't trigger an immediate provider switch. We retry with exponential
+  // backoff, then fail over to the next provider if all retries fail.
   function handleFatalError() {
     if (failoverStarted) return;
-    failoverStarted = true;
 
     const resumeAt = Math.max(0, Math.floor(player.currentTime || 0));
+
+    // Retry same source first with exponential backoff
+    if (retryCount < MAX_RETRY_COUNT) {
+      retryCount++;
+      console.warn(`Stream error - retrying (${retryCount}/${MAX_RETRY_COUNT})...`);
+
+      const backoffMs = 1000 * retryCount; // 1s, 2s, 3s
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        // Reload to retry with fresh HLS state
+        location.reload();
+      }, backoffMs);
+      return;
+    }
+
+    // All retries exhausted - fail over to backup source
+    failoverStarted = true;
     const next = failbackList[0];
     if (!next) {
       showFatalOverlay('Playback failed. Please try again.', true);
@@ -572,6 +607,12 @@ export async function createPlayer(options = {}) {
     clearTimeout(slowTimer);
     slowOverlay?.remove();
     slowOverlay = null;
+    // Also clear retry timer on successful stream start
+    if (retryTimer) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+      retryCount = 0;
+    }
   }
 
   function showSlowOverlay() {
